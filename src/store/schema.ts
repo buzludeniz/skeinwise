@@ -214,4 +214,45 @@ export const MIGRATIONS: readonly string[] = [
     UNION ALL SELECT id, 'proud', 'proud finished built shipped sold managed works' FROM schemas WHERE name = 'Moods'
     UNION ALL SELECT id, 'tired', 'tired exhausted busy overwhelmed late sleep' FROM schemas WHERE name = 'Moods';
   `,
+
+  // 3. Runs an agent makes through the memory server: engine 'agent', the agent's name as the model. An agent's run
+  // stays live until it is undone: a later organiser run never replaces it, and it never replaces one. SQLite can't
+  // change a CHECK in place, so runs is rebuilt with the same ids (migrate turns foreign keys off around it).
+  `
+  DROP VIEW live_runs;
+
+  CREATE TABLE runs_new (
+    id INTEGER PRIMARY KEY,
+    task TEXT NOT NULL CHECK (task IN ('tag', 'file', 'link', 'hub', 'layer', 'review', 'ask', 'correction')),
+    engine TEXT NOT NULL CHECK (engine IN ('none', 'local', 'remote', 'you', 'agent')),
+    model TEXT,
+    scope TEXT NOT NULL,
+    schema_id INTEGER REFERENCES schemas(id),
+    status TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed', 'undone')),
+    counts TEXT NOT NULL DEFAULT '{}',
+    message TEXT,
+    detail TEXT,
+    mark INTEGER NOT NULL DEFAULT 0,
+    tokens_in INTEGER NOT NULL DEFAULT 0,
+    tokens_out INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+  );
+  INSERT INTO runs_new (id, task, engine, model, scope, schema_id, status, counts, message, detail, mark, tokens_in,
+                        tokens_out, started_at, finished_at)
+    SELECT id, task, engine, model, scope, schema_id, status, counts, message, detail, mark, tokens_in, tokens_out,
+           started_at, finished_at FROM runs;
+  DROP TABLE runs;
+  ALTER TABLE runs_new RENAME TO runs;
+  CREATE INDEX runs_task ON runs (task, status);
+
+  CREATE VIEW live_runs AS
+    SELECT r.id, r.task, r.schema_id FROM runs r
+    WHERE r.status = 'done' AND r.task NOT IN ('ask', 'correction') AND (r.engine = 'agent' OR NOT EXISTS (
+      SELECT 1 FROM runs later
+      WHERE later.status = 'done' AND later.task = r.task AND later.id > r.id AND later.engine <> 'agent'
+        AND COALESCE(later.schema_id, 0) = COALESCE(r.schema_id, 0)
+        AND (later.scope = 'all' OR (later.scope = r.scope AND later.scope <> 'new'))
+    ));
+  `,
 ];

@@ -166,3 +166,37 @@ describe('stats', () => {
     });
   });
 });
+
+describe('visible reads and the timeline', () => {
+  it('reads an entry or thread only while the record shows it', () => {
+    const s = store();
+    s.ingest(chat([['you', 'First loaf'], ['assistant', 'Use more water']]));
+    const [first] = s.allEntries();
+    expect(s.visibleEntry(first!.id)).toMatchObject({ body: 'First loaf', threadId: first!.threadId });
+    expect(s.visibleThread(first!.threadId!)).toMatchObject({ title: 'Sourdough', entries: 2, notMine: false });
+    s.setNotMine(first!.threadId!, true);
+    expect(s.visibleEntry(first!.id)).toBeUndefined();
+    expect(s.visibleThread(first!.threadId!)).toBeUndefined();
+    s.setNotMine(first!.threadId!, false);
+    s.setSourceStatus(first!.sourceId, 'out');
+    expect(s.visibleEntry(first!.id)).toBeUndefined();
+    expect(s.visibleThread(first!.threadId!)).toBeUndefined();
+    expect(s.visibleEntry(999)).toBeUndefined();
+    expect(s.visibleThread(999)).toBeUndefined();
+  });
+
+  it('pages through visible entries by date, either way, with filters', () => {
+    const s = store();
+    s.ingest(chat([['you', 'one'], ['assistant', 'two'], ['you', 'three'], ['assistant', 'four']]));
+    s.ingest(chat([['you', 'hidden']], { thread: 't2' }));
+    s.setNotMine(s.allEntries().find((e) => e.body === 'hidden')!.threadId!, true);
+    const bodies = (o: Parameters<Store['timeline']>[0]) => s.timeline(o).map((e) => e.body);
+    expect(bodies({})).toEqual(['one', 'two', 'three', 'four']);
+    expect(bodies({ newest: true, limit: 2 })).toEqual(['four', 'three']);
+    expect(bodies({ offset: 1, limit: 2 })).toEqual(['two', 'three']);
+    expect(bodies({ speaker: 'you' })).toEqual(['one', 'three']);
+    expect(bodies({ from: '2025-01-02T00:00:00.000Z', to: '2025-01-03T23:59:59.999Z' })).toEqual(['two', 'three']);
+    expect(bodies({ sourceKind: 'chatgpt' })).toEqual([]);
+  });
+});
+
