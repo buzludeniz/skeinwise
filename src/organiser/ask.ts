@@ -5,6 +5,7 @@
 // it rests on; the No-AI engine shows the entries alone.
 
 import { UsageError } from '../errors.ts';
+import { safeBlock } from '../safe-text.ts';
 import type { Entry, SearchHit, Store } from '../store/store.ts';
 import { CHANGE_CUES, DECISION_CUES } from './cues.ts';
 import { checkBudget } from './organise.ts';
@@ -220,7 +221,7 @@ function answerRequest(store: Store, question: string, hits: AskHit[]): ModelReq
   const check = (answer: unknown) => {
     if (!isRecord(answer)) invalid(purpose, 'expected a JSON object');
     if (typeof answer.answer !== 'string') invalid(purpose, '"answer" must be text');
-    const text = answer.answer.trim();
+    const text = safeBlock(answer.answer).trim();
     if (text.length > 800) invalid(purpose, '"answer" is longer than 800 characters');
     const cites = cited(purpose, answer.cites, 'cites', 'E', known);
     if (text && !cites.length) invalid(purpose, 'answers without citing an entry');

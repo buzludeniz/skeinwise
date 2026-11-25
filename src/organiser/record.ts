@@ -27,6 +27,19 @@ export function entryText(e: Entry): string {
   return unlink(`${e.title ?? ''}\n${e.body}`);
 }
 
+/** How far past the run an entry's date may be (clock skew, time zones) before the organiser stops building on it. */
+const FUTURE_SLACK_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whether hub summaries may quote and cite an entry, and review may weigh it against a note (H1). A planted export
+ * dates its text in the future so that it reads as your latest thinking, so an entry that claims a date more than a
+ * day after the run is left out, and so is one whose date doesn't parse (importers write ISO dates, so only a made-up
+ * one fails). The claimed date is the only check today: versions record no account or origin yet.
+ */
+export function vouched(e: Entry, now: string): boolean {
+  return Date.parse(e.createdAt) <= Date.parse(now) + FUTURE_SLACK_MS;
+}
+
 /** A daily note: under daily/ or named by its date. Daily notes are logs, not notes that can go out of date. */
 export function isDailyNote(e: Entry): boolean {
   return e.kind === 'note' && (/(^|\/)daily\//.test(e.externalId) || /^\d{4}-\d{2}-\d{2}$/.test(e.title ?? ''));
