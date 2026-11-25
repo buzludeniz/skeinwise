@@ -9,6 +9,25 @@ agents you would show those entries to.
 
 ## Set it up
 
+The quick way:
+
+```bash
+skeinwise connect claude-code      # or codex, cursor, claude-desktop
+```
+
+`connect` allows the agent to read your record, gives it a new token, and prints the exact command or config that
+agent needs, token included. Add `--write` to let the agent write notes and tags too. Add `--yes`, or answer yes when
+it asks, and it sets the agent up itself: for Claude Code it runs `claude mcp add`, and for the others it edits their
+config file. First it keeps a copy of the file as it was, beside it, as `<file>.skeinwise-backup-<time>`. A config file
+it can't edit safely, such as JSON that doesn't parse, is left alone, and the token doesn't change. Running `connect`
+again gives the agent a new token and stops the old one.
+
+`skeinwise setup` brings your AI histories and notes in and names the `connect` command for each agent it finds.
+`skeinwise doctor` checks the setup: Node, the record folder, the model server, and each agent config that starts
+Skeinwise (a token the record doesn't know, a command that's gone). It prints one fix for each problem.
+
+By hand:
+
 1. Put `skeinwise` on your path. In the clone, after `pnpm install` and `pnpm build`, run `pnpm link --global`;
    `skeinwise version` then works in any terminal.
 2. Allow the agent. This makes it a token and shows it once:
