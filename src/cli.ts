@@ -160,13 +160,15 @@ async function run(argv: string[], io: Io): Promise<number> {
     case 'version':
     case '--version':
     case '-v':
-      io.out(`${pkg.version}\n`);
+      if (values.json) json({ version: pkg.version });
+      else io.out(`${pkg.version}\n`);
       return 0;
 
     case 'init': {
       const home = homeDir(io.env);
       await withStore(io, () => undefined);
-      io.out(`Record folder ready: ${home}\n`);
+      if (values.json) json({ home });
+      else io.out(`Record folder ready: ${home}\n`);
       return 0;
     }
 
@@ -287,7 +289,8 @@ async function run(argv: string[], io: Io): Promise<number> {
       const id = needId(positionals[0], 'source');
       return withStore(io, (store) => {
         store.setSourceStatus(id, command === 'exclude' ? 'out' : 'in');
-        io.out(command === 'exclude' ? `Source ${id} left out.\n` : `Source ${id} brought back in.\n`);
+        if (values.json) json({ source: id, status: command === 'exclude' ? 'out' : 'in' });
+        else io.out(command === 'exclude' ? `Source ${id} left out.\n` : `Source ${id} brought back in.\n`);
         return 0;
       });
     }
@@ -296,7 +299,8 @@ async function run(argv: string[], io: Io): Promise<number> {
       const id = needId(positionals[0], 'thread');
       return withStore(io, (store) => {
         store.setNotMine(id, !values.undo);
-        io.out(values.undo ? `Thread ${id} is yours again.\n` : `Thread ${id} marked not mine; it stays in history.\n`);
+        if (values.json) json({ thread: id, notMine: !values.undo });
+        else io.out(values.undo ? `Thread ${id} is yours again.\n` : `Thread ${id} marked not mine; it stays in history.\n`);
         return 0;
       });
     }

@@ -40,10 +40,11 @@ describe('the skeinwise command', () => {
   it('prints help and version', async () => {
     expect((await cli('help')).out).toContain('Usage: skeinwise');
     expect((await cli('version')).out).toMatch(/^\d+\.\d+\.\d+\n$/);
+    expect(JSON.parse((await cli('version', '--json')).out)).toEqual({ version: expect.stringMatching(/^\d+\.\d+\.\d+$/) });
   });
 
   it('creates an owner-only record folder', async () => {
-    expect(await cli('init')).toMatchObject({ code: 0 });
+    expect(JSON.parse((await cli('init', '--json')).out)).toEqual({ home: join(dir, 'home') });
     expect(statSync(join(dir, 'home')).mode & 0o777).toBe(0o700);
     expect(statSync(join(dir, 'home', 'record.db')).isFile()).toBe(true);
   });
@@ -71,7 +72,7 @@ describe('the skeinwise command', () => {
 
     expect((await cli('stats')).out).toContain('Woven from 2 entries');
     expect((await cli('sources')).out).toMatch(/1 {2}in {4}vault \(notes\): 2 entries/);
-    expect((await cli('exclude', '1')).code).toBe(0);
+    expect(JSON.parse((await cli('exclude', '1', '--json')).out)).toEqual({ source: 1, status: 'out' });
     expect((await cli('search', 'rye')).out).toContain('Nothing found');
     expect((await cli('include', '1')).code).toBe(0);
     expect((await cli('search', 'rye')).out).toContain('[rye]');
