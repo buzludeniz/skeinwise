@@ -1,214 +1,234 @@
 # Skeinwise: the interface
 
-The app is a local web page served by `skeinwise serve` on 127.0.0.1. Every screen below works by keyboard, and every
-action on it is also an API call that the agent tools share.
+The app is a local web page served by `skeinwise serve` on 127.0.0.1. Every screen works by keyboard, and every
+action on it is also an API call that the agent servers share.
 
-## Capture bar
+## Look
 
-A thin bar along the top of the window, always visible:
+- **A dark canvas first.** The default theme is dark, because the brain view is points of light on a dark ground.
+  Panels sit on top of the canvas as cards with soft edges, and text uses one sans-serif family in three sizes.
+- **Icons** come from [Lucide](https://lucide.dev) (ISC licence). Skeinwise draws its own logo: a wound skein whose
+  loose end becomes a thread.
+- **Colours are ours** and live as CSS variables per theme (see Themes). The default theme, Dusk:
 
-- **Command bar** (⌥⌘K; Ctrl+Alt+K elsewhere)
-- **Add files**
-- **Live capture** toggle, with two status lines under it, for example "last saved 3 minutes ago" and "caught up 4
-  chats from Claude Code"
-- **Connect an agent**
-- **Get an export**: step-by-step guides for ChatGPT, Claude and Gemini
-- **Lock**
-- **Settings** (⌘,)
+  | Token | Value | Used for |
+  |---|---|---|
+  | `--ground` | `#0f1219` | The canvas and the window |
+  | `--panel` | `#181c26` | Rail, cards, menus |
+  | `--line` | `#2a3040` | Borders and dividers |
+  | `--ink` | `#e9e4d8` | Body text |
+  | `--ink-soft` | `#959aa8` | Secondary text |
+  | `--accent` | `#e3a857` | Focus rings, the selected item, live status |
 
-## Onboarding
+- **Sizes:** the rail is 76 px wide; panels open at 380 px from the right; body text is 14 px, headings 18 px, labels
+  12 px; corners are 10 px.
 
-Four screens, shown once on first run.
+## App menu
 
-### Welcome
+The Skeinwise mark at the top of the rail opens the app menu (⌥⌘K opens the command bar from anywhere, even with the
+menu closed). Its items, in order:
 
-One sentence on what Skeinwise does and one on privacy: everything stays in `~/.skeinwise`. A single **Start**
-button and a link to the docs.
+1. **Open Skeinwise**: brings the window forward.
+2. **Command bar** ⌥⌘K
+3. **Add files…**: a file picker for exports, notes and folders.
+4. **Record live**: a switch. Under it, two status lines that change as things happen, for example "saved 2 minutes
+   ago" and "caught up 3 chats from Claude Code · organised 41 new entries".
+5. **Connect ▸**: each agent found on this computer, with Connect or Connected.
+6. **Get an export ▸**: ChatGPT, Claude, Gemini. Each opens our step-by-step guide for requesting that export, and
+   Skeinwise watches Downloads for the file.
+7. **Lock**
+8. **Settings** ⌘,
+9. **Quit**: stops the local server.
+
+A desktop wrapper that puts the same menu in the system menu bar is on the list for later.
+
+## First run
 
 ### Set up
 
-Before anything is created, the screen lists exactly what will be made:
+One screen, shown before anything is created. It lists what will be made:
 
-- the record folder `~/.skeinwise`, readable only by this user account;
-- an empty record database;
-- the local web server on 127.0.0.1;
-- an MCP server entry for AI agents.
+- the `skeinwise` command;
+- an empty record in `~/.skeinwise`, readable only by this user account;
+- two local servers for AI agents: the **memory server** (search, ask, read and write) and the **window server**
+  (moves the app's view);
+- the local model: the one already found on this computer, or the one Skeinwise suggests, with its size and where it
+  will be saved.
 
-It also lists the agents it found on this computer (Claude Code, Codex, Cursor and others), each with a checkbox.
-**Set it up** creates them, and each line ticks green as it finishes.
+It also names the agents it found (Claude Code, Codex, Cursor and others), each with a checkbox. **Set it up** makes
+everything, and each line turns green as it finishes.
 
 ### Bring in
 
-Every source found: Claude Code and Codex history folders, export files in Downloads (ChatGPT, Claude, Gemini),
-Markdown folders and Obsidian vaults. Each one shows its size (entries and date range) and three choices: **Bring it
-in**, **Leave it out** or **Decide later**. Note folders also get a **Whose words?** picker: mine, or another person's
-name. **Bring in** imports the chosen sources. Original files are never changed.
+Every source found, as cards: Claude Code and Codex history, export files in Downloads (ChatGPT, Claude, Gemini),
+note folders and Obsidian vaults. Each card shows how much it holds (entries and date range) and three buttons:
+**Bring it in**, **Keep it out** and **Later**. A note folder also asks **Whose words?**: mine, or a person's name.
+Original files are never changed.
 
 ### Watch it grow
 
-The Map fills in live while the import and the first organiser run happen. A counter shows entries, threads and hubs.
-When they finish, the screen offers a three-tip tour and a **Done** button that opens the main window.
+The brain fills in point by point while the import and the first organising pass run, with a counter of entries,
+threads and hubs. When they finish, a three-tip tour and **Done**.
 
 ## Rail
 
-A narrow left column of icons with labels:
+A narrow column on the left, icon above label:
 
-| Item | Opens |
-|---|---|
-| Search (⌘K) | The command bar |
-| Map | The 3D view of the record |
-| Browse | Folders, hubs, threads and notes in columns |
-| Figures | Plain numbers about the record |
-| Timeline | Activity over time |
-| Portrait | What the record says about you |
-| Lab | The table builder and Tides |
-| Guide | How to read the Map |
-| + Add | Add files, a note or a source |
+| Item | Icon | Opens |
+|---|---|---|
+| Search ⌘K | `search` | The command bar |
+| Brain | `brain` | The 3D view of the record |
+| Navigator | `compass` | Folders, hubs, threads and notes in columns |
+| Numbers | `hash` | Plain figures about the record |
+| Timeline | `calendar-range` | Activity over time |
+| You | `user-round` | What the record says about you |
+| Lab | `flask-conical` | The table builder and Tides |
+| Learn | `graduation-cap` | How to read the brain |
+| + Add | `plus` | Add files, a note or a source |
 
-Keys 1 to 8 switch views. The footer reads "Woven from N entries" and links to Figures.
+Keys 1 to 8 switch views. A Review badge sits on Navigator when notes wait for review. The footer reads "Woven from N
+entries" and links to Numbers.
 
-## The Map
+## Brain
 
-The main view: a dark canvas with a 3D point cloud shaped as a brain, with two lobes and a twisted, helical stem.
+The main view: a dark canvas holding a 3D point cloud in the shape of a brain, with a brainstem and a spine below it.
 
-- Each point in the lobes is a note, a topic hub or a summary. The stem holds the original messages and files, wound
-  in time order from the base up.
-- Points are coloured by group: folder, source, speaker or hub, chosen in the legend.
-- Drag to rotate, scroll to zoom, and double-click a point to open it. Hovering shows a card with the title, date and
-  source.
-- Top right: a search field that highlights matches, a **Fit** button, and view settings (point size, line density,
-  labels on or off, auto-rotate).
-- A legend at the foot ("Grouped by folder") lists the groups with counts and "+N more". Clicking a group isolates
-  it.
+- **Points.** In the two lobes, each point is a note, a concept hub or a summary. The brainstem and spine hold the
+  originals (messages and files), wound in time order from the bottom up, so the oldest words sit lowest.
+- **Colour** is the group: project, folder, source, speaker or hub, chosen in the legend.
+- **Moving.** Drag to rotate, scroll or pinch to zoom, double-click a point to open it. The cloud turns slowly on its
+  own until you touch it.
+- **Hover** shows a small card with the title, date and source.
+- **Top right:** a search field that lights up matching points and dims the rest, **Fit** (frames the whole cloud),
+  and view settings (point size, line density, labels, slow turning).
+- **Legend** along the foot, with a switch for the grouping ("By project", "By folder", "By source", "By speaker").
+  Each group shows its count, the list ends in "+N more", and clicking a group isolates it.
+- **Layouts:** Brain, Year rings (below), and a flat Clusters layout.
 
-## Guide
+## Learn
 
-A side panel titled "How to read your map".
+A side panel titled "Reading your brain", in short plain paragraphs:
 
-- **Points:** hubs (large and labelled), notes, summaries, originals in the stem, and clusters of related points.
-- **Lines:** a *thread line* joins messages in one conversation; a *cross link* joins two entries about the same thing;
-  a *note link* is a `[[link]]` you wrote; a *hub spoke* joins an entry to the hub it is filed under; a *time chain*
-  joins entries in date order; a *label leader* runs from a label to its point.
-- **Colour** is the group. **Size** is how many entries a point gathers.
+- **Hubs:** the large labelled points, one per concept the organiser found.
+- **Brainstem and spine:** the originals, oldest at the bottom.
+- **Clusters:** points close together share words and links.
+- **The index:** what search reads, and how it ranks your own words first.
+- **Colour and labels:** what the legend's grouping does, and when labels show.
+- **The lines:** a *thread* joins messages in one conversation; a *bridge* joins two entries about the same thing
+  from different places; a *note link* is a `[[link]]` you wrote; a *hub link* joins an entry to its hub; a *time
+  chain* joins entries in date order; a *label spark* flashes from a label to its points on hover; a *label leader*
+  holds a label to its point.
 
-## Hub panel
+## Concept hub panel
 
-Opens when you click a hub. The header shows the hub's name, its kind ("Topic hub"), and a note that the organiser
-wrote it, naming the engine and the run. Three sections follow: **In short**, **What you found** and **Open ends**.
-Every bullet cites a dated quote of your own words, with a link to the entry it came from. Buttons: **Rename**,
-**Merge into…**, **Not useful** (removes the hub) and **Regenerate**.
+Opens from the right when you click a hub. The header shows the hub's name, its kind ("Concept hub") and a line saying
+this is the organiser's reading of your entries, not your words, with the engine and the run that wrote it. Three
+sections follow: **In short**, **What you found** and **Open ends**. Every bullet cites a dated quote of your own
+words, and its link opens the entry it came from. Buttons: **Rename**, **Merge into…**, **Not useful** and
+**Refresh**.
 
 ## Year rings
 
-The Map seen from above as rings. Time runs from the centre outward, one ring per year, with months as slices. A "How
-to read this" box explains position (when), colour (group), size (entries) and lines. The legend groups points by
-month, plus Untagged and Other notes. The same menu switches back to the brain shape.
+The record seen from above as rings: time runs from the centre outward, one ring per year, months as slices. A "How
+to read this" box names the four channels: **Place** (when), **Colour** (group), **Size** (how many entries) and
+**Lines**. The legend groups points by month, with Untagged and Other notes at the end.
 
 ## Timeline
 
-Charts of entries per week, split by source or speaker. Drag across a span to select it, and the matching points light
-up in the Map, which stays visible above the chart. A date range picker has presets: last month, last year, all.
+Charts of entries per week, split by source or speaker. Drag across a span and the matching points light up in the
+brain, which stays visible in a strip above the chart. Presets: last month, last year, all.
 
 ## Lab
 
-A table builder. Pick any two properties for the axes (time, folder, source, speaker, tag, hub) and a third as a
-filter, then one of six forms: table, heatmap, bars, stacked bars, lines or dots. Clicking a cell lists its entries.
+**Table builder:** two properties on the axes (time, folder, project, hub, source, speaker, tag), a third as a
+filter, and one of six forms: table, heatmap, bars, stacked bars, lines or dots. Clicking a cell lists its entries.
 Views can be saved.
 
-A second tab, **Tides**, draws each topic's activity over time as a line, with a linear or log scale and a smoothing
-slider.
+**Tides:** each topic's activity over time as a line, with a linear or log scale and a smoothing slider.
 
-## Browse
+## Navigator
 
-Three columns: folders and hubs on the left, threads and notes in the middle, the reader on the right. Sort by date or
-name; filter by source, speaker and date. An **Inbox** folder holds entries not yet filed.
+Three columns: folders and hubs, then threads and notes, then the reader. Sort by date or name; filter by source,
+speaker and date. **Inbox** holds entries not yet filed; **Review** holds notes that may be out of date; **Runs**
+lists every organising pass.
 
 ## Reader
 
-Shows one entry or a whole thread.
+One entry or a whole thread.
 
-- **Layer tabs:** Original, Cleaned, Expanded, Digest, Ideas. Only Original is your words. The other tabs carry a band
-  naming the engine, model and run that wrote them.
-- **Neighbours:** the entries before and after, and the most similar ones.
+- **Layers,** as tabs left to right: Original, Cleaned, Expanded, Digest, Ideas. Only Original is your words; every
+  other tab carries a band naming the engine, model and run that wrote it.
+- **Neighbours:** the entries just before and after, and the most similar ones.
 - **History:** each version with its editor (import, you, or an agent's name) and date. An entry an agent changed
-  shows "Edited by an agent" at the top.
+  says "Edited by an agent" at the top.
 - **Buttons:** Edit, Not mine (for a thread), Copy link.
 
 ## Notes editor
 
-**Edit** opens the note's Markdown file in a plain editor with a preview. Typing `[[` suggests note names. Saving writes
-the file and adds a version. From the command bar, `note …` appends a line to today's daily note and `new note …`
-starts a note with that title.
+**Edit** opens the note's Markdown file in a plain editor beside a preview. Typing `[[` suggests note names as you
+type. Saving writes the file and adds a version. From the command bar, `note …` adds a line to today's daily note and
+`new note …` starts a note with that title.
 
 ## Review
 
-A queue of notes the organiser thinks may be out of date, each shown with the newer entries that suggest so and the
-reason. For each: **Update** (the proposed change is shown as a diff first), **Still holds** or **Skip**. The rail shows
-a count badge. Nothing changes without a click.
+Notes the organiser thinks have gone stale, each with the newer entries behind that and the reason in one line. For
+each one: **Update** (the proposed change shows as a diff first), **Still holds** or **Skip**. Nothing changes
+without a click, and the list marks each note Updated or Still holds once you choose.
 
 ## Folders, runs and undo
 
-- **Folders** lists folders with entry counts. Merging two keeps the old name as an alias, and the toast offers
-  **Undo**.
-- **Runs** lists every organiser run with its task, engine, model, time and counts. **Undo run** removes everything
-  that run made.
+- **Folders** lists folders with counts. Merging two keeps the old name as an alias, and the toast offers **Undo**.
+- **Runs** lists every organising pass with its task, engine, model, time and counts. **Undo run** removes all it
+  made.
 - ⌘Z undoes the last change.
 
-## Portrait
+## You
 
-What the record says about you: the topics you return to most, your projects by time span, the people you mention,
-and the first and latest date for each. Every line links to the entries behind it. **Check a claim** takes a sentence
-(a line from a CV, say) and shows the entries that support or contradict it.
+What the record says about you: the topics you return to, your projects by time span, the people you mention, and the
+first and latest date for each. Every line links to the entries behind it. **Check a claim** takes a sentence, a line
+from a CV say, and shows the entries that back it up or argue with it.
 
-## Figures
+## Numbers
 
-Plain numbers: entries, threads, notes, hubs and sources; words by you and by assistants; the busiest months; and the
-organiser's coverage (the share of entries tagged, filed and summarised).
+Entries, threads, notes, hubs and sources; your words and the assistants'; the busiest months; and how far the
+organiser has got (the share of entries tagged, filed and summarised).
 
 ## Command bar
 
-One field (⌘K) for search, questions and commands.
+One field, ⌘K inside the window and ⌥⌘K from the app menu, for search, questions and commands.
 
-- Typing lists matching entries as you type.
-- A question ("when did I first mention X?") returns a view of your own entries and highlights them in the Map.
-- Commands: `note …`, `new note …`, `open …`, `go to …`, `run tagging`, `undo`, `lock`, `theme …`.
+- Typing lists matching entries as you go.
+- A question ("when did I first mention X?") answers with a view of your own entries and lights them up in the brain.
+- Commands: `note …`, `new note …`, `open …`, `go to …`, `organise`, `undo`, `lock`, `theme …`.
+
+## Compact window
+
+A small window for a side of the screen, with tabs **Brain**, **Notes**, **Write**, **Add** and **More** (Review,
+Folders, Runs, Undo). It is the same app at a narrower width, so everything in it also works in the full window.
 
 ## Settings
 
-| Section | What it holds |
+Groups, top to bottom:
+
+| Group | Holds |
 |---|---|
-| Engine | No AI; a local model through an OpenAI-compatible URL (llama.cpp, Ollama); or a hosted endpoint. A **Test** button |
-| Budget | A monthly token cap. At the cap, runs pause until the month resets |
-| Privacy | Redaction before any outside model (names, emails, phone numbers, addresses, health words); exclusion rules by source, folder or pattern; the record folder's permissions and a disk-encryption check |
-| Agents | Connected agents, **Copy config** for each, and **Copy a sample question** |
-| Sync | An encrypted bundle to a folder you choose, a passphrase and recovery words |
+| Sync | An encrypted copy in a folder you choose, a passphrase and recovery words |
+| AI agents | Connected agents, **Copy config** for each, **Copy a sample question** |
+| AI model | **Local model** (the default: its address, the model file, a **Test** button), **Outside model** (address, model, the env var holding the key), or **No AI** |
+| Usage cap | A monthly token cap for an outside model. At the cap, runs wait for the next month |
 | Proof of date | On or off |
 | Backup | A zip of the record, on demand or daily |
+| Exclusions | Rules by source, folder or pattern; redaction before any outside model |
 | Appearance | Theme and palette |
 
 ## Themes
 
-Six app themes: Dusk, Linen, Slate, Moss, Ink and Paper. Seven palettes for the points: Ember, Tide, Lichen, Heather,
-Graphite, Saffron and Mono. The choice is remembered, and every theme keeps enough contrast for text.
+Six app themes: Dusk (the default), Ink, Slate, Moss, Linen and Paper; the last two are light. Seven palettes for the
+points: Ember, Tide, Lichen, Heather, Graphite, Saffron and Mono. The choice is remembered, and every theme keeps text
+contrast at WCAG AA or better.
 
 ## Lock and updates
 
-**Lock** hides the window behind a passphrase screen and stops the agent tools until you unlock it. When a new release
-is out, a thin banner says "Skeinwise X.Y is out" with **Update** (opens the release notes and the update command) and
-**Later**.
-
----
-
-## How this document was written
-
-A small model running on this machine drafted it: Qwen3-4B (Q4_K_M GGUF from ggml-org on Hugging Face) under
-llama.cpp's `llama-server`, temperature 0.4, thinking off, one section at a time from a short outline. The drafts were
-then checked and corrected by hand. The corrections:
-
-- **Padding cut.** Most sections closed with several sentences of generic praise ("designed to be intuitive"). They
-  were removed.
-- **Made-up facts removed.** The Figures draft invented a page of statistics. The hub panel draft invented quotes and
-  dates. The update draft invented an automatic download and restart.
-- **Wrong descriptions fixed.** The rail draft described Lab as a notes tool and Figures as diagrams. The browse draft
-  had hubs grouping folders. The command bar draft had `lock` locking single entries. The review draft showed the diff
-  before the person chose to update.
+**Lock** covers the window with an unlock screen and stops both agent servers until you unlock. Before an agent's
+first read, the window asks you to allow it; where the browser supports passkeys, Touch ID can confirm. When a new
+release is out, a thin banner says "Skeinwise X.Y is out" with **Update** and **Later**.

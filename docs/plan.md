@@ -10,13 +10,15 @@ as long-term memory. Everything stays on your computer.
 1. **Your words are never rewritten.** Originals are append-only. Everything a machine adds (tags, folders, links,
    summaries, rewrites) lives in a separate layer, labelled with the engine, model and run that made it, and every run
    can be undone.
-2. **Local first.** The record is a folder on your machine. Nothing leaves it unless you switch on a route, and the
-   default engine is a small model on your own computer, or no model at all.
-3. **Works with no AI.** A deterministic engine (keyword statistics, clustering and similarity) organises the whole
-   record offline. A model makes it better, never possible.
-4. **Plain, portable data.** One SQLite file plus your Markdown notes. Any tool can read them, and the index can be
+2. **Local first.** The record is a folder on your machine. Nothing leaves it unless you switch on a route. The
+   built-in AI is a small model on your own computer, and it is the default.
+3. **It keeps itself current.** Live capture brings new chats and notes in as they happen, and the local model tags,
+   files, links and summarises them in the background. You never have to run an import or an organising pass by hand.
+4. **Works with no AI too.** A deterministic engine (keyword statistics, clustering and similarity) organises the
+   whole record offline for people who want no model at all.
+5. **Plain, portable data.** One SQLite file plus your Markdown notes. Any tool can read them, and the index can be
    rebuilt.
-5. **Everything a click can do, an agent can do.** The UI and the agent tools share one API.
+6. **Everything a click can do, an agent can do.** The UI and the agent tools share one API.
 
 ## Stack
 
@@ -25,20 +27,20 @@ as long-term memory. Everything stays on your computer.
 | Runtime | Node 26, TypeScript, pnpm | One language end to end; `node:sqlite` is built in |
 | Store | `node:sqlite` (SQLite 3.54, FTS5) | No native build step, full-text search included |
 | Server | `node:http` with a small router | No framework needed for a local API |
-| UI | Vite, Preact, three.js | Small bundle, real 3D |
-| Engine | No-AI (built in) or any OpenAI-compatible endpoint (llama.cpp `llama-server`, Ollama, LM Studio, hosted) | Local by default |
-| Agents | MCP server over stdio (`@modelcontextprotocol/sdk`) | Claude Code, Codex, Cursor and others connect with one config |
+| UI | Vite, Preact, three.js, Lucide icons | Small bundle, real 3D, open-licensed icons |
+| Engine | A local model through an OpenAI-compatible server (llama.cpp `llama-server` or Ollama; Qwen3-4B suggested) by default, an outside endpoint, or No AI | The built-in AI runs on your computer |
+| Agents | Two MCP servers over stdio (`@modelcontextprotocol/sdk`): memory and window | Claude Code, Codex, Cursor and others connect with one config |
 | Tests | Vitest (unit and integration), Playwright (end to end) | |
 | CI | GitHub Actions: typecheck, test, build | Every push |
 
 ## Architecture
 
 ```
-sources ──► importers ──► record (SQLite: sources, threads, entries, versions)   ◄── originals, append-only
+sources ──► live capture / importers ──► record (SQLite: sources, threads, entries, versions)   ◄── originals, append-only
                               │
                               ├─► index (FTS5 + term vectors)
                               │
-engine (No-AI | model) ──► runs ──► derived layer (tags, folders, links, hubs, layers, notes)  ◄── undoable
+engine (local | outside | none) ──► runs ──► derived layer (tags, folders, links, hubs, layers, notes)  ◄── undoable
                               │
             ┌─────────────────┼──────────────────┐
            CLI          HTTP API + UI        MCP server
@@ -56,19 +58,19 @@ engine (No-AI | model) ──► runs ──► derived layer (tags, folders, li
 
 ### Screens
 
-Onboarding (Welcome, Set up, Bring in, Watch it grow) · rail with Search ⌘K, Map, Browse, Figures, Timeline, Portrait,
-Lab, Guide, Add · the 3D Map · entry reader with its layers and history · hub panel · year rings · table builder
-and tides · notes editor with `[[links]]` and a daily note · review queue · capture bar (live capture, add files,
-request an export, lock) · settings (engine, budget, privacy, agents, sync, proof of date, exclusions) · themes and
-palettes. Full detail: [ui.md](ui.md).
+App menu (command bar, add files, Record live with status lines, connect, get an export, lock, settings) · first run
+(Set up, Bring in, Watch it grow) · rail with Search ⌘K, Brain, Navigator, Numbers, Timeline, You, Lab, Learn, + Add
+· the 3D brain with brainstem and spine · Learn panel · concept hub panel · entry reader with its layers and history ·
+year rings · timeline · table builder and Tides · notes editor with `[[links]]` and a daily note · review queue ·
+compact window · settings (sync, agents, AI model, usage cap, proof of date, backup, exclusions, appearance) · six
+themes and seven palettes. Full detail: [ui.md](ui.md).
 
 ### Features
 
-Importers (ChatGPT, Claude, Gemini, Claude Code, Codex, Markdown and Obsidian folders, plain text) · dedupe and
-versions · full-text and similarity search · questions answered as views · tagging, filing, linking, hubs and
+The update stream (live capture plus background organising by the local model) · importers (ChatGPT, Claude,
+Gemini, Claude Code, Codex, Markdown and Obsidian folders, plain text) · dedupe and versions · full-text and similarity search · questions answered as views · tagging, filing, linking, hubs and
 summary layers · tagging schemas with sized runs and coverage · corrections (edit, merge folders, not mine, exclude
-a source, undo) · note review for staleness · redaction before any outside model, and a budget cap · MCP agent tools
-· live capture of agent histories and followed folders · tamper-evident ledger with date proofs · encrypted sync
+a source, undo) · note review for staleness · redaction before any outside model, and a usage cap · memory and window MCP servers · tamper-evident ledger with date proofs · encrypted sync
 bundles. Full detail: [features.md](features.md).
 
 ### Not in scope (yet)
@@ -80,12 +82,8 @@ A browser extension, Notion, Evernote and Slack connectors, mobile apps, a hoste
 | Tag | Delivers |
 |---|---|
 | v0.1.0 | Record store, importers, dedupe and versions, search, CLI, demo record |
-| v0.2.0 | No-AI and model engines, runs with provenance and undo, corrections, notes, review |
-| v0.3.0 | Web UI: onboarding, 3D Map, reader, hubs, timeline, lab, themes, command bar, settings |
-| v0.4.0 | MCP server and window control, live capture, ledger, encrypted sync |
+| v0.2.0 | The organiser: the local model (default), outside model and No-AI engines; runs with provenance and undo; `--scope new`; corrections; notes; review; ask |
+| v0.3.0 | The update stream: live capture, background organising of new entries, `skeinwise model` |
+| v0.4.0 | Web UI: first run, app menu, rail, 3D brain, Learn, hubs, reader, year rings, timeline, Lab, themes, command bar, settings |
+| v0.5.0 | Memory and window MCP servers, ledger and proof of date, encrypted sync |
 
-## How the detail docs were written
-
-`ui.md` and `features.md` were drafted by a small language model running locally (llama.cpp), from an outline, then
-checked and corrected by hand. The notes at the end of each file say which model was used and what was corrected;
-the raw drafts are kept in [drafts/](drafts/).

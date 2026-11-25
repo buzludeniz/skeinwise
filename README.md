@@ -1,9 +1,10 @@
 # Skeinwise
 
 **A second brain that organises itself.** Skeinwise gathers your AI conversations, your notes and the folders you
-choose into one dated record on your own computer. Local agents then tag, file, link and summarise that record without
-changing a word you wrote. You can explore the result as a 3D map, ask it questions in plain words, or lend it to your
-AI tools as long-term memory.
+choose into one dated record on your own computer, and keeps it current as you work: new chats and notes come in live,
+and a small AI model running on your machine tags, files, links and summarises them in the background, without
+changing a word you wrote. You can explore the result as a 3D brain, ask it questions in plain words, or lend it to
+your AI tools as long-term memory.
 
 > **Status:** v0.1.0, the record and the command line. Each milestone below ships as a tagged release.
 
@@ -17,20 +18,22 @@ skein:
   labelled with the engine, model and run that made it, and you can undo any run.
 - **Local first.** Everything lives in one folder on your machine (`~/.skeinwise`). Nothing leaves it unless you turn
   on a route.
-- **Works with no AI.** A built-in engine organises the record with keyword statistics and clustering. A small local
-  model (through llama.cpp or Ollama) or any OpenAI-compatible endpoint makes the results better.
+- **Its own AI, on your computer.** The built-in engine is a small local model (Qwen3-4B is the suggestion) served by
+  llama.cpp or Ollama. You can point it at an outside model instead, or turn AI off and let keyword statistics and
+  clustering do the organising.
 - **Plain data.** The record is one SQLite file plus your Markdown notes.
-- **Ready for agents.** An MCP server gives Claude Code, Codex, Cursor and other tools search, read and note tools over
-  your record.
+- **Ready for agents.** Two MCP servers give Claude Code, Codex, Cursor and other tools memory over your record and a
+  way to steer the app's view.
 
 ## Roadmap
 
 | Release | What it brings |
 |---|---|
 | v0.1.0 | The record: importers for ChatGPT, Claude, Gemini, Claude Code, Codex, Markdown folders and text; dedupe and versions; full-text search; the `skeinwise` command; a demo record |
-| v0.2.0 | The organiser: the No-AI engine and the model engine; runs with provenance and undo; corrections; notes; review |
-| v0.3.0 | The app: onboarding, the 3D brain, the reader, hubs, timeline, year rings, the lab, themes, the command bar and settings |
-| v0.4.0 | Agents and safety: the MCP server and window control; live capture; the ledger with date proofs; encrypted sync |
+| v0.2.0 | The organiser: the local model (default), an outside model or No AI; runs with provenance and undo; corrections; notes; review; ask |
+| v0.3.0 | The update stream: live capture and background organising of what's new; `skeinwise model` to check or fetch the local model |
+| v0.4.0 | The app: first run, the 3D brain, Navigator, the reader, concept hubs, timeline, year rings, the Lab, themes, the command bar and settings |
+| v0.5.0 | Agents and safety: the memory and window MCP servers; the ledger with date proofs; encrypted sync |
 
 ## Quick start
 
