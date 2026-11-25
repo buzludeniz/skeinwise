@@ -1,8 +1,10 @@
-// config.json in the home folder: the app's settings. Reading fills in defaults; writing applies a checked patch
-// and keeps any keys this module doesn't know, so other parts of Skeinwise can keep their own settings there.
+// The app's settings. The engine, the model addresses, the token cap and redaction belong to the organiser and live in
+// config.json (src/config.ts), so the CLI and the app agree on them; everything else lives in app.json beside it.
+// Reading fills in defaults; writing applies a checked patch and keeps any keys this module doesn't know.
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { loadConfig, parseConfigValue, saveConfig, type Config as EngineConfig } from '../config.ts';
 
 export const THEMES = ['dusk', 'ink', 'slate', 'moss', 'linen', 'paper'] as const;
 export const PALETTES = ['ember', 'tide', 'lichen', 'heather', 'graphite', 'saffron', 'mono'] as const;
@@ -57,10 +59,10 @@ export const DEFAULT_CONFIG: Config = {
   agents: { chosen: [] },
   ai: {
     engine: 'local',
-    local: { address: 'http://127.0.0.1:8731/v1', model: 'qwen3-4b-q4_k_m.gguf' },
-    remote: { address: '', model: '', keyEnv: 'SKEINWISE_API_KEY' },
+    local: { address: 'http://127.0.0.1:8731/v1', model: '' },
+    remote: { address: '', model: '', keyEnv: '' },
   },
-  usageCap: { monthlyTokens: 2_000_000 },
+  usageCap: { monthlyTokens: 1_000_000 },
   proofOfDate: false,
   backup: { daily: false },
   exclusions: { rules: [], redact: true },
@@ -160,15 +162,89 @@ function merge(base: Obj, patch: Obj): Obj {
   return out;
 }
 
+export const APP_FILE = 'app.json';
+
 function readRaw(home: string): Obj {
-  const file = join(home, 'config.json');
+  const file = join(home, APP_FILE);
   if (!existsSync(file)) return {};
   try {
     const data = JSON.parse(readFileSync(file, 'utf8')) as unknown;
     return isObj(data) ? data : {};
   } catch {
-    throw new ConfigError(`config.json in ${home} is not valid JSON; fix or remove it`);
+    throw new ConfigError(`${APP_FILE} in ${home} is not valid JSON; fix or remove it`);
   }
+}
+
+/** The organiser's settings that the app shows, read from config.json. A bad file there fails loudly. */
+function engineSettings(home: string): Pick<Config, 'ai' | 'usageCap'> & { redact: boolean } {
+  const c = loadConfig(home);
+  return {
+    ai: {
+      engine: c.engine,
+      local: { address: c.localUrl, model: c.localModel },
+      remote: { address: c.remoteUrl, model: c.remoteModel, keyEnv: c.apiKeyEnv },
+    },
+    usageCap: { monthlyTokens: c.budget },
+    redact: c.redaction,
+  };
+}
+
+/** Where each app setting kept in config.json lives there. */
+const ENGINE_KEYS: [path: string, key: keyof EngineConfig][] = [
+  ['ai.engine', 'engine'],
+  ['ai.local.address', 'localUrl'],
+  ['ai.local.model', 'localModel'],
+  ['ai.remote.address', 'remoteUrl'],
+  ['ai.remote.model', 'remoteModel'],
+  ['ai.remote.keyEnv', 'apiKeyEnv'],
+  ['usageCap.monthlyTokens', 'budget'],
+  ['exclusions.redact', 'redaction'],
+];
+
+function take(obj: Obj, path: string): { found: boolean; value: unknown } {
+  const keys = path.split('.');
+  let at: unknown = obj;
+  for (const k of keys.slice(0, -1)) {
+    if (!isObj(at)) return { found: false, value: undefined };
+    at = at[k];
+  }
+  const last = keys.at(-1)!;
+  if (!isObj(at) || !(last in at)) return { found: false, value: undefined };
+  const value = at[last];
+  delete at[last];
+  return { found: true, value };
+}
+
+/** Moves the organiser's settings out of a checked patch into config.json, with the organiser's own checks. */
+function writeEngineSettings(home: string, patch: Obj): void {
+  const changes: { key: keyof EngineConfig; value: unknown }[] = [];
+  for (const [path, key] of ENGINE_KEYS) {
+    const { found, value } = take(patch, path);
+    if (found) changes.push({ key, value });
+  }
+  if (!changes.length) return;
+  const config = loadConfig(home);
+  for (const { key, value } of changes) {
+    let parsed;
+    try {
+      parsed = parseConfigValue(key, String(value));
+    } catch (error) {
+      throw new ConfigError(error instanceof Error ? error.message : String(error));
+    }
+    (config as unknown as Obj)[parsed.key] = parsed.value;
+  }
+  saveConfig(home, config);
+}
+
+/** Drops objects a patch left empty once the organiser's settings were taken out. */
+function prune(obj: Obj): Obj {
+  for (const [k, v] of Object.entries(obj)) {
+    if (isObj(v) && k !== 'bringIn') {
+      prune(v);
+      if (!Object.keys(v).length) delete obj[k];
+    }
+  }
+  return obj;
 }
 
 /** The settings, defaults filled in. Values of the wrong type in the file fall back to the default. */
@@ -195,6 +271,10 @@ export function readConfig(home: string): Config {
     const group = config[a] as unknown as Obj;
     if (!allowed.includes(group[b] as string)) group[b] = (DEFAULT_CONFIG[a] as unknown as Obj)[b];
   }
+  const engine = engineSettings(home);
+  config.ai = engine.ai;
+  config.usageCap = engine.usageCap;
+  config.exclusions.redact = engine.redact;
   config.bringIn = isObj(raw.bringIn)
     ? (Object.fromEntries(
         Object.entries(raw.bringIn).filter(([, d]) => (DECISIONS as readonly string[]).includes(d as string)),
@@ -203,11 +283,14 @@ export function readConfig(home: string): Config {
   return config;
 }
 
-/** Applies a checked patch and writes config.json atomically. Returns the new settings. */
+/** Applies a checked patch, the organiser's part to config.json and the rest to app.json. Returns the new settings. */
 export function writeConfig(home: string, patch: unknown): Config {
   const clean = checkPatch(patch);
-  const next = merge(readRaw(home), clean);
-  const file = join(home, 'config.json');
+  writeEngineSettings(home, clean);
+  const rest = prune(clean);
+  if (!Object.keys(rest).length) return readConfig(home);
+  const next = merge(readRaw(home), rest);
+  const file = join(home, APP_FILE);
   writeFileSync(`${file}.tmp`, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
   renameSync(`${file}.tmp`, file);
   return readConfig(home);

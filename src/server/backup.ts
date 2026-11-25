@@ -3,7 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync }
 import { join, relative } from 'node:path';
 import { zipSync } from 'fflate';
 
-/** Writes a zip of the record (a consistent copy of record.db, the notes and config.json) into home/backups. */
+/** Writes a zip of the record (a consistent copy of record.db, the notes, config.json and app.json) into home/backups. */
 export function backup(home: string, db: DatabaseSync, now = new Date()): { file: string; bytes: number } {
   const dir = join(home, 'backups');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -26,8 +26,10 @@ export function backup(home: string, db: DatabaseSync, now = new Date()): { file
     }
   };
   if (statSync(notes, { throwIfNoEntry: false })?.isDirectory()) visit(notes);
-  const config = join(home, 'config.json');
-  if (statSync(config, { throwIfNoEntry: false })?.isFile()) files['config.json'] = new Uint8Array(readFileSync(config));
+  for (const name of ['config.json', 'app.json']) {
+    const file = join(home, name);
+    if (statSync(file, { throwIfNoEntry: false })?.isFile()) files[name] = new Uint8Array(readFileSync(file));
+  }
   const zip = zipSync(files, { level: 6 });
   const file = join(dir, `skeinwise-${stamp}.zip`);
   writeFileSync(file, zip, { mode: 0o600 });
