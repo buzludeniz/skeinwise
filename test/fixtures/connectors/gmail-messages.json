@@ -1,0 +1,171 @@
+{
+  "msg-a1": {
+    "id": "msg-a1",
+    "threadId": "thr-picnic",
+    "labelIds": [
+      "INBOX"
+    ],
+    "internalDate": "1795168800000",
+    "snippet": "Shall we meet at the lake",
+    "payload": {
+      "mimeType": "text/plain",
+      "headers": [
+        {
+          "name": "From",
+          "value": "Ada Example <ada@example.org>"
+        },
+        {
+          "name": "To",
+          "value": "sam@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Picnic plans"
+        },
+        {
+          "name": "Content-Type",
+          "value": "text/plain; charset=\"UTF-8\""
+        }
+      ],
+      "body": {
+        "data": "U2hhbGwgd2UgbWVldCBhdCB0aGUgbGFrZSBvbiBTYXR1cmRheT8KSSBjYW4gYnJpbmcgYnJlYWQu"
+      }
+    }
+  },
+  "msg-a2": {
+    "id": "msg-a2",
+    "threadId": "thr-picnic",
+    "labelIds": [
+      "SENT"
+    ],
+    "internalDate": "1795172400000",
+    "payload": {
+      "mimeType": "multipart/alternative",
+      "headers": [
+        {
+          "name": "From",
+          "value": "Sam Example <sam@example.com>"
+        },
+        {
+          "name": "To",
+          "value": "ada@example.org"
+        },
+        {
+          "name": "Subject",
+          "value": "Re: Picnic plans"
+        }
+      ],
+      "parts": [
+        {
+          "mimeType": "text/plain",
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "text/plain; charset=utf-8"
+            }
+          ],
+          "body": {
+            "data": "U2F0dXJkYXkgd29ya3MuIEknbGwgYnJpbmcgY2hlZXNlLgoKT24gVGh1LCBOb3YgMjAsIDIwMjYgYXQgMTA6MDAgQU0gQWRhIEV4YW1wbGUgPGFkYUBleGFtcGxlLm9yZz4gd3JvdGU6Cj4gU2hhbGwgd2UgbWVldCBhdCB0aGUgbGFrZSBvbiBTYXR1cmRheT8KPiBJIGNhbiBicmluZyBicmVhZC4"
+          }
+        },
+        {
+          "mimeType": "text/html",
+          "body": {
+            "data": "PGRpdj5TYXR1cmRheSB3b3Jrcy4gSSdsbCBicmluZyBjaGVlc2UuPC9kaXY-"
+          }
+        }
+      ]
+    }
+  },
+  "msg-b1": {
+    "id": "msg-b1",
+    "threadId": "thr-library",
+    "labelIds": [
+      "INBOX"
+    ],
+    "internalDate": "1795249800000",
+    "payload": {
+      "mimeType": "multipart/mixed",
+      "headers": [
+        {
+          "name": "From",
+          "value": "\"Town Library\" <desk@library.example>"
+        },
+        {
+          "name": "Subject",
+          "value": "Your card renews soon"
+        }
+      ],
+      "parts": [
+        {
+          "mimeType": "text/html",
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "text/html; charset=utf-8"
+            }
+          ],
+          "body": {
+            "data": "PGh0bWw-PGhlYWQ-PHN0eWxlPnAgeyBjb2xvcjogcmVkIH08L3N0eWxlPjwvaGVhZD48Ym9keT48cD5Zb3VyIGNhcmQgcmVuZXdzIG9uIDxiPjEgRGVjZW1iZXI8L2I-LjwvcD48cD5GZWVzICZhbXA7IGZpbmVzOiBub25lLjwvcD48L2JvZHk-PC9odG1sPg"
+          }
+        },
+        {
+          "mimeType": "application/pdf",
+          "filename": "card.pdf",
+          "body": {
+            "attachmentId": "att-1",
+            "size": 1200
+          }
+        }
+      ]
+    }
+  },
+  "msg-spam": {
+    "id": "msg-spam",
+    "threadId": "thr-spam",
+    "labelIds": [
+      "SPAM"
+    ],
+    "internalDate": "1795336200000",
+    "payload": {
+      "mimeType": "text/plain",
+      "headers": [
+        {
+          "name": "From",
+          "value": "win@prize.example"
+        },
+        {
+          "name": "Subject",
+          "value": "You won"
+        }
+      ],
+      "body": {
+        "data": "Q2xpY2sgaGVyZQ"
+      }
+    }
+  },
+  "msg-a3": {
+    "id": "msg-a3",
+    "threadId": "thr-picnic",
+    "labelIds": [
+      "INBOX"
+    ],
+    "internalDate": "1795604400000",
+    "payload": {
+      "mimeType": "text/plain",
+      "headers": [
+        {
+          "name": "From",
+          "value": "Ada Example <ada@example.org>"
+        },
+        {
+          "name": "Subject",
+          "value": "Re: Picnic plans"
+        }
+      ],
+      "body": {
+        "data": "U2VlIHlvdSBhdCBub29uIGJ5IHRoZSBib2F0aG91c2Uu"
+      }
+    }
+  }
+}
