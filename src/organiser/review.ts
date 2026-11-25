@@ -1,0 +1,206 @@
+// The review task: notes of yours that newer entries may have overtaken. A note is checked against your entries dated
+// after it last changed that sit in one of its hubs or name it. A model reads them and says whether the note is out of
+// date, why, and how it would read updated. The No-AI engine flags a note when such an entry has a change cue
+// ("changing my mind", "decided", "no longer", "instead", "switch to", "move to"), and proposes the note with those
+// sentences added under "Updates".
+
+import { UsageError } from '../errors.ts';
+import type { Entry, Store } from '../store/store.ts';
+import { CHANGE_CUES } from './cues.ts';
+import { day, invalid, isRecord, list, type ModelRequest, type Plan, type TaskContext, text } from './plan.ts';
+import { isDailyNote, type RecordView, unlink } from './record.ts';
+import { cosine, sentences, tokenize, vectorize } from './text.ts';
+import { heldEntries, hubEntryIds, liveHubs, type Reason } from './views.ts';
+
+/** How many newer entries a model sees per note, and how much of each. */
+const MODEL_ENTRIES = 8;
+const ENTRY_CHARS = 600;
+const NOTE_CHARS = 4000;
+/** How close a cue sentence must be to the note, when it doesn't name the note. */
+const MIN_RELEVANCE = 0.1;
+
+interface Check {
+  note: Entry;
+  since: string;
+  newer: Entry[];
+}
+
+interface Flag {
+  note: Entry;
+  reasons: Reason[];
+  proposed: string;
+}
+
+export function planReview(ctx: TaskContext): Plan {
+  const checks = reviewChecks(ctx);
+  const asks = ctx.model ? checks.filter((c) => c.newer.length).map((c, i, all) => ({ check: c, ...reviewRequest(ctx.record, c, i + 1, all.length) })) : [];
+  return {
+    requests: asks.map((a) => a.request),
+    finish: (answers) => {
+      const flags: Flag[] = ctx.model
+        ? asks.flatMap((a, i) => {
+            const answer = answers[i] as ReviewAnswer;
+            if (!answer.stale) return [];
+            const reasons = answer.reasons.map((r) => reasonFor(ctx.record, a.check, a.shown[r.index]!, r.why));
+            return [{ note: a.check.note, reasons, proposed: answer.proposed }];
+          })
+        : checks.flatMap((c) => cueFlag(ctx.record, c));
+      return {
+        counts: { notes: checks.length, flagged: flags.length, reasons: flags.reduce((n, f) => n + f.reasons.length, 0) },
+        save: (db, runId) => {
+          const insert = db.prepare('INSERT INTO review_items (note_entry, reasons, proposed, run_id) VALUES (?, ?, ?, ?)');
+          for (const f of flags) insert.run(f.note.id, JSON.stringify(f.reasons), f.proposed, runId);
+        },
+      };
+    },
+  };
+}
+
+/** Your notes in live hubs (in scope, or in a hub that an entry in scope touches), with the newer entries to weigh. */
+function reviewChecks(ctx: TaskContext): Check[] {
+  const { record, db } = ctx;
+  const hubs = liveHubs(db);
+  if (!hubs.length) throw new UsageError('Review reads hubs, and there are none yet. Run the hub task first: skeinwise run hub');
+  const hubsOf = new Map<number, number[]>();
+  for (const h of hubs) for (const id of hubEntryIds(db, h.id)) hubsOf.set(id, [...(hubsOf.get(id) ?? []), h.id]);
+  const scoped = new Set(ctx.entries.map((e) => e.id));
+  const touched = new Set(ctx.entries.flatMap((e) => hubsOf.get(e.id) ?? []));
+  const notes = record.entries.filter(
+    (e) =>
+      e.kind === 'note' &&
+      e.speaker === 'you' &&
+      !isDailyNote(e) &&
+      hubsOf.has(e.id) &&
+      (ctx.scope.kind === 'all' || scoped.has(e.id) || hubsOf.get(e.id)!.some((h) => touched.has(h))),
+  );
+  return notes.map((note) => {
+    const since = lastChanged(record.store, note);
+    const held = heldEntries(db, note.id);
+    const own = new Set(hubsOf.get(note.id));
+    const name = titleStems(note);
+    const newer = record.entries.filter(
+      (e) =>
+        e.id !== note.id &&
+        e.speaker === 'you' &&
+        e.createdAt > since &&
+        !held.has(e.id) &&
+        ((hubsOf.get(e.id) ?? []).some((h) => own.has(h)) || (name.length > 0 && hasAll(e, name))),
+    );
+    return { note, since, newer };
+  });
+}
+
+/** When the note last changed: its newest version's date, or the date it was written if it never changed. */
+function lastChanged(store: Store, note: Entry): string {
+  if (note.version <= 1) return note.createdAt;
+  return store.history(note.id).at(-1)!.editedAt;
+}
+
+function titleStems(note: Entry): string[] {
+  return [...new Set(tokenize(note.title ?? ''))];
+}
+
+function hasAll(e: Entry, stems: string[]): boolean {
+  const set = new Set(tokenize(e.body));
+  return stems.every((s) => set.has(s));
+}
+
+/** The No-AI flag: newer entries with a change cue in a sentence that names the note or is close to it. */
+function cueFlag(record: RecordView, check: Check): Flag[] {
+  const noteVector = record.entryVector(check.note.id);
+  const name = titleStems(check.note);
+  const reasons: Reason[] = [];
+  const quoted = new Set<string>();
+  for (const e of check.newer) {
+    const hit = sentences(unlink(e.body))
+      .filter((s) => CHANGE_CUES.test(s))
+      .map((s) => ({ s, sim: cosine(vectorize(record.entryIndex, s), noteVector), named: name.length > 0 && name.every((n) => tokenize(s).includes(n)) }))
+      .filter((x) => x.named || x.sim > MIN_RELEVANCE)
+      .sort((a, b) => Number(b.named) - Number(a.named) || b.sim - a.sim)[0];
+    // The same sentence written again (a template, a pasted line) is one reason, at its first date.
+    if (!hit || quoted.has(hit.s.toLowerCase())) continue;
+    quoted.add(hit.s.toLowerCase());
+    const cue = CHANGE_CUES.exec(hit.s)![0];
+    reasons.push({
+      entryId: e.id,
+      date: day(e.createdAt),
+      quote: hit.s,
+      why: `Says "${cue.toLowerCase()}" after the note last changed (${day(check.since)}).`,
+    });
+  }
+  if (!reasons.length) return [];
+  return [{ note: check.note, reasons, proposed: withUpdates(check.note.body, reasons) }];
+}
+
+/** The note with dated lines under an "Updates" heading, added to the one already there if it is last. */
+export function withUpdates(body: string, reasons: Reason[]): string {
+  const lines = reasons.map((r) => `- ${r.date}: ${r.quote} (entry #${r.entryId})`).join('\n');
+  const trimmed = body.trimEnd();
+  const last = trimmed.lastIndexOf('\n## ');
+  const hasSection = /(^|\n)## Updates\s*(\n|$)/.test(trimmed.slice(last < 0 ? 0 : last));
+  return hasSection ? `${trimmed}\n${lines}\n` : `${trimmed}\n\n## Updates\n\n${lines}\n`;
+}
+
+/** The sentence of an entry that best shows why it matters to the note. */
+function reasonFor(record: RecordView, check: Check, e: Entry, why: string): Reason {
+  const noteVector = record.entryVector(check.note.id);
+  const list = sentences(unlink(e.body));
+  const best = list
+    .map((s) => ({ s, score: cosine(vectorize(record.entryIndex, s), noteVector) + (CHANGE_CUES.test(s) ? 1 : 0) }))
+    .sort((a, b) => b.score - a.score)[0];
+  return { entryId: e.id, date: day(e.createdAt), quote: best?.s ?? e.body.slice(0, 200), why };
+}
+
+type ReviewAnswer = { stale: boolean; reasons: { index: number; why: string }[]; proposed: string };
+
+function reviewRequest(record: RecordView, check: Check, n: number, of: number): { request: ModelRequest; shown: Entry[] } {
+  const purpose = `review ${n} of ${of}`;
+  const noteVector = record.entryVector(check.note.id);
+  const shown = [...check.newer]
+    .map((e) => ({ e, score: cosine(record.entryVector(e.id), noteVector) + (CHANGE_CUES.test(e.body) ? 1 : 0) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MODEL_ENTRIES)
+    .map((x) => x.e)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id - b.id);
+  const known = new Map(shown.map((e, i) => [`E${e.id}`, i]));
+  const user = [
+    `My note "${check.note.title ?? 'untitled'}", last changed ${day(check.since)}:`,
+    '"""',
+    check.note.body.slice(0, NOTE_CHARS),
+    '"""',
+    '',
+    'Entries I wrote after that, oldest first:',
+    ...shown.map((e) => `E${e.id} (${day(e.createdAt)}): ${e.body.replace(/\s+/g, ' ').slice(0, ENTRY_CHARS)}`),
+    '',
+    'Do any of these entries show that something in the note is no longer true or no longer my plan?',
+    'Answer with JSON only: {"stale": true, "reasons": [{"entry": "E1", "why": "..."}], "proposed": "..."}',
+    '- reasons: each entry that overtakes the note, with one sentence on what changed;',
+    '- proposed: the whole note rewritten to match, in my words, changing only what the entries change.',
+    'If nothing is out of date: {"stale": false, "reasons": [], "proposed": ""}.',
+  ].join('\n');
+  const check_ = (answer: unknown): ReviewAnswer => {
+    if (!isRecord(answer)) invalid(purpose, 'expected a JSON object');
+    if (typeof answer.stale !== 'boolean') invalid(purpose, '"stale" must be true or false');
+    const items = list(purpose, answer.reasons, 'reasons');
+    if (!answer.stale) return { stale: false, reasons: [], proposed: '' };
+    if (!items.length) invalid(purpose, 'says the note is out of date but gives no reasons');
+    const reasons = items.map((it) => {
+      if (!isRecord(it)) invalid(purpose, 'each "reasons" item must be an object');
+      const raw = String(it.entry ?? '').trim().toUpperCase();
+      const index = known.get(/^\d+$/.test(raw) ? `E${raw}` : raw);
+      if (index === undefined) invalid(purpose, `cites ${JSON.stringify(it.entry)}, which it wasn't shown`);
+      return { index, why: text(purpose, it.why, 'why', 400) };
+    });
+    return { stale: true, reasons, proposed: text(purpose, answer.proposed, 'proposed', 20000) };
+  };
+  return {
+    request: {
+      purpose,
+      system: "You keep one person's notes up to date from what they wrote later. You only use what they wrote. You answer with JSON only.",
+      user,
+      maxTokens: Math.ceil(Math.min(check.note.body.length, NOTE_CHARS) / 2) + 500,
+      check: check_,
+    },
+    shown,
+  };
+}

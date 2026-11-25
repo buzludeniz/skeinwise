@@ -42,6 +42,7 @@ export class RecordView {
   private eIndex?: TermIndex;
   private eVectors?: Map<number, Vec>;
   private uDf?: Float64Array;
+  private notesByName?: Map<string, Entry>;
 
   constructor(store: Store) {
     this.store = store;
@@ -135,6 +136,22 @@ export class RecordView {
       .sort((a, b) => b[1] - a[1] || a[0] - b[0])
       .slice(0, n)
       .map(([i]) => i);
+  }
+
+  /** The note a [[link]] points at: by title, or by file name without its folder and extension. */
+  resolveLink(target: string): Entry | undefined {
+    if (!this.notesByName) {
+      this.notesByName = new Map();
+      for (const e of this.entries) {
+        if (e.kind !== 'note') continue;
+        const base = e.externalId.split('/').pop()!.replace(/\.(md|markdown|txt)$/i, '');
+        for (const name of [base, e.title ?? '']) {
+          const key = name.trim().toLowerCase();
+          if (key && !this.notesByName.has(key)) this.notesByName.set(key, e);
+        }
+      }
+    }
+    return this.notesByName.get(target.trim().toLowerCase());
   }
 
   shown(term: number): string {

@@ -219,6 +219,18 @@ function dependents(db: DatabaseSync, id: number): number[] {
   return rows.map((r) => r.id);
 }
 
+/** The live runs a new run of this task, schema and scope would hide (see the live_runs view). */
+export function replacedRuns(db: DatabaseSync, task: Task, schemaId: number | null, scope: Scope): number[] {
+  if (scope.kind === 'new') return [];
+  const rows = db
+    .prepare(
+      `SELECT id FROM live_runs WHERE task = ? AND COALESCE(schema_id, 0) = ?
+       AND (? = 'all' OR id IN (SELECT id FROM runs WHERE scope = ?))`,
+    )
+    .all(task, schemaId ?? 0, scope.kind, scopeText(scope)) as { id: number }[];
+  return rows.map((r) => r.id);
+}
+
 export interface UndoResult {
   run: Run;
   removed: Record<string, number>;
