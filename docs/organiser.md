@@ -43,11 +43,21 @@ words.
 The local engine talks to any server with the OpenAI chat completions API on 127.0.0.1, localhost or ::1. It refuses
 an address on another computer: use the remote engine for that, so redaction and the budget apply.
 
-Qwen3-4B, quantised to Q4_K_M, is a good size for this. Skeinwise never downloads a model. To start one you already
-have with llama.cpp:
+Qwen3-4B, quantised to Q4_K_M, is a good size for this (about 2.5 GB). Skeinwise downloads it only when you ask, and
+asks again before it starts:
 
 ```bash
-llama-server -m Qwen3-4B-Q4_K_M.gguf --port 8731 --jinja
+skeinwise model fetch          # shows the size and source, asks, downloads to ~/.skeinwise/models/
+skeinwise model serve --run    # starts llama-server on the port in localUrl (install llama.cpp first)
+skeinwise model check          # lists the model and times one short JSON prompt
+```
+
+`model fetch` keeps the file only when its sha256 matches the one Hugging Face lists, and picks up a cut-off download
+where it stopped; `--yes` skips the question. `model serve` without `--run` prints the command instead, and `model
+serve <file>.gguf` does the same for a model you already have:
+
+```bash
+llama-server -m Qwen3-4B-Q4_K_M.gguf --host 127.0.0.1 --port 8731 -c 32768 -ngl 99 --jinja
 ```
 
 Or point Skeinwise at Ollama:
@@ -304,6 +314,9 @@ corrections with it.
 | `redaction` | `on` | Redact text before it goes to a remote model |
 | `names` | (none) | Names to redact, comma-separated or a JSON list |
 | `modelOptions` | `{}` | Extra fields for every model request, as JSON, for example `{"temperature": 0}` |
+| `liveFolders` | (none) | Note folders and vaults `skeinwise live` watches, comma-separated paths or a JSON list of `{"path": …, "owner": …}` |
+| `liveOrganise` | `on` | Organise what live capture saves, in the background |
+| `liveRemote` | `off` | Let the outside model organise in the background (within `budget`) |
 
 ## Machine-readable output
 
@@ -315,8 +328,6 @@ else.
 
 - **Folder scope** (`--scope folder:<name>`).
 - **The sample test** before a tag run, and the comparison of a tag run with an earlier one.
-- **`skeinwise model check`, `fetch` and `serve`:** start and check the local server yourself.
-- **Live capture and background organising:** `--scope new` is there, but only runs when you run it.
 - **The app, the MCP servers, the ledger, sync and export.**
 - **Term vectors kept between runs:** each run computes them again (under a second on the demo record).
 - **Model-judged links:** cross links come from statistics with every engine.

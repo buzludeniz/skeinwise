@@ -16,7 +16,10 @@ export function speakerLabel(e: Entry): string {
 
 export function entryHeader(e: Entry): string {
   const where = e.threadTitle ? ` · ${e.threadTitle}` : e.title ? ` · ${e.title}` : '';
-  return `#${e.id}  ${day(e.createdAt)}  ${speakerLabel(e)} · ${e.sourceLabel}${where}`;
+  const speaker = speakerLabel(e);
+  // An assistant's line is already labelled with its source ("ChatGPT"); don't say it twice.
+  const source = speaker === e.sourceLabel ? '' : ` · ${e.sourceLabel}`;
+  return `#${e.id}  ${day(e.createdAt)}  ${speaker}${source}${where}`;
 }
 
 export function indent(text: string, pad = '    '): string {

@@ -6,6 +6,7 @@ import type { Io } from './cli.ts';
 import { type Config, configPath, DEFAULT_CONFIG, ENGINES, type EngineName, loadConfig, setConfigValue, unsetConfigValue } from './config.ts';
 import { needId, UsageError } from './errors.ts';
 import { countsText, entryBrief, entryHeader, engineLabel, indent, minute, oneLine } from './format.ts';
+import { modelCommand } from './model-commands.ts';
 import { appendDailyNote, newNote, readNotes } from './notes.ts';
 import { type AskKind, ask, similarEntries } from './organiser/ask.ts';
 import { defineTag, deleteHub, mergeFolders, REVIEW_ACTIONS, type ReviewAction, removeTag, renameHub, resolveReview } from './organiser/corrections.ts';
@@ -46,6 +47,7 @@ export interface Values {
   resolve?: string;
   unset?: boolean;
   remove?: boolean;
+  run?: boolean;
 }
 
 export interface Ctx {
@@ -525,7 +527,11 @@ const deleteHubCommand: Command = (ctx) => {
 // Settings
 
 function shown(value: unknown): string {
-  if (Array.isArray(value)) return value.length ? value.join(', ') : '(none)';
+  if (Array.isArray(value)) {
+    if (!value.length) return '(none)';
+    // Live folders: the path, and whose words it holds when that isn't you.
+    return value.map((v) => (v && typeof v === 'object' && 'path' in v ? `${v.path}${v.owner ? ` (${v.owner})` : ''}` : String(v))).join(', ');
+  }
   if (value && typeof value === 'object') return JSON.stringify(value);
   if (value === '') return '(not set)';
   return String(value);
@@ -620,4 +626,5 @@ export const ORGANISER_COMMANDS: Record<string, Command> = {
   'delete-hub': deleteHubCommand,
   config,
   'define-tag': defineTagCommand,
+  model: modelCommand,
 };
