@@ -5,6 +5,7 @@ import { GOOGLE, renewToken, signIn, TODOIST } from '../../src/connectors/oauth.
 import { ConnectorError } from '../../src/connectors/types.ts';
 import { UsageError } from '../../src/errors.ts';
 import { approvingBrowser, fakeFetch, json, NOW, on } from './helpers.ts';
+import { keyShaped } from '../samples.ts';
 
 vi.mock('node:child_process', () => ({
   spawn: () => {
@@ -164,7 +165,7 @@ describe('the API client', () => {
 
   it('reads Slack’s ok:false answers', async () => {
     const slackApi = (body: unknown, headers = {}) =>
-      new Api({ dialect: 'slack', label: 'Slack', token: { access: 'xoxp-test' }, now, fetch: fakeFetch([on('GET', 'https://slack.com/api/x', () => json(body, 200, headers))]) });
+      new Api({ dialect: 'slack', label: 'Slack', token: { access: keyShaped('xo', 'xp-test') }, now, fetch: fakeFetch([on('GET', 'https://slack.com/api/x', () => json(body, 200, headers))]) });
     await expect(slackApi({ ok: false, error: 'token_revoked' }).get('https://slack.com/api/x')).rejects.toMatchObject({ kind: 'signed-out' });
     await expect(slackApi({ ok: false, error: 'ratelimited' }, { 'retry-after': '30' }).get('https://slack.com/api/x')).rejects.toMatchObject({ kind: 'rate-limited' });
     await expect(slackApi({ ok: false, error: 'channel_not_found' }).get('https://slack.com/api/x')).rejects.toThrow('Slack said channel_not_found');

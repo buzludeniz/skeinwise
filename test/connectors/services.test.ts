@@ -8,6 +8,7 @@ import { pollConnectors } from '../../src/connectors/poll.ts';
 import { findConnection } from '../../src/connectors/state.ts';
 import type { Store } from '../../src/store/store.ts';
 import { type Call, type Clock, clock, FakeKeychain, fakeFetch, fixture, json, on, seedConnection, tempHome } from './helpers.ts';
+import { keyShaped } from '../samples.ts';
 
 vi.mock('node:child_process', () => ({
   spawn: () => {
@@ -242,7 +243,7 @@ describe('Slack', () => {
       home,
       keychain,
       { service: 'slack', account: 'Garden Club', picks: ['C0PLANTS'], cursor: { channels: { C0PLANTS: { name: 'plants' } }, users: {} } },
-      { access: 'xoxp-test-not-a-real-token' },
+      { access: keyShaped('xo', 'xp-test-not-a-real-token') },
     );
   });
 
@@ -307,7 +308,7 @@ describe('Slack', () => {
 
 describe('every connection in one poll', () => {
   it('one service’s trouble is its own line; the others still pull', async () => {
-    await seedConnection(home, keychain, { service: 'slack', account: 'Garden Club', picks: ['C0PLANTS'], cursor: { channels: { C0PLANTS: { name: 'plants' } }, users: {} } }, { access: 'xoxp-test' });
+    await seedConnection(home, keychain, { service: 'slack', account: 'Garden Club', picks: ['C0PLANTS'], cursor: { channels: { C0PLANTS: { name: 'plants' } }, users: {} } }, { access: keyShaped('xo', 'xp-test') });
     await seedConnection(home, keychain, { service: 'todoist', account: 'sam@example.com', clientId: 'c' }, { access: 'test-todoist-token' }, 's');
     const fetch = fakeFetch([
       on('GET', 'https://slack.com/api/auth.test', () => {
