@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ORGANISER_COMMANDS } from './cli-organiser.ts';
@@ -8,6 +9,7 @@ import { needId, UsageError } from './errors.ts';
 import { day, entryHeader, indent, minute, speakerLabel } from './format.ts';
 import { homeDir, openHome } from './home.ts';
 import { readImports } from './importers/detect.ts';
+import { readStatus } from './live/capture.ts';
 import { describeStatus, startLive } from './live/run.ts';
 import type { Store } from './store/store.ts';
 
@@ -46,8 +48,9 @@ Your record:
   exclude <source>          Leave a source out of search and the map
   include <source>          Bring an excluded source back
   not-mine <thread>         Mark a thread as someone else's (--undo to reverse)
-  live                      Record live: import new chats and notes as they appear
-      --once                Catch up once and stop
+  live                      Record live: import new chats and notes as they appear, and
+                            organise what is new in the background
+      --once                Catch up and organise once, then stop
   demo                      Build a demo record from invented data
       --out <dir>           Where to write the demo export files
       --force               Import even if the record is not empty
@@ -258,23 +261,34 @@ async function run(argv: string[], io: Io): Promise<number> {
 
     case 'live': {
       const home = homeDir(io.env);
-      const store = openHome(home);
+      const store = openHome(home, io.now);
       let started = false; // the catch-up pass is printed below, so only later passes print here
-      const { capture, first } = startLive(store, home, {
-        once: values.once,
+      const live = startLive(store, home, {
+        once: values.once === true,
+        userHome: io.env.HOME || homedir(),
+        fetch: io.fetch ?? fetch,
+        env: io.env,
         onSaved: (status) => started && io.out(describeStatus(status)),
+        onOrganised: (status) => started && !values.json && io.out(describeStatus(status)),
+        progress: (line) => io.err(`${line}\n`),
       });
-      started = true;
-      if (values.json) json(first);
-      else io.out(describeStatus(first));
       if (values.once) {
+        // Wait for the organiser, then report capture and organising together.
+        await live.background?.idle();
+        const status = readStatus(join(home, 'live.json'));
         store.db.close();
-        return first.errors.length ? 1 : 0;
+        if (values.json) json(status);
+        else io.out(describeStatus(status));
+        return status.errors.length || status.organised?.error ? 1 : 0;
       }
+      started = true;
+      if (values.json) json(live.first);
+      else io.out(describeStatus(live.first));
       io.out('Recording live. Press Ctrl+C to stop.\n');
       process.once('SIGINT', () => {
-        capture.stop();
+        live.stop();
         store.db.close();
+        process.exit(0);
       });
       return 0;
     }

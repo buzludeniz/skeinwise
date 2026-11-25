@@ -34,6 +34,22 @@ export interface LiveStatus {
   caught: Caught[];
   /** Files that failed to import on the last pass, with the reason. */
   errors: { path: string; error: string }[];
+  /** What the last background organising pass did, when one has run. */
+  organised?: Organised;
+}
+
+/** What the last background organising pass did (see `organise.ts`). */
+export interface Organised {
+  at: string;
+  /** The most entries any one step organised. */
+  entries: number;
+  runs: number[];
+  /** Why the pass stopped early: the model server didn't answer, a run failed, the budget is spent. */
+  error?: string;
+  /** Why the pass didn't run: the computer is busy, the battery is low, or the engine isn't allowed in the background. */
+  waiting?: string;
+  /** Tasks that have never run over the whole record, which a background pass leaves alone. */
+  notStarted?: string[];
 }
 
 const EXPORT_KINDS = new Set(['chatgpt', 'claude', 'gemini']);
@@ -60,6 +76,27 @@ export function readStatus(file: string): LiveStatus {
   return { ...emptyStatus(), ...(JSON.parse(readFileSync(file, 'utf8')) as Partial<LiveStatus>) };
 }
 
+export function writeStatus(file: string, status: LiveStatus): void {
+  writeFileSync(file, JSON.stringify(status, null, 1));
+}
+
+/** The first sentence of a message, for a status line. */
+function firstSentence(text: string): string {
+  const m = /^.*?[.:](?=\s|$)/.exec(text);
+  const s = (m ? m[0] : text).replace(/[.:]$/, '');
+  return s.length > 90 ? `${s.slice(0, 87)}...` : s;
+}
+
+/** The organising part of the second status line, or null when there is nothing to say. */
+export function organisedText(o: Organised | undefined): string | null {
+  if (!o) return null;
+  if (o.waiting) return `organising waits: ${o.waiting}`;
+  if (o.error) return `organising stopped: ${firstSentence(o.error)}`;
+  if (o.entries > 0) return `organised ${o.entries} new ${o.entries === 1 ? 'entry' : 'entries'}`;
+  if (o.notStarted?.length && !o.runs.length) return 'not organised yet: run "skeinwise run all" once to start';
+  return null;
+}
+
 function ago(fromIso: string, now: Date): string {
   const mins = Math.max(0, Math.round((now.getTime() - Date.parse(fromIso)) / 60000));
   if (mins < 1) return 'just now';
@@ -69,7 +106,10 @@ function ago(fromIso: string, now: Date): string {
   return `${Math.round(hours / 24)} days ago`;
 }
 
-/** The two status lines under Record live, e.g. "saved 2 minutes ago" and "caught up 3 chats from Claude Code". */
+/**
+ * The two status lines under Record live, e.g. "saved 2 minutes ago" and "caught up 3 chats from Claude Code ·
+ * organised 41 new entries".
+ */
 export function statusLines(status: LiveStatus, now = new Date()): [string, string] {
   const saved = status.lastSavedAt ? `saved ${ago(status.lastSavedAt, now)}` : 'nothing saved yet';
   const parts = status.caught
@@ -79,8 +119,11 @@ export function statusLines(status: LiveStatus, now = new Date()): [string, stri
       const what = c.kind === 'notes' ? (n === 1 ? 'note' : 'notes') : n === 1 ? 'chat' : 'chats';
       return `${n} ${what} from ${c.label}`;
     });
-  const caught = parts.length ? `caught up ${parts.join(', ')}` : 'up to date';
-  return [saved, status.errors.length ? `${caught} · ${status.errors.length} file(s) failed` : caught];
+  const second = [parts.length ? `caught up ${parts.join(', ')}` : 'up to date'];
+  if (status.errors.length) second.push(`${status.errors.length} file(s) failed`);
+  const organised = organisedText(status.organised);
+  if (organised) second.push(organised);
+  return [saved, second.join(' · ')];
 }
 
 function listChanged(dir: string, sinceMs: number, exts: Set<string>, out: string[]): void {
@@ -223,12 +266,13 @@ export class LiveCapture {
     const prev = this.status();
     const list = [...caught.values()].filter((c) => c.added + c.versioned > 0);
     const status: LiveStatus = {
+      ...prev,
       lastSavedAt: list.length ? now : prev.lastSavedAt,
       lastPassAt: now,
       caught: list.length ? list : prev.caught,
       errors,
     };
-    writeFileSync(this.options.statusFile, JSON.stringify(status, null, 1));
+    writeStatus(this.options.statusFile, status);
     if (list.length) this.options.onSaved?.(status);
     return status;
   }
