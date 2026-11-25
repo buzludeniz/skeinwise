@@ -85,6 +85,19 @@ export interface SearchOptions {
   strict?: boolean;
 }
 
+export interface TimelineOptions {
+  /** Earliest created_at to include (ISO). */
+  from?: string;
+  /** Latest created_at to include (ISO). */
+  to?: string;
+  speaker?: string;
+  sourceKind?: string;
+  limit?: number;
+  offset?: number;
+  /** Newest first instead of oldest first. */
+  newest?: boolean;
+}
+
 export interface Source {
   id: number;
   kind: string;
@@ -305,6 +318,37 @@ export class Store {
     return this.db
       .prepare(`${ENTRY_SELECT} WHERE ${VISIBLE} ORDER BY e.created_at, e.id`)
       .all() as unknown as Entry[];
+  }
+
+  /** One entry, or undefined when there is none or it is hidden (an excluded source, or a thread marked not mine). */
+  visibleEntry(id: number): Entry | undefined {
+    return this.db.prepare(`${ENTRY_SELECT} WHERE e.id = ? AND ${VISIBLE}`).get(id) as Entry | undefined;
+  }
+
+  /** A thread, or undefined when there is none or it is hidden. */
+  visibleThread(id: number): Thread | undefined {
+    const row = this.db.prepare(`SELECT t.id FROM threads t JOIN sources s ON s.id = t.source_id WHERE t.id = ? AND ${VISIBLE}`).get(id);
+    return row ? this.getThread(id) : undefined;
+  }
+
+  /** Visible entries in date order, oldest first unless `newest`, a page at a time. */
+  timeline(options: TimelineOptions = {}): Entry[] {
+    const where = [VISIBLE];
+    const params: (string | number)[] = [];
+    const add = (sql: string, value: string | undefined) => {
+      if (value === undefined) return;
+      where.push(sql);
+      params.push(value);
+    };
+    add('e.created_at >= ?', options.from);
+    add('e.created_at <= ?', options.to);
+    add('e.speaker = ?', options.speaker);
+    add('s.kind = ?', options.sourceKind);
+    const order = options.newest ? 'DESC' : 'ASC';
+    params.push(options.limit ?? 50, options.offset ?? 0);
+    return this.db
+      .prepare(`${ENTRY_SELECT} WHERE ${where.join(' AND ')} ORDER BY e.created_at ${order}, e.id ${order} LIMIT ? OFFSET ?`)
+      .all(...params) as unknown as Entry[];
   }
 
   search(query: string, options: SearchOptions = {}): SearchHit[] {

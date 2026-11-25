@@ -88,5 +88,54 @@ describe('openDb', () => {
     db.prepare("UPDATE runs SET status = 'undone' WHERE id = ?").run(e);
     expect(live()).toEqual([a, b, d, f]);
   });
-});
 
+  it('keeps an agent run live until it is undone; organiser runs neither replace it nor are replaced by it', () => {
+    const db = openDb(':memory:');
+    const add = (engine: string, scope: string) =>
+      Number(
+        db
+          .prepare("INSERT INTO runs (task, engine, model, scope, schema_id, status, started_at) VALUES ('tag', ?, ?, ?, 3, 'done', 'x')")
+          .run(engine, engine === 'agent' ? 'claude-code' : null, scope).lastInsertRowid,
+      );
+    const live = () => db.prepare('SELECT id FROM live_runs ORDER BY id').all().map((r) => (r as { id: number }).id);
+    const a = add('none', 'all');
+    const g = add('agent', 'agent');
+    const h = add('agent', 'agent');
+    expect(live()).toEqual([a, g, h]);
+    const b = add('local', 'all');
+    expect(live()).toEqual([g, h, b]);
+    db.prepare("UPDATE runs SET status = 'undone' WHERE id = ?").run(g);
+    expect(live()).toEqual([h, b]);
+  });
+
+  it('upgrades a version 2 record to agent runs, keeping every run and what points at it', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec('PRAGMA foreign_keys = ON');
+    db.exec(MIGRATIONS[0]!);
+    db.exec(MIGRATIONS[1]!);
+    db.exec('PRAGMA user_version = 2');
+    db.prepare("INSERT INTO runs (id, task, engine, scope, schema_id, status, counts, started_at) VALUES (7, 'tag', 'none', 'all', 1, 'done', '{\"tags\":1}', 'x')").run();
+    db.prepare("INSERT INTO tags (schema_id, name, run_id) VALUES (1, 'bread', 7)").run();
+    expect(() => db.prepare("INSERT INTO runs (task, engine, scope, status, started_at) VALUES ('tag', 'agent', 'agent', 'done', 'x')").run()).toThrow(/CHECK/);
+    migrate(db);
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+    expect(db.prepare('SELECT id, counts FROM runs').all()).toEqual([{ id: 7, counts: '{"tags":1}' }]);
+    expect(db.prepare('SELECT id FROM live_runs').all()).toEqual([{ id: 7 }]);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    expect(db.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
+    db.prepare("INSERT INTO runs (task, engine, model, scope, status, started_at) VALUES ('tag', 'agent', 'claude-code', 'agent', 'done', 'x')").run();
+    expect(() => db.prepare("INSERT INTO tags (schema_id, name, run_id) VALUES (1, 'rye', 99)").run()).toThrow(/FOREIGN KEY/);
+  });
+
+  it('refuses a migration that would leave a broken reference, and changes nothing', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec(MIGRATIONS[0]!);
+    db.exec(MIGRATIONS[1]!);
+    db.exec('PRAGMA user_version = 2');
+    db.exec('PRAGMA foreign_keys = OFF'); // node:sqlite turns them on; an old record may hold such a row anyway
+    db.prepare("INSERT INTO tags (schema_id, name, run_id) VALUES (1, 'orphan', 42)").run();
+    expect(() => migrate(db)).toThrow(/Migration 3 would leave 1 broken reference\(s\) \(tags → runs\)/);
+    expect(schemaVersion(db)).toBe(2);
+    expect(() => db.prepare("INSERT INTO runs (task, engine, scope, status, started_at) VALUES ('tag', 'agent', 'agent', 'done', 'x')").run()).toThrow(/CHECK/);
+  });
+});
