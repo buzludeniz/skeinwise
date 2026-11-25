@@ -322,13 +322,14 @@ export interface BlockProof {
 
 /** The Bitcoin blocks a proof reaches, lowest first. */
 export function bitcoinBlocks(stamp: Timestamp): BlockProof[] {
-  const blocks = attestations(stamp)
-    .filter((a) => a.attestation.kind === 'bitcoin')
-    .map(({ step, attestation }) => ({
-      height: (attestation as { height: number }).height,
-      merkleRoot: Buffer.from(step.msg).reverse().toString('hex'),
-    }));
-  return blocks.sort((a, b) => a.height - b.height);
+  const blocks = new Map<string, BlockProof>();
+  for (const { step, attestation } of attestations(stamp)) {
+    if (attestation.kind !== 'bitcoin') continue;
+    const block = { height: attestation.height, merkleRoot: Buffer.from(step.msg).reverse().toString('hex') };
+    // Calendars that made it into the same block reach the same merkle root: one block, listed once.
+    blocks.set(`${block.height} ${block.merkleRoot}`, block);
+  }
+  return [...blocks.values()].sort((a, b) => a.height - b.height);
 }
 
 /** The calendars a proof is still waiting on. */

@@ -68,6 +68,19 @@ describe('the proof file format', () => {
     expect(bitcoinBlocks(read)).toEqual([{ height: 870123, merkleRoot: hex(Buffer.from(tip).reverse()) }]);
   });
 
+  it('lists a block once when two calendars reach it by different paths', () => {
+    const root = timestamp(DIGEST);
+    const a = addOp(addOp(root, { kind: 'prepend', arg: Buffer.from('a') }), { kind: 'sha256' });
+    const b = addOp(addOp(root, { kind: 'prepend', arg: Buffer.from('b') }), { kind: 'sha256' });
+    // Two leaves of one merkle tree: a's path appends b, b's path prepends a, and both reach the same root.
+    const fromA = addOp(addOp(a, { kind: 'append', arg: b.msg }), { kind: 'sha256' });
+    const fromB = addOp(addOp(b, { kind: 'prepend', arg: a.msg }), { kind: 'sha256' });
+    expect(hex(fromA.msg)).toBe(hex(fromB.msg));
+    fromA.attestations.push({ kind: 'bitcoin', height: 870123 });
+    fromB.attestations.push({ kind: 'bitcoin', height: 870123 });
+    expect(bitcoinBlocks(root)).toEqual([{ height: 870123, merkleRoot: hex(Buffer.from(fromA.msg).reverse()) }]);
+  });
+
   it('keeps an attestation of a kind it does not know, unchanged', () => {
     const msg = Buffer.alloc(32, 1);
     const bytes = Buffer.from(`00${'06869a0d73d71b45'}03eb8d35`, 'hex'); // a Litecoin attestation
