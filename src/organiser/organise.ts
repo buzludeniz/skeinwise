@@ -201,7 +201,7 @@ export async function runTask(store: Store, record: RecordView, options: RunOpti
 }
 
 /** Refuses when an outside model's tokens this month, plus what this run needs or has used, pass the budget. */
-function checkBudget(store: Store, budget: number, need: number, label: string, used = 0): void {
+export function checkBudget(store: Store, budget: number, need: number, label: string, used = 0): void {
   const spent = remoteTokensThisMonth(store.db, store.now());
   if (spent + used + need <= budget) return;
   const left = Math.max(0, budget - spent);
