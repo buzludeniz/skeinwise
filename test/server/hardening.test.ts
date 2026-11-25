@@ -1,7 +1,7 @@
 // Regression tests for the web server's security findings, each built from its proof of concept in the v1 audit.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -255,3 +255,79 @@ describe('L2: the upload cap', () => {
     expect(cleanUploads(join(dir, 'no-such-home'))).toBe(0);
   });
 });
+
+describe('L8: note files', () => {
+  const notes = () => join(home, 'notes');
+  const outside = (name: string) => join(dir, 'outside', name);
+
+  it('never writes through a link at the next note\'s name, and new notes are owner-only (web/poc/09)', async () => {
+    mkdirSync(notes(), { recursive: true });
+    symlinkSync(outside('created-by-skeinwise.txt'), join(notes(), 'planted.md'));
+    const res = await api('notes', { body: { title: 'Planted', body: 'written through a symlink?' } });
+    expect(res.status).toBe(200);
+    expect(existsSync(outside('created-by-skeinwise.txt'))).toBe(false);
+    expect(readFileSync(join(notes(), 'planted-2.md'), 'utf8')).toContain('written through a symlink?');
+    expect(statSync(join(notes(), 'planted-2.md')).mode & 0o777).toBe(0o600);
+    rmSync(join(notes(), 'planted.md'));
+  });
+
+  it('refuses to save an entry whose file was swapped for a link, and keeps the version as it was', async () => {
+    writeFileSync(outside('victim.txt'), 'ORIGINAL CONTENT OF A FILE OUTSIDE THE RECORD\n');
+    const { id } = (await api('notes', { body: { title: 'Swap', body: 'before' } })).body;
+    rmSync(join(notes(), 'swap.md'));
+    symlinkSync(outside('victim.txt'), join(notes(), 'swap.md'));
+    const res = await api(`entries/${id}`, { method: 'PUT', body: { body: 'OVERWRITTEN BY PUT /api/entries' } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("notes/swap.md is a symbolic link, so Skeinwise won't read through it");
+    expect(readFileSync(outside('victim.txt'), 'utf8')).toBe('ORIGINAL CONTENT OF A FILE OUTSIDE THE RECORD\n');
+    expect((await api(`entries/${id}`)).body.entry.body).toContain('before');
+    rmSync(join(notes(), 'swap.md'));
+  });
+
+  it('won\'t write the daily note into a folder that leads outside notes/', async () => {
+    rmSync(join(notes(), 'daily'), { recursive: true, force: true });
+    mkdirSync(outside('daily-elsewhere'));
+    symlinkSync(outside('daily-elsewhere'), join(notes(), 'daily'));
+    const res = await api('daily', { body: { text: 'a daily line' } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('notes/daily leads outside notes/');
+    expect(readdirOf(outside('daily-elsewhere'))).toEqual([]);
+    rmSync(join(notes(), 'daily'));
+    expect((await api('daily', { body: { text: 'a daily line' } })).status).toBe(200);
+    expect(lstatSync(join(notes(), 'daily')).isDirectory()).toBe(true);
+  });
+});
+
+describe('L7: the screen lock', () => {
+  it('is still on after a restart (web/poc/10)', async () => {
+    expect((await api('lock', { body: {} })).body).toEqual({ locked: true });
+    const again = await startServer({ home, port: 0, webDir: null, scanRoot: scan, keepToken: true });
+    const call = (path: string, method = 'GET') =>
+      fetch(`http://127.0.0.1:${again.port}/api/${path}`, {
+        method,
+        headers: { 'X-Skeinwise-Token': again.token, 'Content-Type': 'application/json' },
+        body: method === 'POST' ? '{}' : undefined,
+      });
+    try {
+      expect(((await (await call('status')).json()) as any).locked).toBe(true);
+      expect((await call('search?q=One')).status).toBe(423);
+      expect((await call('entries/1')).status).toBe(423);
+      expect(((await (await call('unlock', 'POST')).json()) as any).locked).toBe(false);
+      expect((await call('search?q=One')).status).toBe(200);
+    } finally {
+      await again.close();
+    }
+    expect((await api('unlock', { body: {} })).body).toEqual({ locked: false });
+    const third = await startServer({ home, port: 0, webDir: null, scanRoot: scan, keepToken: true });
+    try {
+      const status = await fetch(`http://127.0.0.1:${third.port}/api/status`, { headers: { 'X-Skeinwise-Token': third.token } });
+      expect(((await status.json()) as any).locked).toBe(false);
+    } finally {
+      await third.close();
+    }
+  });
+});
+
+function readdirOf(path: string): string[] {
+  return existsSync(path) ? readdirSync(path) : [];
+}

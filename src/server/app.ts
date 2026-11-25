@@ -2,7 +2,7 @@
 // in the X-Skeinwise-Token header; requests must name this server's own host, so pages from other sites can't reach it.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { extname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { UsageError } from '../errors.ts';
@@ -14,6 +14,7 @@ import type { Store } from '../store/store.ts';
 import { backup } from './backup.ts';
 import { cellEntries, parseFilter, tableCounts, type TableProp, tides, timelineBuckets } from './buckets.ts';
 import { ConfigError, readConfig, TABLE_PROPS, writeConfig } from './config.ts';
+import { writeOver } from './files.ts';
 import { findAgents, findSources, preview } from './found.ts';
 import type { AppLive } from './live.ts';
 import { appendDaily, createNote, NoteError, noteTitles, ownFile, saveEntry } from './notes.ts';
@@ -82,6 +83,11 @@ interface Req {
 type Handler = (req: Req) => unknown;
 
 const JSON_LIMIT = 2 * 1024 * 1024;
+/**
+ * The screen lock's file in the record folder. The lock hides the record from the page until it is unlocked; it is not
+ * encryption, and anything running as you can still read record.db.
+ */
+export const LOCK_FILE = 'screen-lock';
 
 async function readJson(raw: IncomingMessage): Promise<Record<string, unknown>> {
   const type = raw.headers['content-type'] ?? '';
@@ -146,7 +152,15 @@ const NOT_BUILT = `<!doctype html><meta charset="utf-8"><title>Skeinwise</title>
 
 export function createHandler(ctx: AppContext): (req: IncomingMessage, res: ServerResponse) => void {
   const { store, home } = ctx;
-  let locked = false;
+  // The screen lock outlasts a restart (L7): the file's being there is the lock, and anything at that name counts.
+  const lockFile = join(home, LOCK_FILE);
+  let locked = lstatSync(lockFile, { throwIfNoEntry: false }) !== undefined;
+  const setLocked = (on: boolean) => {
+    if (on) writeOver(lockFile, `${new Date().toISOString()}\n`);
+    else rmSync(lockFile, { force: true });
+    locked = on;
+    return { locked };
+  };
   const uploads = resolve(home, 'imports');
   // The record folder goes in too, so asks and the model test send the key of the server `model serve --run` locked for
   // this record (<home>/models/.key), whatever SKEINWISE_HOME the process happens to hold.
@@ -178,14 +192,8 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       organiser: organiserReady(store.db),
       live: ctx.live.state(),
     })],
-    ['POST', /^\/api\/lock$/, () => {
-      locked = true;
-      return { locked };
-    }],
-    ['POST', /^\/api\/unlock$/, () => {
-      locked = false;
-      return { locked };
-    }],
+    ['POST', /^\/api\/lock$/, () => setLocked(true)],
+    ['POST', /^\/api\/unlock$/, () => setLocked(false)],
     ['POST', /^\/api\/quit$/, () => {
       setTimeout(() => ctx.onQuit?.(), 50);
       return { stopping: true };
