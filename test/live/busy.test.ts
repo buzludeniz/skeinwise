@@ -116,18 +116,18 @@ describe('a busy record', () => {
     expect(store.search('Seed potatoes')).toHaveLength(1);
   });
 
-  it('a watched pass that fails for any other reason is reported, and live keeps watching', async () => {
+  it('a watched pass that fails as a whole is reported, and live keeps watching', async () => {
     const warnings: string[] = [];
     const live = new LiveCapture(store, [{ kind: 'tree', path: vault }], {
       statusFile: join(home, 'live.json'),
       debounceMs: 30,
       onWarning: (l) => warnings.push(l),
     });
-    const ingest = store.ingest.bind(store);
+    const sources = store.sources.bind(store);
     let failures = 1;
-    store.ingest = (...args) => {
+    store.sources = () => {
       if (failures-- > 0) throw new Error('disk I/O error');
-      return ingest(...args);
+      return sources();
     };
     live.start();
     try {
