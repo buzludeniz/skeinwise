@@ -7,7 +7,7 @@
 // before the ciphertext is the cipher's associated data, so changing a single byte anywhere fails the check.
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { dirname, join, relative } from 'node:path';
 import { unzipSync, zipSync } from 'fflate';
@@ -207,6 +207,16 @@ function selectAll(t: TableInfo): string {
   return `SELECT ${t.virtual ? 'rowid, ' : ''}${t.columns.map(q).join(', ')} FROM ${q(t.name)}`;
 }
 
+/** The first thing under a folder that isn't itself a folder (a file, a link), or null when there are only folders. */
+function firstNonFolder(dir: string): string | null {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, e.name);
+    const found = e.isDirectory() ? firstNonFolder(full) : full;
+    if (found) return found;
+  }
+  return null;
+}
+
 /**
  * Why the record isn't empty, or null when it is: nothing in it but what a new record starts with (the built-in
  * schemas and Moods tags), no notes files, no ledger, and no sync set up.
@@ -224,8 +234,7 @@ export function notEmpty(store: Store, home: string): string | null {
   } finally {
     fresh.close();
   }
-  let note: string | null = null;
-  if (existsSync(notesDir(home))) walk(notesDir(home), (file) => (note ??= file));
+  const note = existsSync(notesDir(home)) ? firstNonFolder(notesDir(home)) : null;
   if (note) return `its notes folder has files (${note})`;
   // Settings (config.json, app.json) don't count: a join keeps this computer's. The ledger does.
   if (existsSync(join(home, 'ledger.jsonl'))) return 'it has a ledger.jsonl';
@@ -265,14 +274,27 @@ export interface Joined {
 export function joinBundle(store: Store, home: string, opened: Opened, where: string): Joined {
   const snap = bundleDb(opened.files['record.db']!, where);
   const notes = notesDir(home);
-  const staging = join(home, `.sync-notes-${randomBytes(4).toString('hex')}`);
+  const tag = randomBytes(4).toString('hex');
+  const staging = join(home, `.sync-notes-${tag}`);
+  const old = join(home, `.sync-old-notes-${tag}`);
   const noteFiles = Object.entries(opened.files).filter(([name]) => name.startsWith('notes/'));
+  let movedOld = false;
+  let placed = false;
   try {
-    // Notes first, out of sight, so a failure here leaves the record as it was.
+    // The notes go in place first, and come out again if the copy below fails. This computer's notes folder holds
+    // no files (notEmpty() checked), only perhaps empty folders; it is set aside, and removed once the copy is in.
     for (const [name, data] of noteFiles) {
       const parts = notePath(name)!;
       mkdirSync(join(staging, ...parts.slice(0, -1)), { recursive: true });
       writeFileSync(join(staging, ...parts), data, { mode: 0o600 });
+    }
+    if (noteFiles.length) {
+      if (existsSync(notes)) {
+        renameSync(notes, old);
+        movedOld = true;
+      }
+      renameSync(staging, notes);
+      placed = true;
     }
     inTransaction(store.db, () => {
       store.db.exec('PRAGMA defer_foreign_keys = ON');
@@ -292,17 +314,14 @@ export function joinBundle(store: Store, home: string, opened: Opened, where: st
       }
     });
   } catch (err) {
+    if (placed) rmSync(notes, { recursive: true, force: true });
+    if (movedOld) renameSync(old, notes);
     rmSync(staging, { recursive: true, force: true });
     throw err;
   } finally {
     snap.close();
   }
-  if (noteFiles.length) {
-    if (existsSync(notes)) rmdirSync(notes); // empty: notEmpty() checked
-    renameSync(staging, notes);
-  } else {
-    rmSync(staging, { recursive: true, force: true });
-  }
+  if (movedOld) rmSync(old, { recursive: true, force: true });
   const wrote: string[] = [];
   const kept: string[] = [];
   for (const name of SIDE_FILES) {

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -78,6 +78,8 @@ describe('sync init', () => {
     expect(() => startSync(b.store, b.home, folder, PASS, LIGHT)).toThrow(/already holds a Skeinwise sync/);
     expect(() => startSync(b.store, b.home, join(dir, 'x'), 'too short', LIGHT)).toThrow(/at least 12/);
     expect(existsSync(join(dir, 'x'))).toBe(false);
+    expect(() => startSync(b.store, b.home, join(b.home, 'notes', 'sync'), PASS, LIGHT)).toThrow(/inside the record folder/);
+    expect(() => startSync(b.store, b.home, b.home, PASS, LIGHT)).toThrow(/inside the record folder/);
   });
 });
 
@@ -175,6 +177,26 @@ describe('sync join', () => {
     expectUntouched(c, before);
   });
 
+  it('goes into a notes folder that holds only empty folders, and leaves nothing of its own behind', () => {
+    const c = computer();
+    mkdirSync(join(notesDir(c.home), 'daily', 'old'), { recursive: true });
+    expect(joinSync(c.store, c.home, folder, { passphrase: PASS }).entries).toBe(count(a.store.db, 'entries'));
+    expect(readdirSync(notesDir(c.home), { recursive: true }).map(String).sort()).toEqual(readdirSync(notesDir(a.home), { recursive: true }).map(String).sort());
+    expect(readdirSync(c.home).filter((f) => f.startsWith('.sync-'))).toEqual([]);
+  });
+
+  it('when the copy fails after the notes are in place, takes them out again', () => {
+    const c = computer();
+    mkdirSync(join(notesDir(c.home), 'daily'));
+    const before = snapshot(c);
+    // A transaction already open makes the copy's own BEGIN fail, after the notes went in.
+    c.store.db.exec('BEGIN');
+    expect(() => joinSync(c.store, c.home, folder, { passphrase: PASS })).toThrow(/transaction/);
+    c.store.db.exec('ROLLBACK');
+    expectUntouched(c, before);
+    expect(readdirSync(notesDir(c.home))).toEqual(['daily']);
+  });
+
   it('refuses a record that is not empty, before anything is asked or written', () => {
     const c = computer();
     newNote(c.store, c.home, 'My own note', new Date(DEMO_NOW));
@@ -188,6 +210,9 @@ describe('sync join', () => {
     const e = computer();
     writeFileSync(join(e.home, 'ledger.jsonl'), '\n');
     expect(() => joinSync(e.store, e.home, folder, { passphrase: PASS })).toThrow(/ledger/);
+    const g = computer();
+    symlinkSync(join(dir, 'somewhere'), join(notesDir(g.home), 'link.md'));
+    expect(notEmpty(g.store, g.home)).toMatch(/notes folder has files/);
     // Settings alone don't count.
     const f = computer();
     writeFileSync(join(f.home, 'config.json'), '{}\n');

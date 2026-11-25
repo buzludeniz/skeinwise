@@ -8,7 +8,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { UsageError } from '../errors.ts';
 import type { Store } from '../store/store.ts';
 import { BUNDLE_FILE, type BundleHeader, type Joined, joinBundle, notEmpty, openBundle, readHeader, sealBundle, writeAtomic } from './bundle.ts';
@@ -63,6 +63,10 @@ export function checkStart(home: string, folder: string): string {
   const state = readState(home);
   if (state) throw new UsageError(`This record already syncs with ${state.folder}. Write a fresh bundle there with: skeinwise sync push`);
   const dir = resolve(folder);
+  const record = resolve(home);
+  if (dir === record || dir.startsWith(record + sep)) {
+    throw new UsageError(`${dir} is inside the record folder, so each bundle would hold the one before it. Pick a folder outside ${record}.`);
+  }
   if (statSync(dir, { throwIfNoEntry: false })?.isFile()) throw new UsageError(`${dir} is a file. Give a folder.`);
   if (existsSync(join(dir, KEYS_FILE)) || existsSync(join(dir, BUNDLE_FILE))) {
     throw new UsageError(`${dir} already holds a Skeinwise sync. To make this computer a copy of it: skeinwise sync join ${dir}`);
