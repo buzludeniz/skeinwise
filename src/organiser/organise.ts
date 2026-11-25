@@ -10,7 +10,7 @@ import { planFolders } from './folders.ts';
 import { planHubs } from './hubs.ts';
 import { planLayers } from './layers.ts';
 import { planLinks } from './links.ts';
-import type { ModelClient, Plan, TaskContext } from './plan.ts';
+import { AnswerError, type ModelClient, modelLabel, type Plan, type TaskContext } from './plan.ts';
 import type { RecordView } from './record.ts';
 import { planReview } from './review.ts';
 import {
@@ -127,7 +127,7 @@ export function previewRun(store: Store, record: RecordView, options: RunOptions
     schema: options.schema?.name ?? null,
     scope: scopeText(options.scope),
     engine: planned.engine,
-    model: client?.model ?? null,
+    model: client ? modelLabel(client) : null,
     entries: planned.ctx.entries.length,
     requests: client ? planned.plan.requests.map((r) => ({ purpose: r.purpose, ...client.prepare(r), maxTokens: r.maxTokens })) : [],
     estimate: estimate(planned, client),
@@ -145,12 +145,14 @@ export async function runTask(store: Store, record: RecordView, options: RunOpti
     const size = estimate(planned, client);
     if (ctx.entries.length > CONFIRM_ENTRIES && !options.yes) {
       throw new UsageError(
-        `${label} would send ${plan.requests.length} requests about ${ctx.entries.length} entries to ${client.model}: ` +
+        `${label} would send ${plan.requests.length} requests about ${ctx.entries.length} entries to ${modelLabel(client)}: ` +
           `about ${size} tokens. Add --yes to go ahead, or narrow it with --scope.`,
       );
     }
     if (client.engine === 'remote') checkBudget(store, options.budget, size, label);
     await client.probe();
+    // A local server's first model is only known once probe has asked it.
+    ctx.modelName = client.model;
   }
 
   const runId = startRun(store.db, {
@@ -168,7 +170,13 @@ export async function runTask(store: Store, record: RecordView, options: RunOpti
     const answers: unknown[] = [];
     for (const [i, request] of plan.requests.entries()) {
       options.progress(`${label}: ${request.purpose} (${i + 1}/${plan.requests.length})`);
-      const reply = await client!.send(request);
+      const reply = await client!.send(request).catch((err: unknown) => {
+        if (err instanceof AnswerError) {
+          tokensIn += err.tokensIn;
+          tokensOut += err.tokensOut;
+        }
+        throw err;
+      });
       tokensIn += reply.tokensIn;
       tokensOut += reply.tokensOut;
       if (client!.engine === 'remote') checkBudget(store, options.budget, 0, label, tokensIn + tokensOut);

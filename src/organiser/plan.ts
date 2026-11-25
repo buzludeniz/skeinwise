@@ -104,12 +104,30 @@ export interface Sent {
 /** A model server the runner talks to. model.ts makes one from the settings. */
 export interface ModelClient {
   engine: 'local' | 'remote';
-  /** The model's name as the run records it. */
+  /** The model's name as the run records it. Empty for a local server until probe picks the first model it lists. */
   model: string;
+  /** The server's base URL. */
+  url: string;
+  /** True when requests are redacted before they leave this computer. */
+  redacts: boolean;
   /** The text a request would send: redacted when the server is not on this computer and redaction is on. */
   prepare: (request: ModelRequest) => Sent;
   /** Checks the server answers; throws a message that says how to start one. */
   probe: () => Promise<void>;
-  /** Sends one request and returns the parsed JSON answer (with redactions put back) and the tokens used. */
+  /**
+   * Sends one request and returns the parsed JSON answer (with redactions put back) and the tokens used. An answer
+   * that can't be read throws an AnswerError, which still carries the tokens it used.
+   */
   send: (request: ModelRequest) => Promise<{ answer: unknown; tokensIn: number; tokensOut: number }>;
+}
+
+/** A model answer that came back but can't be used (not JSON, cut off). The tokens were spent all the same. */
+export class AnswerError extends Error {
+  tokensIn = 0;
+  tokensOut = 0;
+}
+
+/** How a client is named in messages before its model is known. */
+export function modelLabel(client: ModelClient): string {
+  return client.model || `the first model at ${client.url}`;
 }
