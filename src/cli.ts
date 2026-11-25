@@ -14,6 +14,7 @@ import { readImports } from './importers/detect.ts';
 import { readStatus } from './live/capture.ts';
 import { describeStatus, startLive } from './live/run.ts';
 import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP } from './mcp/commands.ts';
+import { MODEL_HELP } from './model-commands.ts';
 import { safeIo, safeJson } from './safe-text.ts';
 import { serveFromArgs } from './server/serve.ts';
 import type { Store } from './store/store.ts';
@@ -100,13 +101,7 @@ Corrections (each is a run you can undo):
   delete-hub <hub>             Delete a hub
 
 The local model:
-  model check               Ask the model server for its model and run one short test prompt
-      --engine remote       Check the outside model instead (one short request)
-  model fetch               Download the suggested model (Qwen3-4B, about 2.5 GB) into the
-                            record folder's models/, after showing the size and source
-      --yes                 Download without asking
-  model serve [<file>]      Print the llama-server command for it (or for a .gguf of yours)
-      --run                 Run it here instead
+${MODEL_HELP}
 
 ${SYNC_HELP}
 ${CONNECTOR_HELP}

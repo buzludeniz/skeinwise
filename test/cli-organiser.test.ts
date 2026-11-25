@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -315,5 +315,25 @@ describe('a model engine from the command line', () => {
     const [run] = parsed<RunJson[]>(await sw('runs', '--json'));
     expect(run).toMatchObject({ task: 'ask', engine: 'local', status: 'done', tokensIn: 300, tokensOut: 25 });
     expect((await sw('undo', String(run!.id))).code).toBe(2);
+  });
+
+  it("sends the locked local server the key from the record folder's models/.key", async () => {
+    mkdirSync(join(home, 'models'), { recursive: true });
+    writeFileSync(join(home, 'models', '.key'), 'local-server-key-for-this-test\n', { mode: 0o600 });
+    const sent: (string | null)[] = [];
+    const locked = (async (input: string | URL | Request, init?: RequestInit) => {
+      sent.push(new Headers(init?.headers).get('authorization'));
+      if (String(input).endsWith('/models')) return Response.json({ data: [{ id: 'models/fake-4b.gguf' }] });
+      const content = JSON.stringify({ answer: 'SQLite first.', cites: ['E1'] });
+      return Response.json({ choices: [{ message: { content }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 2 } });
+    }) as typeof globalThis.fetch;
+    try {
+      const r = await inHome(home, { fetch: locked })('ask', 'what did I decide about sqlite');
+      expect(r.code).toBe(0);
+      expect(sent.length).toBeGreaterThan(0);
+      expect(sent.every((h) => h === 'Bearer local-server-key-for-this-test')).toBe(true);
+    } finally {
+      rmSync(join(home, 'models'), { recursive: true, force: true });
+    }
   });
 });
