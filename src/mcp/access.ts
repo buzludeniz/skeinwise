@@ -96,7 +96,7 @@ export function setLocked(home: string, locked: boolean): boolean {
  */
 export function checkAccess(home: string, agent: string | null, now: string): string {
   const access = readAccess(home);
-  if (access.locked) throw new AccessError('Skeinwise is locked, so its tools are stopped. Unlock it in the app, or run: skeinwise mcp unlock');
+  if (access.locked) throw new AccessError('Skeinwise is locked, so its tools are stopped. Unlock with: skeinwise mcp unlock');
   if (!agent) {
     throw new AccessError("This MCP client didn't give a name (clientInfo.name), so Skeinwise can't tell which agent is asking. Set a client name and connect again.");
   }
@@ -105,7 +105,7 @@ export function checkAccess(home: string, agent: string | null, now: string): st
   if (known) return known;
   access.asked[find(access.asked, n) ?? n] = now;
   writeAccess(home, access);
-  throw new AccessError(`Skeinwise hasn't allowed "${n}" to read or write your record yet. Allow it in the app, or run: skeinwise mcp allow ${quoteArg(n)}`);
+  throw new AccessError(`Skeinwise hasn't allowed "${n}" to read or write your record yet. To allow it, run: skeinwise mcp allow ${quoteArg(n)}`);
 }
 
 /** The name as one shell argument. */

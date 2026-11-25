@@ -115,7 +115,7 @@ export const MEMORY_TOOLS: Tool<MemoryCtx>[] = [
     name: 'search',
     title: 'Search the record',
     description:
-      "Full-text search of the user's notes and AI chats, best matches first, the user's own words ranked above assistants'. Returns entry ids, dates and a snippet; read_entry gives the whole text.",
+      "Full-text search of the user's notes and AI chats, best matches first, the user's own words weighted above assistants'. Returns entry ids, dates and a snippet; read_entry gives the whole text.",
     inputSchema: {
       type: 'object',
       properties: { query: string('Words to look for.'), limit: integer('How many hits (default 10).', { maximum: 50 }), ...FILTERS },
