@@ -13,6 +13,7 @@ import { homeDir, openHome } from './home.ts';
 import { readImports } from './importers/detect.ts';
 import { readStatus } from './live/capture.ts';
 import { describeStatus, startLive } from './live/run.ts';
+import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP } from './mcp/commands.ts';
 import type { Store } from './store/store.ts';
 import { SYNC_COMMANDS, SYNC_FLAGS, SYNC_HELP } from './sync/commands.ts';
 
@@ -104,6 +105,8 @@ The local model:
 
 ${SYNC_HELP}
 ${CONNECTOR_HELP}
+Agents (MCP):
+${MCP_HELP}
 Settings:
   config [<key> [<value>...]]  Show or change a setting (--unset to go back to the default)
   define-tag <schema> <tag> [<words>...]
@@ -181,6 +184,7 @@ async function run(argv: string[], io: Io): Promise<number> {
       run: { type: 'boolean' },
       ...SYNC_FLAGS,
       ...CONNECTOR_FLAGS,
+      ...MCP_FLAGS,
     },
   });
   const json = (v: unknown) => io.out(`${JSON.stringify(v, null, 2)}\n`);
@@ -402,7 +406,7 @@ async function run(argv: string[], io: Io): Promise<number> {
     }
 
     default: {
-      const organiser = ORGANISER_COMMANDS[command] ?? SYNC_COMMANDS[command] ?? CONNECTOR_COMMANDS[command];
+      const organiser = ORGANISER_COMMANDS[command] ?? SYNC_COMMANDS[command] ?? CONNECTOR_COMMANDS[command] ?? MCP_COMMANDS[command];
       if (!organiser) throw new UsageError(`Unknown command: ${command}. Run "skeinwise help" for the list.`);
       const home = homeDir(io.env);
       return withStore(io, (store) => organiser({ io, home, store, values, args: positionals, json }));

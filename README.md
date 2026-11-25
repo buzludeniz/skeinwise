@@ -121,6 +121,7 @@ Run `node dist/src/cli.js help` for every command.
 - [Plan](docs/plan.md): stack, architecture, scope and milestones
 - [The organiser](docs/organiser.md): engines, the local model, runs, undo, hubs, asking and review
 - [Export and sync](docs/sync.md): what a bundle holds, the key scheme, and what join does
+- [Agent memory (MCP)](docs/mcp.md): the two servers, config for each agent, and allowing an agent
 - [Connectors](docs/connectors.md): what each one reads, its permissions, and how to make your own client
 - [Research](docs/research.md): the export formats and the landscape
 - [UI](docs/ui.md) and [features](docs/features.md): the detailed design

@@ -171,3 +171,16 @@ describe('connectors from the command line', () => {
     expect(asked.err).toMatch(/gmail, calendar, todoist, slack/);
   });
 });
+
+describe('agent access from the command line', () => {
+  it('lists the mcp commands in help, and allows, lists and locks agents', async () => {
+    expect((await cli('help')).out).toContain('mcp allow <agent>');
+    expect((await cli('demo', '--out', join(dir, 'demo'))).code).toBe(0);
+    expect((await cli('mcp', 'allow', 'claude-code')).code).toBe(0);
+    expect((await cli('mcp', 'lock')).code).toBe(0);
+    const agents = JSON.parse((await cli('mcp', 'agents', '--json')).out) as { locked: boolean; allowed: Record<string, string> };
+    expect(agents.locked).toBe(true);
+    expect(Object.keys(agents.allowed)).toEqual(['claude-code']);
+    expect((await cli('mcp', 'allow', 'you')).code).toBe(2);
+  });
+});

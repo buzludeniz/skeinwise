@@ -190,17 +190,20 @@ still holds, or skip. A skipped note comes back after the next review run.
 - Connectors only read, and their tokens live in the macOS Keychain, never in a file.
 - **The app's server** *(planned, v0.4)* listens on 127.0.0.1 only and needs a per-install token.
 
-## Agent memory (MCP) *(planned, v0.5)*
+## Agent memory (MCP)
 
 Two local MCP servers over stdio, so an agent can be given memory without the window, or both.
 
 - **Memory server** (`skeinwise mcp`): `search`, `ask`, `read_entry`, `read_thread`, `timeline`, `list_hubs`,
   `read_hub`, `write_note`, `append_daily_note`, `tag_entries`, `not_mine`, `undo_run`.
 - **Window server** (`skeinwise mcp --window`): `show_in_brain`, `open_entry`, `open_hub`, `set_layout`,
-  `highlight` (moves the app's view while you watch).
+  `highlight` (moves the app's view while you watch). *(The app's side of these is planned.)*
 - **Config snippets** for Claude Code, Claude desktop, Codex, Cursor and others, ready to copy.
-- Every agent write is a version under the agent's name.
-- Before an agent's first read, the app asks you to allow it. Lock stops all tools.
+- Every agent write is a version under the agent's name. An agent never changes your notes or another agent's.
+- An agent's first call is refused until you allow it by name (`skeinwise mcp allow <agent>`). `skeinwise mcp lock`
+  stops every agent tool at once.
+
+Details: [mcp.md](mcp.md).
 
 ## Ledger and proof of date *(planned, v0.5)*
 
@@ -235,7 +238,8 @@ Details: [sync.md](sync.md).
 | `skeinwise live [--once]` | Turns on the update stream: live capture and background organising, and pulls from connected services |
 | `skeinwise model check`, `fetch`, `serve` | Tests, downloads (after asking) or starts the local model |
 | `skeinwise serve` | Starts the app *(planned, v0.4)* |
-| `skeinwise mcp [--window]` | Starts the memory server, or the window server *(planned, v0.5)* |
+| `skeinwise mcp [--window]` | Starts the memory server, or the window server, for an agent over stdio |
+| `skeinwise mcp allow`, `revoke`, `agents`, `lock`, `unlock` | Which agents may use the record, and the lock that stops them all |
 | `skeinwise demo` | Builds a demo record from invented data |
 | `skeinwise export` | Writes a zip of the record: chats, entries and notes as Markdown; tags, folders, hubs and runs as JSON |
 | `skeinwise sync init`, `push`, `join`, `restore`, `status` | Encrypted sync through a folder you pick |
