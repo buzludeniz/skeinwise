@@ -5,7 +5,6 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { ORGANISER_COMMANDS } from './cli-organiser.ts';
-import { CONNECTOR_COMMANDS, CONNECTOR_FLAGS, CONNECTOR_HELP } from './connectors/commands.ts';
 import { writeDemo } from './demo/demo.ts';
 import { needId, UsageError } from './errors.ts';
 import { day, entryHeader, indent, minute, speakerLabel } from './format.ts';
@@ -104,7 +103,6 @@ The local model:
 ${MODEL_HELP}
 
 ${SYNC_HELP}
-${CONNECTOR_HELP}
 Agents (MCP):
 ${MCP_HELP}
 Settings:
@@ -184,7 +182,6 @@ async function run(argv: string[], io: Io): Promise<number> {
       remove: { type: 'boolean' },
       run: { type: 'boolean' },
       ...SYNC_FLAGS,
-      ...CONNECTOR_FLAGS,
       ...MCP_FLAGS,
     },
   });
@@ -407,7 +404,9 @@ async function run(argv: string[], io: Io): Promise<number> {
     }
 
     default: {
-      const organiser = ORGANISER_COMMANDS[command] ?? SYNC_COMMANDS[command] ?? CONNECTOR_COMMANDS[command] ?? MCP_COMMANDS[command];
+      // The connectors' commands (src/connectors/commands.ts) are left out: connectors are off in v1.0 and ship in v1.1
+      // behind their own consent screen (Deniz, Nov 25).
+      const organiser = ORGANISER_COMMANDS[command] ?? SYNC_COMMANDS[command] ?? MCP_COMMANDS[command];
       if (!organiser) throw new UsageError(`Unknown command: ${command}. Run "skeinwise help" for the list.`);
       const home = homeDir(io.env);
       return withStore(io, (store) => organiser({ io, home, store, values, args: positionals, json }));

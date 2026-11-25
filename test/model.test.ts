@@ -48,11 +48,11 @@ function fakeServer(answer: (user: string) => string, opts: { models?: string[];
 }
 
 /** A hub answer that cites the first sentences it was shown and names the subject after a word in them. */
-function hubAnswer(user: string, extra: { inShort?: string } = {}): string {
+function hubAnswer(user: string, extra: { inShort?: string; cites?: string[] } = {}): string {
   const name = /rye|sourdough|loaf/.test(user) ? 'Rye baking' : 'River samples';
   return JSON.stringify({
     name,
-    in_short: [{ text: extra.inShort ?? `Notes on ${name.toLowerCase()}.`, cites: ['S1', 'S2'] }],
+    in_short: [{ text: extra.inShort ?? `Notes on ${name.toLowerCase()}.`, cites: extra.cites ?? ['S1', 'S2'] }],
     found: ['S2'],
     open_ends: [],
   });
@@ -155,7 +155,9 @@ describe('organising with a model', () => {
     add('call.md', 'Called Sam about the rye loaf, write to sam@example.com or +44 20 7946 0958. The sourdough starter needs Sam.', 'Bread call');
     const server = fakeServer((u) => {
       const name = /\[NAME_\d+\]/.exec(u)?.[0] ?? 'nobody';
-      return hubAnswer(u, { inShort: /rye/.test(u) ? `Baking with ${name}.` : 'River notes.' });
+      // Cites the sentence that names the person, since a hub line must stand on what it cites.
+      const naming = /^(S\d+) .*\[NAME_\d+\]/m.exec(u)?.[1];
+      return hubAnswer(u, naming ? { inShort: `Baking with ${name}.`, cites: [naming] } : { inShort: 'River notes.' });
     });
     const client = createModel(config({ remoteUrl: 'https://models.example.net/v1', remoteModel: 'big-1', apiKeyEnv: 'SKEINWISE_TEST_KEY', remoteHosts: ['models.example.net'], names: ['Sam'] }), 'remote', {
       fetch: server.fetch,
@@ -391,13 +393,9 @@ describe('organising with a model', () => {
       expect(again.message).not.toContain(KEY);
     });
 
-    // LS-15: negative or missing usage, and timeouts, let a run spend without counting it.
-    it('counts usage that is negative, missing or cut off by a timeout', async () => {
-      const negative = fakeServer((u) => hubAnswer(u), { usage: { prompt_tokens: -5000, completion_tokens: -5000 } });
-      const run = await runTask(store, new RecordView(store), options('hub', createModel(remote(), 'remote', { fetch: negative.fetch, env })));
-      expect(run.tokensIn).toBeGreaterThanOrEqual(0);
-      expect(run.tokensOut).toBeGreaterThanOrEqual(0);
-
+    // LS-15: negative or missing usage, and timeouts, let a run spend without counting it. E2 (Deniz, Nov 25): so did a
+    // report of 0. A report of 0 or less counts exactly what a missing one does: our own estimate.
+    it('counts usage that is zero, negative, missing or cut off by a timeout', async () => {
       const silent = (async (_url: string | URL | Request, init?: RequestInit) => {
         const body = JSON.parse(String(init!.body)) as { messages: { content: string }[] };
         return Response.json({ choices: [{ message: { content: hubAnswer(body.messages[1]!.content) }, finish_reason: 'stop' }] });
@@ -405,6 +403,12 @@ describe('organising with a model', () => {
       const counted = await runTask(store, new RecordView(store), options('hub', createModel(remote(), 'remote', { fetch: silent, env })));
       expect(counted.tokensIn).toBeGreaterThan(0);
       expect(counted.tokensOut).toBeGreaterThan(0);
+
+      for (const figure of [0, -5000]) {
+        const lying = fakeServer((u) => hubAnswer(u), { usage: { prompt_tokens: figure, completion_tokens: figure } });
+        const run = await runTask(store, new RecordView(store), options('hub', createModel(remote(), 'remote', { fetch: lying.fetch, env })));
+        expect({ figure, tokensIn: run.tokensIn, tokensOut: run.tokensOut }).toEqual({ figure, tokensIn: counted.tokensIn, tokensOut: counted.tokensOut });
+      }
 
       let maxTokens = 0;
       const slow = (async (_url: string | URL | Request, init?: RequestInit) => {

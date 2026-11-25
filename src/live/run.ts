@@ -1,9 +1,10 @@
-// `skeinwise live`: the update stream from the command line. Capture imports what changes, the connectors pull from
-// the services you connected; after each save the background organiser runs over what is new.
+// `skeinwise live`: the update stream from the command line. Capture imports what changes; after each save the
+// background organiser runs over what is new. Connectors are off in v1.0 (Deniz, Nov 25): they ship in v1.1 behind
+// their own consent screen, so live pulls from a connected service only when its caller passes `poll`.
 
 import { join } from 'node:path';
 import { loadConfig } from '../config.ts';
-import { type PollReport, pollConnectors } from '../connectors/poll.ts';
+import type { PollReport } from '../connectors/poll.ts';
 import type { Store } from '../store/store.ts';
 import { defaultTargets, LiveCapture, type LiveStatus, readStatus, statusLines } from './capture.ts';
 import { Background } from './organise.ts';
@@ -26,7 +27,10 @@ export interface LiveOptions {
   onPulled?: (lines: string[]) => void;
   /** Seconds between connector checks (default 60). Each connection keeps its own pace; most checks pull nothing. */
   pollSeconds?: number;
-  /** Replaces the connectors' pull (tests). */
+  /**
+   * Pulls from the connected services. Without it live pulls nothing and never reads connections.json: connectors
+   * are off in v1.0, and both callers (`skeinwise live` and the web app's Record live) leave it out.
+   */
   poll?: (store: Store, home: string) => Promise<PollReport[]>;
 }
 
@@ -74,7 +78,7 @@ export function startLive(store: Store, home: string, options: LiveOptions = {})
   // are new to the organiser too, so a pass runs at start-up even when the catch-up found nothing.
   if (background && !background.active) background.trigger();
 
-  const poll = options.poll ?? ((s: Store, h: string) => pollConnectors(s, h));
+  const poll = options.poll ?? (async (): Promise<PollReport[]> => []);
   let stopped = false;
   let polling = false;
   // The start-up pull reports every connection it pulled; later ones only what brought something or failed.

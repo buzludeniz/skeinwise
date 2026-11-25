@@ -1,8 +1,8 @@
 // `skeinwise model`: the model's chores. `check` asks the server for its models and runs one short test prompt (a
 // recorded run, inside the budget, for the outside model). `trust` confirms a host the outside model's key may go to.
 // `fetch` downloads the suggested model into the record folder's models/, after showing its size and source and
-// asking first, and checks it against the size and sha256 pinned below. `serve` prints (or with --run, runs) the
-// llama-server command for it, locked with a key and closed to web pages. Weights never go anywhere but that folder,
+// asking first, and checks it against the size and sha256 pinned below. `serve` checks that file against the pin again,
+// then prints (or with --run, runs) the llama-server command for it, locked with a key and closed to web pages. Weights never go anywhere but that folder,
 // and nothing is downloaded without `fetch`.
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -205,6 +205,16 @@ async function hashFile(file: string): Promise<string> {
   return hash.digest('hex');
 }
 
+/**
+ * Whether a file is the one Skeinwise pins: its size first, which is quick, then its sha256. A file of the right size
+ * isn't enough, because a planted or damaged one has to hash to the pin too. `hashing` runs before the slow part.
+ */
+async function isPinnedFile(file: string, hashing: () => void): Promise<boolean> {
+  if (statSync(file).size !== SUGGESTED.size) return false;
+  hashing();
+  return (await hashFile(file)) === SUGGESTED.sha256;
+}
+
 async function fetchModel(ctx: Ctx): Promise<number> {
   const get = ctx.io.fetch ?? fetch;
   const { size, sha256 } = SUGGESTED;
@@ -213,16 +223,12 @@ async function fetchModel(ctx: Ctx): Promise<number> {
   const part = `${target}.part`;
   const source = `${HUB}/${SUGGESTED.repo}/resolve/${SUGGESTED.revision}/${SUGGESTED.file}`;
 
-  // A file of the right size is not enough: a planted or damaged one has to hash to the pin too.
   let replacing = false;
   if (existsSync(target)) {
-    if (statSync(target).size === size) {
-      if (!ctx.values.json) ctx.io.err(`Checking the sha256 of ${target}...\n`);
-      if ((await hashFile(target)) === sha256) {
-        if (ctx.values.json) ctx.json({ path: target, size, sha256, downloaded: false });
-        else ctx.io.out(`${SUGGESTED.file} is already in ${dir} (${gigabytes(size)}, sha256 checked).\nStart it with: skeinwise model serve --run\n`);
-        return 0;
-      }
+    if (await isPinnedFile(target, () => !ctx.values.json && ctx.io.err(`Checking the sha256 of ${target}...\n`))) {
+      if (ctx.values.json) ctx.json({ path: target, size, sha256, downloaded: false });
+      else ctx.io.out(`${SUGGESTED.file} is already in ${dir} (${gigabytes(size)}, sha256 checked).\nStart it with: skeinwise model serve --run\n`);
+      return 0;
     }
     replacing = true;
   }
@@ -404,6 +410,14 @@ async function serve(ctx: Ctx, file: string | undefined): Promise<number> {
   if (!existsSync(model)) {
     throw new UsageError(
       file ? `There is no model file at ${model}.` : `The suggested model isn't in ${modelsDir(ctx.home)} yet. Fetch it with: skeinwise model fetch`,
+    );
+  }
+  // The pinned name is checked against the pin every time, since anything that can write to models/ could have put
+  // another file there after `fetch` checked it. A .gguf you name yourself is yours to vouch for.
+  if (!file && !(await isPinnedFile(model, () => !ctx.values.json && ctx.io.err(`Checking the sha256 of ${model}...\n`)))) {
+    throw new Error(
+      `${model} isn't the ${SUGGESTED.file} Skeinwise pins (its size or sha256 differs), so Skeinwise won't start it. ` +
+        'Download it again with: skeinwise model fetch',
     );
   }
   // Resolved once from PATH, then kept: a program put earlier on PATH later doesn't take its place.
