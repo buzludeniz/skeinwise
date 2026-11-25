@@ -56,8 +56,8 @@ engine (No-AI | model) ──► runs ──► derived layer (tags, folders, li
 
 ### Screens
 
-Onboarding (Welcome, Set Up, Bring In, Watch It Grow) · rail with Search ⌘K, Brain, Navigator, Numbers, Timeline, You,
-Lab, Learn, Add · the 3D Brain · entry reader with its layers and history · hub panel · year rings · table builder
+Onboarding (Welcome, Set up, Bring in, Watch it grow) · rail with Search ⌘K, Map, Browse, Figures, Timeline, Portrait,
+Lab, Guide, Add · the 3D Map · entry reader with its layers and history · hub panel · year rings · table builder
 and tides · notes editor with `[[links]]` and a daily note · review queue · capture bar (live capture, add files,
 request an export, lock) · settings (engine, budget, privacy, agents, sync, proof of date, exclusions) · themes and
 palettes. Full detail: [ui.md](ui.md).
@@ -81,10 +81,11 @@ A browser extension, Notion, Evernote and Slack connectors, mobile apps, a hoste
 |---|---|
 | v0.1.0 | Record store, importers, dedupe and versions, search, CLI, demo record |
 | v0.2.0 | No-AI and model engines, runs with provenance and undo, corrections, notes, review |
-| v0.3.0 | Web UI: onboarding, 3D brain, reader, hubs, timeline, lab, themes, command bar, settings |
+| v0.3.0 | Web UI: onboarding, 3D Map, reader, hubs, timeline, lab, themes, command bar, settings |
 | v0.4.0 | MCP server and window control, live capture, ledger, encrypted sync |
 
 ## How the detail docs were written
 
 `ui.md` and `features.md` were drafted by a small language model running locally (llama.cpp), from an outline, then
-checked and corrected by hand. The notes at the end of each file say which model was used.
+checked and corrected by hand. The notes at the end of each file say which model was used and what was corrected;
+the raw drafts are kept in [drafts/](drafts/).
