@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo-mark-dark.svg">
+  <img src="brand/logo-mark.svg" alt="" width="40" height="40">
+</picture>
+
 # Skeinwise: agent memory (MCP)
 
 `skeinwise mcp` is an MCP server that gives an AI agent your record as its memory. It runs on this computer over
