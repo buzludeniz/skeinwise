@@ -6,6 +6,7 @@ import { ArrowRight, Brain, CircleHelp, FilePlus2, FileText, Lock, MessageSquare
 import {
   canUndo,
   closeCommand,
+  engineName,
   go,
   light,
   loadRecord,
@@ -15,6 +16,7 @@ import {
   openEntry,
   openNav,
   openThread,
+  organise,
   setLayout,
   setTheme,
   toast,
@@ -25,7 +27,7 @@ import { fmtDate, plural, speakerName } from '../format.ts';
 import { snippetHtml } from '../markdown.ts';
 import { setState, useApp } from '../store.ts';
 import { THEMES } from '../themes.ts';
-import type { AskView, Hit } from '../types.ts';
+import type { AskHit, AskResult, Hit } from '../types.ts';
 import { Kbd, MOD, useFocusTrap } from './common.tsx';
 
 interface Row {
@@ -65,6 +67,7 @@ const HINTS: [string, string][] = [
   ['go to …', 'Brain, Timeline, Lab, Review, Settings…'],
   ['theme …', THEMES.map((t) => t.name).join(', ')],
   ['when did I first mention …?', 'Ask, and see your own entries'],
+  ['organise', 'Run the organiser: tags, folders, links, hubs'],
   ['undo', 'Take back the last change'],
   ['lock', 'Close the record until you unlock'],
 ];
@@ -74,48 +77,67 @@ function openHit(h: { id: number; threadId?: number | null }) {
   else openEntry(h.id);
 }
 
-const PATTERN_HEAD: Record<AskView['pattern'], string> = {
-  first: 'Your earliest words on this come first, then the rest by date.',
-  decide: 'What you wrote around the decision, oldest first.',
-  changed: 'How your words on this moved over time, oldest first.',
-  plain: 'Entries that match, your own words first.',
+const KIND_HEAD: Record<AskResult['kind'], string> = {
+  first: 'Your earliest words on it, oldest first.',
+  decided: 'Where you settled it, in your own words, oldest first.',
+  changed: 'Where you started, then each change of course.',
+  any: 'The entries that match best.',
 };
 
-function Answer({ view, onBack }: { view: AskView; onBack: () => void }) {
-  const first = view.entries[0];
+const WHY: Record<NonNullable<AskHit['why']>, string> = {
+  'first mention': 'First mention',
+  decision: 'Decision',
+  change: 'Change',
+};
+
+function Answer({ view, onBack }: { view: AskResult; onBack: () => void }) {
+  const first = view.hits[0];
+  const cited = new Set(view.cites);
   return (
     <div class="answer" aria-live="polite">
       <p class="eyebrow">Answer from your record</p>
       <h2>{view.question}</h2>
-      {view.entries.length === 0 ? (
-        <p class="soft">Nothing in the record mentions “{view.terms}”.</p>
-      ) : (
+      {view.answer && (
+        <div class="model-answer">
+          <p>{view.answer}</p>
+          <p class="band small">
+            The organiser’s reading of these entries, not your words · {engineName(view.engine, view.model)}
+            {view.runId !== null && <> · run {view.runId}</>}
+          </p>
+        </div>
+      )}
+      {view.message && <p class="soft">{view.message}</p>}
+      {view.hits.length > 0 && (
         <>
           <p>
-            {view.pattern === 'first' && first ? (
+            {view.kind === 'first' && first ? (
               <>
-                You first wrote about it on <strong>{fmtDate(first.createdAt)}</strong>.{' '}
+                You first wrote about “{view.topic}” on <strong>{fmtDate(first.date)}</strong>.{' '}
               </>
             ) : null}
-            {plural(view.entries.length, 'entry', 'entries')} from {fmtDate(view.first!)} to {fmtDate(view.last!)}. {PATTERN_HEAD[view.pattern]}
+            {plural(view.hits.length, 'entry', 'entries')}. {KIND_HEAD[view.kind]}
           </p>
-          <p class="soft small">These are your entries as found by search. No model wrote this answer. They are lit in the brain.</p>
+          {!view.answer && <p class="soft small">Found by search and dates. No model wrote this. They are lit in the brain.</p>}
           <ul class="hits">
-            {view.entries.slice(0, 12).map((e) => (
-              <li key={e.id}>
+            {view.hits.slice(0, 12).map((h) => (
+              <li key={h.entryId}>
                 <button
                   type="button"
                   class="hit"
                   onClick={() => {
                     closeCommand();
-                    openEntry(e.id);
+                    openEntry(h.entryId);
                   }}
                 >
-                  <span class="hit-title">{e.title || e.threadTitle || 'Untitled'}</span>
-                  <span class="hit-meta">
-                    {fmtDate(e.createdAt)} · {speakerName(e.speaker)} · {e.sourceLabel}
+                  <span class="hit-title">
+                    {h.where || 'Untitled'}
+                    {h.why && <span class="tag">{WHY[h.why]}</span>}
+                    {cited.has(h.entryId) && <span class="tag">Cited</span>}
                   </span>
-                  <span class="hit-snippet" dangerouslySetInnerHTML={{ __html: snippetHtml(e.snippet) }} />
+                  <span class="hit-meta">
+                    {fmtDate(h.date)} · {speakerName(h.speaker)}
+                  </span>
+                  <span class="hit-snippet">“{h.quote}”</span>
                 </button>
               </li>
             ))}
@@ -126,7 +148,7 @@ function Answer({ view, onBack }: { view: AskView; onBack: () => void }) {
         <button type="button" class="btn btn-quiet btn-small" onClick={onBack}>
           Back to the search
         </button>
-        {view.entries.length > 0 && (
+        {view.hits.length > 0 && (
           <button
             type="button"
             class="btn btn-primary btn-small"
@@ -155,7 +177,9 @@ function Bar({ initial }: { initial: string }) {
   const [text, setText] = useState(initial);
   const [result, setResult] = useState<{ query: string; question: boolean; hits: Hit[] } | null>(null);
   const [at, setAt] = useState(0);
-  const [answer, setAnswer] = useState<AskView | null>(null);
+  const [answer, setAnswer] = useState<AskResult | null>(null);
+  const runs = useApp((s) => s.organiser.runs);
+  const engine = useApp((s) => s.config?.ai.engine ?? 'none');
   const [busy, setBusy] = useState(false);
   const box = useFocusTrap(true);
   const list = useRef<HTMLUListElement>(null);
@@ -184,9 +208,9 @@ function Bar({ initial }: { initial: string }) {
   const ask = async () => {
     setBusy(true);
     try {
-      const view = await api.get<AskView>(`ask${qs({ q })}`);
+      const view = await api.get<AskResult>(`ask${qs({ q })}`);
       setAnswer(view);
-      if (view.entries.length) light(view.entries.map((e) => e.id), q);
+      if (view.hits.length) light(view.hits.map((h) => h.entryId), q);
     } catch (error) {
       toast(message(error), { tone: 'error' });
     } finally {
@@ -228,13 +252,21 @@ function Bar({ initial }: { initial: string }) {
     }
     if (/^undo$/i.test(q)) out.push({ key: 'undo', icon: Undo2, title: canUndo() ? `Undo: ${canUndo()}` : 'Undo', run: () => undo() });
     if (/^lock$/i.test(q)) out.push({ key: 'lock', icon: Lock, title: 'Lock Skeinwise', run: () => lock() });
-    if (/^organi[sz]e$/i.test(q)) {
+    const organiseVerb = /^organi[sz]e(?:\s+(.*))?$/i.exec(q);
+    if (organiseVerb) {
+      const task = (organiseVerb[1] ?? '').trim().toLowerCase();
+      const tasks = ['tag', 'file', 'link', 'hub', 'layer', 'review'] as const;
+      const one = tasks.find((t) => t === task || `${t}s` === task);
+      const by = engine === 'none' ? 'No-AI' : `with the ${engine} model`;
+      const ran = runs.some((r) => r.task !== 'correction' && r.task !== 'ask');
+      const what = one ? `the ${one} task` : 'every task';
+      if (ran) out.push({ key: 'organise-new', icon: Sparkles, title: `Organise new entries: ${what}`, meta: `Only what came in since the last run · ${by}`, run: () => organise({ task: one ?? 'all', scope: 'new' }) });
       out.push({
         key: 'organise',
         icon: Sparkles,
-        title: 'Organise the record',
-        meta: 'Not in this build yet',
-        run: () => toast('The organiser isn’t part of this build yet, so there is nothing to run.'),
+        title: ran ? `Organise everything again: ${what}` : `Organise the record: ${what}`,
+        meta: ran ? `Replaces the earlier runs’ output · ${by}` : by,
+        run: () => organise({ task: one ?? 'all', scope: 'all' }),
       });
     }
     if (result && result.query === q.replace(/^(open)\s+/i, '')) {
@@ -263,7 +295,7 @@ function Bar({ initial }: { initial: string }) {
       }
     }
     return out;
-  }, [q, result]);
+  }, [q, result, runs, engine]);
 
   const run = async (row: Row | undefined) => {
     if (!row) return;

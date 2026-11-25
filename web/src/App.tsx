@@ -130,6 +130,18 @@ function Toasts() {
               Undo
             </Button>
           )}
+          {t.action && (
+            <Button
+              kind="quiet"
+              small
+              onClick={() => {
+                dismissToast(t.id);
+                void Promise.resolve(t.action!.run()).catch((error: unknown) => toast(message(error), { tone: 'error' }));
+              }}
+            >
+              {t.action.label}
+            </Button>
+          )}
           <Button icon={X} kind="quiet" small aria-label="Dismiss" onClick={() => dismissToast(t.id)} />
         </div>
       ))}

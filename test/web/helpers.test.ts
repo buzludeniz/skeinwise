@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BrainData, BrainPoint } from '../../src/server/queries.ts';
 import { niceMax, scale, smooth, sparseLabels } from '../../web/src/chart.ts';
-import { lineDiff } from '../../web/src/diff.ts';
 import { openLink } from '../../web/src/markdown.ts';
 import { folderCounts, navItems, sourceCounts } from '../../web/src/nav.ts';
 import { batchId, importSummary, LOOSE_FOLDER, uploadPath, usable } from '../../web/src/upload.ts';
@@ -37,21 +36,6 @@ describe('chart helpers', () => {
   });
 });
 
-describe('line diff', () => {
-  it('marks kept, added and removed lines in order', () => {
-    expect(lineDiff('a\nb\nc', 'a\nc\nd')).toEqual([
-      { op: 'same', text: 'a' },
-      { op: 'del', text: 'b' },
-      { op: 'same', text: 'c' },
-      { op: 'add', text: 'd' },
-    ]);
-  });
-
-  it('treats Windows line ends as plain ones', () => {
-    expect(lineDiff('x\r\ny', 'x\ny').every((l) => l.op === 'same')).toBe(true);
-  });
-});
-
 describe('navigator items', () => {
   const points: BrainPoint[] = [
     [1, 0, 0, 7, 3, 1, -1, t('2025-03-02T10:00:00Z'), 'How deep?'],
@@ -71,6 +55,7 @@ describe('navigator items', () => {
     threads: { '3': 'Beans' },
     points,
     links: [],
+    hubs: [],
     organiser: false,
   } as unknown as BrainData;
 

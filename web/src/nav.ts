@@ -28,6 +28,9 @@ export interface NavFilter {
 export type NavSort = 'date' | 'name';
 
 /** Threads and loose entries, filtered and sorted. A thread passes when any of its entries does. */
+/** The folder the server puts unfiled entries in (src/server/queries.ts). */
+export const INBOX = 'Inbox';
+
 export function navItems(data: BrainData, filter: NavFilter = {}, sort: NavSort = 'date'): NavItem[] {
   const threads = new Map<number, NavItem>();
   const items: NavItem[] = [];

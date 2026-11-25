@@ -4,7 +4,10 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { posix } from 'node:path';
 import type { Entry, SearchHit, Store, Version } from '../store/store.ts';
+import { parseQuestion } from '../organiser/ask.ts';
+import { findSchema, hubEntryIds, liveHubs, liveLinks, liveTags } from '../organiser/views.ts';
 import type { EntryRow } from './buckets.ts';
+import { grouping, progress } from './organiser.ts';
 import { keyWords, names, words } from './words.ts';
 
 /** Entries that count: from included sources and not in a thread marked "not mine" (as in the store). */
@@ -14,7 +17,7 @@ export function hasTable(db: DatabaseSync, name: string): boolean {
   return db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name) !== undefined;
 }
 
-/** The organiser's tables arrive with a later schema; until then hubs, folders, runs and review are empty. */
+/** The organiser's tables exist (a record made before 0.2.0 gets them when it is opened). */
 export function organiserReady(db: DatabaseSync): boolean {
   return hasTable(db, 'runs');
 }
@@ -25,7 +28,10 @@ export function firstLine(text: string, max = 80): string {
   return clean.length > max ? `${clean.slice(0, max - 1).trimEnd()}…` : clean;
 }
 
-/** Where a note sits: its source's name plus the folders inside it. Messages wait in the Inbox until filed. */
+/**
+ * Where an entry sits before the organiser files it: a note in its source's name plus the folders inside it, and
+ * everything else in the Inbox. Once a file run has run, the organiser's folders replace this (see entryRows).
+ */
 export function folderOf(kind: string, sourceKind: string, sourceLabel: string, externalId: string): string {
   if (kind === 'message' || sourceKind !== 'notes') return 'Inbox';
   const dir = posix.dirname(externalId.replaceAll('\\', '/'));
@@ -49,6 +55,7 @@ interface RawRow {
 
 /** Every visible entry with the properties the views group by, oldest first. */
 export function entryRows(db: DatabaseSync): (EntryRow & { threadTitle: string | null })[] {
+  const groups = grouping(db);
   const rows = db
     .prepare(
       `SELECT e.id, e.kind, e.speaker, e.source_id AS sourceId, s.label AS source, s.kind AS sourceKind,
@@ -71,10 +78,11 @@ export function entryRows(db: DatabaseSync): (EntryRow & { threadTitle: string |
     sourceKind: r.sourceKind,
     threadId: r.threadId,
     threadTitle: r.threadTitle,
-    folder: folderOf(r.kind, r.sourceKind, r.source, r.externalId),
-    project: null,
-    hub: null,
-    tag: null,
+    // After a file run, what it filed nowhere waits in the Inbox.
+    folder: groups.folderOf ? (groups.folderOf.get(r.id) ?? 'Inbox') : folderOf(r.kind, r.sourceKind, r.source, r.externalId),
+    project: groups.projectOf.get(r.id) ?? null,
+    hub: groups.hubOf.get(r.id) ?? null,
+    tag: groups.tagOf.get(r.id) ?? null,
     createdAt: r.createdAt,
     title: r.title?.trim() || firstLine(r.head) || '(empty)',
   }));
@@ -133,8 +141,10 @@ export interface BrainData {
   projects: string[];
   threads: Record<string, string>;
   points: BrainPoint[];
-  /** [from, to, kind]: 0 = note link. */
+  /** [from, to, kind]: 0 = note link, 1 = cross link. */
   links: [number, number, number][];
+  /** The organiser's concept hubs, each with the entries it holds (its spokes). */
+  hubs: { id: number; name: string; entries: number[] }[];
   organiser: boolean;
 }
 
@@ -156,6 +166,8 @@ export function brainData(db: DatabaseSync): BrainData {
   const sources = new Map<number, { id: number; label: string; kind: string }>();
   const threads: Record<string, string> = {};
   const kindCode = { message: 0, note: 1, file: 2 } as const;
+  const projects: string[] = [];
+  const pr = new Map<string, number>();
   const points: BrainPoint[] = rows.map((r) => {
     if (!sources.has(r.sourceId)) sources.set(r.sourceId, { id: r.sourceId, label: r.source, kind: r.sourceKind });
     if (r.threadId && r.threadTitle !== null) threads[r.threadId] = r.threadTitle;
@@ -166,21 +178,32 @@ export function brainData(db: DatabaseSync): BrainData {
       r.sourceId,
       r.threadId ?? 0,
       intern(folders, fo, r.folder),
-      -1,
+      r.project === null ? -1 : intern(projects, pr, r.project),
       Date.parse(r.createdAt),
       r.title.length > 90 ? `${r.title.slice(0, 89)}…` : r.title,
     ];
   });
+  const ready = organiserReady(db);
+  const visible = new Set(rows.map((r) => r.id));
+  // Note links come from your [[links]] whatever has run; cross links from the organiser's link task.
+  const links: [number, number, number][] = noteLinks(db).map(([a, b]) => [a, b, 0]);
+  if (ready) for (const l of liveLinks(db)) if (l.kind === 'cross' && visible.has(l.from) && visible.has(l.to)) links.push([l.from, l.to, 1]);
+  const hubs = ready
+    ? liveHubs(db)
+        .map((h) => ({ id: h.id, name: h.name, entries: hubEntryIds(db, h.id).filter((id) => visible.has(id)) }))
+        .filter((h) => h.entries.length)
+    : [];
   return {
     kinds: ['message', 'note', 'file'],
     speakers,
     sources: [...sources.values()],
     folders,
-    projects: [],
+    projects,
     threads,
     points,
-    links: noteLinks(db).map(([a, b]) => [a, b, 0]),
-    organiser: organiserReady(db),
+    links,
+    hubs,
+    organiser: ready,
   };
 }
 
@@ -277,59 +300,9 @@ export function similar(store: Store, entry: Entry, limit = 5): Brief[] {
   return out;
 }
 
-export interface AskView {
-  question: string;
-  pattern: 'first' | 'decide' | 'changed' | 'plain';
-  terms: string;
-  /** Your own words first, then the rest; each group by date. */
-  entries: (Brief & { snippet: string })[];
-  first: string | null;
-  last: string | null;
-}
-
-const PATTERNS: [AskView['pattern'], RegExp][] = [
-  ['first', /^\s*when\s+did\s+i\s+(?:first\s+)?(?:mention|talk\s+about|write\s+about|bring\s+up|start\s+on|think\s+about)\s+(.+?)\??\s*$/i],
-  ['decide', /^\s*what\s+did\s+(?:i|we)\s+decide\s+(?:about|on)\s+(.+?)\??\s*$/i],
-  ['changed', /^\s*what\s+changed\s+in\s+my\s+thinking\s+(?:on|about)\s+(.+?)\??\s*$/i],
-];
-
-/** Is this text a question rather than words to search for? */
+/** Is this text a question rather than words to search for? The organiser's ask reads the same patterns. */
 export function isQuestion(text: string): boolean {
-  return /\?\s*$/.test(text) || PATTERNS.some(([, re]) => re.test(text));
-}
-
-/** A question answered as a view of your own entries, built from search and dates alone (the No-AI reading). */
-export function askView(store: Store, question: string): AskView {
-  let pattern: AskView['pattern'] = 'plain';
-  let terms = question.replace(/\?+\s*$/, '');
-  for (const [p, re] of PATTERNS) {
-    const m = re.exec(question);
-    if (m) {
-      pattern = p;
-      terms = m[1]!;
-      break;
-    }
-  }
-  if (pattern === 'decide') terms = `${terms} decided`;
-  let hits = store.search(terms, { limit: 60 });
-  if (pattern === 'decide') {
-    // "decided" only helps rank: keep the hits about the subject itself.
-    const subject = new Set(words(terms.replace(/\bdecided\b/, '')));
-    hits = hits.filter((h) => words(`${h.title ?? ''} ${h.body}`).some((w) => subject.has(w)));
-  }
-  const yours = hits.filter((h) => h.speaker !== 'assistant');
-  const theirs = hits.filter((h) => h.speaker === 'assistant');
-  const byDate = (a: SearchHit, b: SearchHit) => a.createdAt.localeCompare(b.createdAt);
-  const ordered = pattern === 'plain' ? [...yours, ...theirs] : [...yours.sort(byDate), ...theirs.sort(byDate)];
-  const dates = hits.map((h) => h.createdAt).sort();
-  return {
-    question,
-    pattern,
-    terms: terms.trim(),
-    entries: ordered.slice(0, 30).map((h) => ({ ...brief(h), snippet: h.snippet })),
-    first: dates[0] ?? null,
-    last: dates.at(-1) ?? null,
-  };
+  return /\?\s*$/.test(text) || (text.trim() !== '' && parseQuestion(text).kind !== 'any');
 }
 
 export interface Numbers {
@@ -341,13 +314,14 @@ export interface Numbers {
   sources: number;
   yours: number;
   assistants: number;
+  /** Null until the organiser has run. */
   hubs: number | null;
   first: string | null;
   last: string | null;
   byMonth: { month: string; entries: number }[];
   bySource: { label: string; entries: number }[];
   bySpeaker: { speaker: string; entries: number }[];
-  /** Shares of entries the organiser has reached; null until its tables exist. */
+  /** Shares of entries the organiser has reached; null until it has run. */
   organiser: { tagged: number; filed: number; summarised: number } | null;
 }
 
@@ -366,6 +340,8 @@ export function numbers(store: Store): Numbers {
   const bySpeaker = db
     .prepare(`SELECT e.speaker AS speaker, COUNT(*) AS entries ${from} GROUP BY e.speaker ORDER BY entries DESC`)
     .all() as unknown as Numbers['bySpeaker'];
+  const visible = new Set((db.prepare(`SELECT e.id ${from}`).all() as { id: number }[]).map((r) => r.id));
+  const shares = progress(db, visible);
   return {
     entries: s.entries,
     threads: s.threads,
@@ -375,13 +351,13 @@ export function numbers(store: Store): Numbers {
     sources: s.sources,
     yours: s.yours,
     assistants: s.entries - s.yours,
-    hubs: null,
+    hubs: shares ? liveHubs(db).length : null,
     first: s.first,
     last: s.last,
     byMonth: s.byMonth,
     bySource,
     bySpeaker,
-    organiser: null,
+    organiser: shares,
   };
 }
 
@@ -393,8 +369,32 @@ export interface YouLine {
   ids: number[];
 }
 
-/** What your own words return to: the words and names in entries you wrote, with first and latest dates. */
-export function aboutYou(store: Store): { words: YouLine[]; names: YouLine[]; entries: number } {
+/** Your projects: the organiser's Projects tags over the entries you can see. Empty until it has tagged. */
+function projectLines(db: DatabaseSync): YouLine[] {
+  const schema = organiserReady(db) ? findSchema(db, 'Projects') : undefined;
+  const tags = schema ? liveTags(db, schema.id) : [];
+  if (!tags.length) return [];
+  const dates = new Map(
+    (
+      db
+        .prepare(`SELECT e.id, e.created_at AS createdAt FROM entries e JOIN sources s ON s.id = e.source_id LEFT JOIN threads t ON t.id = e.thread_id WHERE ${VISIBLE}`)
+        .all() as unknown as { id: number; createdAt: string }[]
+    ).map((r) => [r.id, r.createdAt]),
+  );
+  const lines: YouLine[] = [];
+  for (const tag of tags) {
+    const held = tag.entryIds.filter((id) => dates.has(id)).sort((a, b) => dates.get(a)!.localeCompare(dates.get(b)!) || a - b);
+    if (!held.length) continue;
+    lines.push({ label: tag.name, count: held.length, first: dates.get(held[0]!)!, last: dates.get(held.at(-1)!)!, ids: held.slice(0, 40) });
+  }
+  return lines.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)).slice(0, 12);
+}
+
+/**
+ * What your own words return to: the words and names in entries you wrote, with first and latest dates; and your
+ * projects, once the organiser has tagged them.
+ */
+export function aboutYou(store: Store): { words: YouLine[]; names: YouLine[]; projects: YouLine[]; entries: number } {
   const rows = store.db
     .prepare(
       `SELECT e.id, e.created_at AS createdAt, COALESCE(e.title, '') AS title, v.body
@@ -425,6 +425,7 @@ export function aboutYou(store: Store): { words: YouLine[]; names: YouLine[]; en
   return {
     words: tally((t) => words(t).filter((w) => w.length >= 4)).filter((w) => !nameWords.has(w.label)).slice(0, 16),
     names: nameLines,
+    projects: projectLines(store.db),
     entries: rows.length,
   };
 }

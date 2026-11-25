@@ -5,7 +5,9 @@ import { api, ApiError, onLocked, onUnauthorised } from './api.ts';
 import type { ColourGrouping } from './groups.ts';
 import type { Layout } from './layout.ts';
 import { getState, type NavSection, type Organiser, type Panel, setState, type Target, type Toast } from './store.ts';
-import type { BrainData, Config, Status } from './types.ts';
+import { engineLabel } from '../../src/format.ts';
+import { plural } from './format.ts';
+import type { BrainData, Config, OrganiseJob, Run, Status } from './types.ts';
 
 type Patch<T> = { [K in keyof T]?: T[K] extends object ? (T[K] extends unknown[] ? T[K] : Patch<T[K]>) : T[K] };
 
@@ -169,10 +171,10 @@ export function clearLight(): void {
 
 let toastId = 0;
 
-export function toast(text: string, options: { undo?: Toast['undo']; tone?: Toast['tone'] } = {}): void {
+export function toast(text: string, options: { undo?: Toast['undo']; action?: Toast['action']; tone?: Toast['tone'] } = {}): void {
   const id = ++toastId;
   setState((s) => ({ toasts: [...s.toasts.slice(-2), { id, text, ...options }] }));
-  setTimeout(() => dismissToast(id), options.undo ? 9000 : 5000);
+  setTimeout(() => dismissToast(id), options.undo || options.action ? 9000 : 5000);
 }
 
 export function dismissToast(id: number): void {
@@ -220,6 +222,70 @@ export function changed(text: string, undoLabel: string, run: UndoStep['run']): 
       await run();
     },
   });
+}
+
+// The organiser.
+
+export interface OrganiseRequest {
+  task?: Run['task'] | 'all';
+  engine?: string;
+  scope?: string;
+  yes?: boolean;
+}
+
+/** "No-AI", "local model qwen3-4b", "by you". */
+export function engineName(engine: string, model: string | null): string {
+  return engineLabel(engine, model);
+}
+
+/** Takes back runs newest first, so no run is undone before the ones built on it. */
+async function undoRuns(runs: Run[]): Promise<void> {
+  for (const r of [...runs].reverse()) await api.post(`runs/${r.id}/undo`);
+  await loadRecord();
+}
+
+/** "Undo run": removes all a run made. */
+export async function undoRun(run: Run): Promise<void> {
+  await api.post(`runs/${run.id}/undo`);
+  await loadRecord();
+  toast(`Run ${run.id} undone.`);
+}
+
+/**
+ * Starts an organising run and follows it to the end: a small run answers at once, a model run reports its progress
+ * on the page until it finishes. Then the record reloads, and the toast offers Undo for every run it made.
+ */
+export async function organise(body: OrganiseRequest = {}): Promise<void> {
+  if (getState().job && !getState().job!.finished) {
+    toast('A run is already going. Wait for it to finish.');
+    return;
+  }
+  const { job } = await api.post<{ job: OrganiseJob }>('organise', body);
+  setState({ job });
+  await follow(job, body);
+}
+
+async function follow(start: OrganiseJob, body: OrganiseRequest): Promise<void> {
+  let job = start;
+  while (!job.finished) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try {
+      job = (await api.get<{ job: OrganiseJob | null }>('organise')).job ?? { ...job, finished: true, error: 'The run was lost.' };
+      setState({ job });
+    } catch {
+      // A missed poll is tried again.
+    }
+  }
+  if (job.runs.length) await loadRecord();
+  if (job.needsYes) {
+    toast(job.error ?? 'This run needs your yes.', { action: { label: 'Go ahead', run: () => organise({ ...body, yes: true }) } });
+  } else if (job.error) {
+    toast(job.runs.length ? `${plural(job.runs.length, 'run')} done, then it stopped: ${job.error}` : `Couldn't organise: ${job.error}`, { tone: 'error' });
+  } else if (job.runs.length) {
+    const runs = job.runs;
+    changed(`Organised: ${plural(runs.length, 'run')}, ${engineName(job.engine, runs.at(-1)!.model)}.`, `Undo ${plural(runs.length, 'organising run')}`, () => undoRuns(runs));
+  }
+  setState({ job: null });
 }
 
 // Lock and quit.

@@ -3,8 +3,7 @@
 import { useEffect, useReducer, useRef } from 'preact/hooks';
 import type { ColourGrouping } from './groups.ts';
 import type { Layout } from './layout.ts';
-import type { BrainData, Config, Status } from './types.ts';
-import type { Folder, Hub, ReviewItem, Run } from './types.ts';
+import type { BrainData, Config, OrganiseJob, OrganiserState, Status } from './types.ts';
 
 export type View = 'brain' | 'navigator' | 'numbers' | 'timeline' | 'you' | 'lab';
 /** What the rail and keys 1 to 8 open: a view, or a panel over the current one. */
@@ -25,6 +24,8 @@ export interface Toast {
   id: number;
   text: string;
   undo?: () => void | Promise<void>;
+  /** A button other than Undo, such as "Go ahead" for a run that needs a yes. */
+  action?: { label: string; run: () => void | Promise<void> };
   tone?: 'ok' | 'error';
 }
 
@@ -33,13 +34,7 @@ export interface Lit {
   label: string;
 }
 
-export interface Organiser {
-  ready: boolean;
-  hubs: Hub[];
-  folders: Folder[];
-  runs: Run[];
-  review: ReviewItem[];
-}
+export type Organiser = OrganiserState;
 
 export interface AppState {
   ready: boolean;
@@ -49,6 +44,8 @@ export interface AppState {
   config: Config | null;
   brain: BrainData | null;
   organiser: Organiser;
+  /** The organising run started from this page, while it runs and just after. */
+  job: OrganiseJob | null;
   view: View;
   panel: Panel;
   nav: NavSection;
@@ -80,7 +77,8 @@ export const initialState: AppState = {
   status: null,
   config: null,
   brain: null,
-  organiser: { ready: false, hubs: [], folders: [], runs: [], review: [] },
+  organiser: { ready: false, hubs: [], folders: [], runs: [], review: [], schemas: [] },
+  job: null,
   view: 'brain',
   panel: null,
   nav: { kind: 'inbox' },

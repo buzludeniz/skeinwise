@@ -4,6 +4,7 @@ import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../../src/cli.ts';
+import { loadConfig, saveConfig } from '../../src/config.ts';
 import { type Running, startServer } from '../../src/server/serve.ts';
 
 let dir: string;
@@ -40,6 +41,8 @@ beforeAll(async () => {
   let err = '';
   expect(await main(['demo'], { out: () => undefined, err: (t) => (err += t), env: { SKEINWISE_HOME: home } })).toBe(0);
   expect(err).toBe('');
+  // No-AI, so no test ever reaches a model server, even one running on this machine.
+  saveConfig(home, { ...loadConfig(home), engine: 'none' });
   // A pretend home directory for "Bring in", so the test never looks at the real one.
   const scan = join(dir, 'scan');
   mkdirSync(join(scan, '.claude', 'projects', 'p'), { recursive: true });
@@ -129,11 +132,14 @@ describe('reading the record', () => {
     expect((await api('entries/abc')).status).toBe(404);
   });
 
-  it('answers a question with your own words, by date', async () => {
+  it('answers a question through the organiser, No-AI', async () => {
     const ask = (await api(`ask?q=${encodeURIComponent('what did I decide about sqlite')}`)).body;
-    expect(ask.pattern).toBe('decide');
-    expect(ask.entries.length).toBeGreaterThan(0);
+    expect(ask).toMatchObject({ kind: 'decided', topic: 'sqlite', engine: 'none' });
+    expect(ask.hits.length).toBeGreaterThan(0);
+    expect(ask.hits[0]).toHaveProperty('quote');
     expect((await api('search?q=what%20did%20I%20decide%20about%20sqlite')).body.question).toBe(true);
+    expect((await api('search?q=sqlite')).body.question).toBe(false);
+    expect((await api('ask?q=x&engine=psychic')).status).toBe(400);
   });
 
   it('counts weeks, tables and tides that add up to the record', async () => {
@@ -149,8 +155,11 @@ describe('reading the record', () => {
     expect((await api('tides?by=speaker')).body.lines.length).toBe(2);
   });
 
-  it('reports the organiser ready once its tables exist', async () => {
-    expect((await api('organiser')).body).toEqual({ ready: true, hubs: [], folders: [], runs: [], review: [] });
+  it('reports the organiser ready and empty before any run', async () => {
+    const o = (await api('organiser')).body;
+    expect(o).toMatchObject({ ready: true, hubs: [], folders: [], runs: [], review: [] });
+    expect(o.schemas.map((x: { name: string }) => x.name)).toEqual(expect.arrayContaining(['Topics', 'Projects']));
+    expect((await api('stats')).body.organiser).toBeNull();
   });
 
   it('finds sources only under the scan root', async () => {
@@ -232,5 +241,111 @@ describe('writing', () => {
     const b = (await api('backup', { body: {} })).body;
     expect(existsSync(b.file)).toBe(true);
     expect(b.bytes).toBeGreaterThan(1000);
+  });
+});
+
+describe('the organiser', () => {
+  /** Starts a run from the page and waits for it, as the page does. */
+  async function organise(body: Record<string, unknown>) {
+    let job = (await api('organise', { body })).body.job;
+    for (let i = 0; i < 200 && !job.finished; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      job = (await api('organise')).body.job;
+    }
+    return job;
+  }
+  const state = async () => (await api('organiser')).body;
+
+  it('runs every task No-AI and shows what it made', async () => {
+    const job = await organise({ engine: 'none' });
+    expect(job).toMatchObject({ finished: true, error: null, task: 'all', engine: 'none' });
+    expect(job.runs.map((r: { task: string }) => r.task)).toEqual(['tag', 'tag', 'tag', 'file', 'link', 'hub', 'layer', 'review']);
+    const o = await state();
+    expect(o.hubs.length).toBeGreaterThan(0);
+    expect(o.folders.length).toBeGreaterThan(0);
+    expect(o.runs).toHaveLength(8);
+    expect(o.review.length).toBeGreaterThan(0);
+
+    const stats = (await api('stats')).body;
+    expect(stats.hubs).toBe(o.hubs.length);
+    expect(stats.organiser.tagged).toBeGreaterThan(0.5);
+    expect(stats.organiser.filed).toBe(1);
+
+    const brain = (await api('brain')).body;
+    expect(brain.hubs.length).toBe(o.hubs.length);
+    expect(brain.links.some((l: number[]) => l[2] === 1)).toBe(true);
+    expect(brain.projects.length).toBeGreaterThan(0);
+    expect((await api('you')).body.projects.length).toBeGreaterThan(0);
+    expect((await api('organise', { body: { task: 'dance' } })).status).toBe(400);
+  });
+
+  it('previews a run without saving anything', async () => {
+    const before = (await state()).runs.length;
+    const p = (await api('organise/preview', { body: { task: 'hub', engine: 'none' } })).body;
+    expect(p).toHaveLength(1);
+    expect(p[0]).toMatchObject({ task: 'hub', engine: 'none' });
+    expect((await state()).runs.length).toBe(before);
+  });
+
+  it('reads a hub, renames it, and deleting it is a run you can undo', async () => {
+    const hub = (await state()).hubs[0];
+    const read = (await api(`hubs/${hub.id}`)).body;
+    expect(read.hub.sections.in_short.length).toBeGreaterThan(0);
+    expect(read.entries.length).toBe(Math.min(read.total, 300));
+    expect(read.run.engine).toBe('none');
+    expect((await api('hubs/999999')).status).toBe(404);
+
+    await api(`hubs/${hub.id}/rename`, { body: { name: 'Bread' } });
+    expect((await state()).hubs.find((h: { id: number }) => h.id === hub.id).name).toBe('Bread');
+    expect((await api(`hubs/${hub.id}/rename`, { body: { name: ' ' } })).status).toBe(400);
+
+    const gone = (await api(`hubs/${hub.id}/delete`, { body: {} })).body;
+    expect((await state()).hubs.some((h: { id: number }) => h.id === hub.id)).toBe(false);
+    expect((await api(`runs/${gone.runId}/undo`, { body: {} })).status).toBe(200);
+    expect((await state()).hubs.some((h: { id: number }) => h.id === hub.id)).toBe(true);
+  });
+
+  it('merges one folder into another and undoes it', async () => {
+    const [a, b] = (await state()).folders;
+    const merged = (await api('folders/merge', { body: { from: a.id, into: b.name } })).body;
+    const after = (await state()).folders;
+    expect(after.some((f: { id: number }) => f.id === a.id)).toBe(false);
+    expect(after.find((f: { id: number }) => f.id === b.id).entryIds.length).toBe(a.entryIds.length + b.entryIds.length);
+    await api(`runs/${merged.runId}/undo`, { body: {} });
+    expect((await state()).folders.some((f: { id: number }) => f.id === a.id)).toBe(true);
+    expect((await api('folders/merge', { body: { from: 'No such folder', into: b.id } })).status).toBe(400);
+  });
+
+  it('answers a review item and drops it from the queue', async () => {
+    const queue = (await state()).review;
+    const item = queue[0];
+    expect(item.reasons.length).toBeGreaterThan(0);
+    expect((await api(`review/${item.id}`, { body: { action: 'maybe' } })).status).toBe(400);
+    const done = (await api(`review/${item.id}`, { body: { action: 'skip' } })).body;
+    expect(done.item.status).toBe('skipped');
+    expect((await state()).review).toHaveLength(queue.length - 1);
+  });
+
+  it('shows an entry with its layers, hubs and lines', async () => {
+    const hub = (await state()).hubs[0];
+    const entry = (await api(`hubs/${hub.id}`)).body.entries[0];
+    const detail = (await api(`entries/${entry.id}`)).body;
+    expect(detail.hubs.map((h: { id: number }) => h.id)).toContain(hub.id);
+    expect(Array.isArray(detail.layers)).toBe(true);
+    const counts = (await api('links')).body;
+    expect(counts.crossLink).toBeGreaterThan(0);
+    expect(counts.hubSpoke).toBeGreaterThan(0);
+    expect((await api(`links/${entry.id}`)).status).toBe(200);
+    expect((await api('links/999999')).status).toBe(400);
+  });
+
+  it('undoes a run, but not one a later correction builds on', async () => {
+    const runs = (await state()).runs as { id: number; task: string; status: string }[];
+    // The hub was renamed above, so the hub run has a correction on top of it.
+    const hubRun = runs.find((r) => r.task === 'hub')!;
+    expect((await api(`runs/${hubRun.id}/undo`, { body: {} })).status).toBe(400);
+    const layer = runs.find((r) => r.task === 'layer')!;
+    expect((await api(`runs/${layer.id}/undo`, { body: {} })).body.run.status).toBe('undone');
+    expect((await api(`runs/${layer.id}/undo`, { body: {} })).status).toBe(400);
   });
 });

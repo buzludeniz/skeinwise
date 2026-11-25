@@ -5,7 +5,7 @@ import { Database, FileText, FolderTree, Inbox, ListChecks, MessagesSquare, Netw
 import type { LucideIcon } from 'lucide-preact';
 import { openEntry, openNav, openPanel, openThread } from '../actions.ts';
 import { fmtDate, fmtNum, plural, speakerName } from '../format.ts';
-import { folderCounts, type NavFilter, navItems, type NavSort, sourceCounts } from '../nav.ts';
+import { folderCounts, INBOX, type NavFilter, navItems, type NavSort, sourceCounts } from '../nav.ts';
 import { type NavSection, useApp } from '../store.ts';
 import { Empty, Segmented, Select } from '../ui/common.tsx';
 import { FoldersList, HubsList, ReviewList, RunsList } from './Organiser.tsx';
@@ -37,12 +37,14 @@ function Sections() {
   const review = useApp((s) => s.organiser.review.filter((r) => r.status === 'open').length);
   const runs = useApp((s) => s.organiser.runs.length);
   const hubs = useApp((s) => s.organiser.hubs);
+  const filed = useApp((s) => s.organiser.folders.length > 0);
   const fc = useMemo(() => (brain ? folderCounts(brain) : []), [brain]);
   const sc = useMemo(() => (brain ? sourceCounts(brain) : new Map<number, number>()), [brain]);
+  const inbox = !brain ? 0 : filed ? (fc[brain.folders.indexOf(INBOX)] ?? 0) : brain.points.length;
   return (
     <nav class="nav-col nav-sections" aria-label="Sections">
       <ul>
-        <NavRow section={{ kind: 'inbox' }} icon={Inbox} label="Inbox" count={fmtNum(brain?.points.length ?? 0)} />
+        <NavRow section={{ kind: 'inbox' }} icon={Inbox} label="Inbox" count={fmtNum(inbox)} />
         <NavRow section={{ kind: 'review' }} icon={ListChecks} label="Review" count={review || undefined} />
         <NavRow section={{ kind: 'runs' }} icon={Workflow} label="Runs" count={runs || undefined} />
       </ul>
@@ -52,9 +54,9 @@ function Sections() {
         </button>
       </h3>
       <ul>
-        {(brain?.folders ?? []).map((name, i) => (
-          <NavRow key={name} section={{ kind: 'folder', key: String(i) }} icon={FolderTree} label={name} count={fmtNum(fc[i] ?? 0)} />
-        ))}
+        {(brain?.folders ?? []).map((name, i) =>
+          filed && name === INBOX ? null : <NavRow key={name} section={{ kind: 'folder', key: name }} icon={FolderTree} label={name} count={fmtNum(fc[i] ?? 0)} />,
+        )}
       </ul>
       <h3>
         <button type="button" class="link" onClick={() => openNav({ kind: 'hubs' })}>
@@ -68,7 +70,7 @@ function Sections() {
               <button type="button" class="row-button" onClick={() => openPanel({ kind: 'hub', id: h.id })}>
                 <Network size={16} aria-hidden="true" />
                 <span>{h.name}</span>
-                <span class="soft">{fmtNum(h.entries.length)}</span>
+                <span class="soft">{fmtNum(h.entries)}</span>
               </button>
             </li>
           ))}
@@ -103,21 +105,24 @@ function Items() {
   const [shown, setShown] = useState(PAGE);
 
   const last = useMemo(() => brain?.points.reduce((m, p) => Math.max(m, p[7]), 0) ?? 0, [brain]);
+  const filed = useApp((s) => s.organiser.folders.length > 0);
   const items = useMemo(() => {
     if (!brain) return [];
     const f: NavFilter = {};
-    if (nav.kind === 'folder') f.folder = Number(nav.key);
+    // Before the file task runs nothing is filed, so the Inbox holds everything; after, what it left out.
+    if (nav.kind === 'inbox' && filed) f.folder = brain.folders.indexOf(INBOX);
+    if (nav.kind === 'folder') f.folder = brain.folders.indexOf(nav.key);
     if (nav.kind === 'source') f.source = Number(nav.key);
     else if (source !== 'all') f.source = Number(source);
     if (speaker !== 'all') f.speaker = Number(speaker);
     if (since !== 'any') f.since = last - (since === 'month' ? 31 : 366) * DAY;
     return navItems(brain, f, sort);
-  }, [brain, nav, sort, source, speaker, since, last]);
+  }, [brain, nav, sort, source, speaker, since, last, filed]);
 
   if (!brain) return null;
   const heading =
     nav.kind === 'folder'
-      ? brain.folders[Number(nav.key)]
+      ? nav.key
       : nav.kind === 'source'
         ? brain.sources.find((s) => s.id === Number(nav.key))?.label
         : 'Inbox';
@@ -126,7 +131,11 @@ function Items() {
     <section class="nav-col nav-items" aria-label={heading ?? 'Items'}>
       <header class="nav-head">
         <h2>{heading}</h2>
-        {nav.kind === 'inbox' && <p class="soft small">Nothing is filed until the organiser runs, so the Inbox holds every thread and note.</p>}
+        {nav.kind === 'inbox' && (
+          <p class="soft small">
+            {filed ? 'What the file task left out of every folder.' : 'Nothing is filed until the organiser’s file task runs, so the Inbox holds everything.'}
+          </p>
+        )}
         <div class="nav-filters">
           <Segmented
             label="Sort"
@@ -158,9 +167,15 @@ function Items() {
         <p class="soft small">{plural(items.length, 'item')}</p>
       </header>
       {items.length === 0 ? (
-        <Empty title="Nothing matches">
-          <p>Try another source, speaker or date.</p>
-        </Empty>
+        nav.kind === 'inbox' && filed && source === 'all' && speaker === 'all' && since === 'any' ? (
+          <Empty icon={Inbox} title="Everything is filed">
+            <p>The file task put every entry in a folder.</p>
+          </Empty>
+        ) : (
+          <Empty title="Nothing matches">
+            <p>Try another source, speaker or date.</p>
+          </Empty>
+        )
       ) : (
         <ul class="item-list">
           {items.slice(0, shown).map((it) => {

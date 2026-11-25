@@ -18,6 +18,7 @@ function data(points: BrainPoint[], links: [number, number, number][] = []): Bra
     threads: { '3': 'Beans' },
     points,
     links,
+    hubs: [],
     organiser: false,
   };
 }

@@ -6,7 +6,11 @@ import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, st
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { gzipSync } from 'node:zlib';
+import { UsageError } from '../errors.ts';
 import { readImports } from '../importers/detect.ts';
+import { deleteHub, mergeFolders, REVIEW_ACTIONS, type ReviewAction, renameHub, resolveReview } from '../organiser/corrections.ts';
+import type { ModelDeps } from '../organiser/model.ts';
+import { undoRun } from '../organiser/runs.ts';
 import type { Store } from '../store/store.ts';
 import { backup } from './backup.ts';
 import { cellEntries, parseFilter, tableCounts, type TableProp, tides, timelineBuckets } from './buckets.ts';
@@ -14,8 +18,18 @@ import { ConfigError, readConfig, TABLE_PROPS, writeConfig } from './config.ts';
 import { findAgents, findSources, preview } from './found.ts';
 import { appendDaily, createNote, NoteError, noteTitles, ownFile, saveEntry } from './notes.ts';
 import {
+  askQuestion,
+  entryLines,
+  entryOrganised,
+  hubDetail,
+  lineCounts,
+  type OrganiseJob,
+  organiserState,
+  previewOrganise,
+  startOrganise,
+} from './organiser.ts';
+import {
   aboutYou,
-  askView,
   brainData,
   brief,
   entryDetail,
@@ -39,6 +53,9 @@ export interface AppContext {
   /** The port the server listens on, for the Host check. */
   port: () => number;
   onQuit?: () => void;
+  /** For the model engines: the environment that holds an outside key, and the network. Tests pass fakes. */
+  env?: Record<string, string | undefined>;
+  fetch?: typeof fetch;
 }
 
 export class HttpError extends Error {
@@ -127,6 +144,9 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
   const { store, home } = ctx;
   let locked = false;
   const uploads = resolve(home, 'imports');
+  const deps = (): ModelDeps => ({ fetch: ctx.fetch ?? fetch, env: ctx.env ?? process.env });
+  /** The run the page started last; the page follows it until it finishes. */
+  let job: OrganiseJob | null = null;
 
   const routes: [string, RegExp, Handler][] = [
     ['GET', /^\/api\/status$/, () => ({
@@ -166,7 +186,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     ['GET', /^\/api\/entries\/(\d+)$/, (req) => {
       const detail = entryDetail(store, id(req.params[0]));
       if (!detail) throw new HttpError(404, 'No such entry');
-      return { ...detail, ownFile: ownFile(home, store, detail.entry.id) !== null };
+      return { ...detail, ownFile: ownFile(home, store, detail.entry.id) !== null, ...entryOrganised(store.db, detail.entry.id) };
     }],
     ['PUT', /^\/api\/entries\/(\d+)$/, async (req) => {
       const { body } = await req.json();
@@ -203,7 +223,8 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     ['GET', /^\/api\/ask$/, (req) => {
       const q = req.url.searchParams.get('q')?.trim() ?? '';
       if (!q) throw new HttpError(400, 'Ask a question');
-      return askView(store, q);
+      if (q.length > 2000) throw new HttpError(413, 'The question is too long');
+      return askQuestion(store, home, q, req.url.searchParams.get('engine') ?? undefined, deps());
     }],
     ['GET', /^\/api\/claim$/, (req) => {
       const q = req.url.searchParams.get('q')?.trim() ?? '';
@@ -314,7 +335,42 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       }
     }],
     ['POST', /^\/api\/backup$/, () => backup(home, store.db)],
-    ['GET', /^\/api\/organiser$/, () => ({ ready: organiserReady(store.db), hubs: [], folders: [], runs: [], review: [] })],
+
+    // The organiser: what its runs made, your corrections, and runs started from here.
+    ['GET', /^\/api\/organiser$/, () => organiserState(store.db)],
+    ['GET', /^\/api\/hubs\/(\d+)$/, (req) => {
+      const found = hubDetail(store, id(req.params[0]));
+      if (!found) throw new HttpError(404, 'No such hub');
+      return found;
+    }],
+    ['POST', /^\/api\/hubs\/(\d+)\/rename$/, async (req) => {
+      const { name } = await req.json();
+      return renameHub(store, id(req.params[0]), text(name, 'name', 200));
+    }],
+    ['POST', /^\/api\/hubs\/(\d+)\/delete$/, (req) => deleteHub(store, id(req.params[0]))],
+    ['POST', /^\/api\/review\/(\d+)$/, async (req) => {
+      const { action, yes } = await req.json();
+      if (!(REVIEW_ACTIONS as readonly unknown[]).includes(action)) throw new HttpError(400, `action is ${REVIEW_ACTIONS.join(', ')}`);
+      return resolveReview(store, home, id(req.params[0]), action as ReviewAction, yes === true);
+    }],
+    ['POST', /^\/api\/runs\/(\d+)\/undo$/, (req) => undoRun(store.db, id(req.params[0]))],
+    ['POST', /^\/api\/folders\/merge$/, async (req) => {
+      const { from, into } = await req.json();
+      const ref = (v: unknown, what: string) => (typeof v === 'number' ? String(v) : text(v, what, 300));
+      return mergeFolders(store, ref(from, 'from'), ref(into, 'into'));
+    }],
+    ['GET', /^\/api\/organise$/, () => ({ job })],
+    ['POST', /^\/api\/organise\/preview$/, async (req) => previewOrganise(store, home, await req.json(), deps())],
+    ['POST', /^\/api\/organise$/, async (req) => {
+      if (job && !job.finished) throw new HttpError(409, 'A run is already going. Wait for it to finish.');
+      const started = startOrganise(store, home, await req.json(), deps());
+      job = started.job;
+      // A small run finishes here and answers at once; a model run answers while it works, and the page follows it.
+      await Promise.race([started.done, new Promise((r) => setTimeout(r, 1500))]);
+      return { job };
+    }],
+    ['GET', /^\/api\/links$/, () => lineCounts(store)],
+    ['GET', /^\/api\/links\/(\d+)$/, (req) => entryLines(store, id(req.params[0]))],
   ];
 
   const allowedHosts = () => {
@@ -414,7 +470,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
         const status =
           error instanceof HttpError
             ? error.status
-            : error instanceof ConfigError || error instanceof NoteError
+            : error instanceof ConfigError || error instanceof NoteError || error instanceof UsageError
               ? 400
               : /^No (entry|source|thread) \d+/.test(error instanceof Error ? error.message : '')
                 ? 404
