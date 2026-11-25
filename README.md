@@ -6,8 +6,8 @@ and a small AI model running on your machine tags, files, links and summarises t
 changing a word you wrote. You can explore the result as a 3D brain, ask it questions in plain words, or lend it to
 your AI tools as long-term memory.
 
-> **Status:** v0.2.0, the record and the organiser, on the command line. Each milestone below ships as a tagged
-> release.
+> **Status:** v0.3.0, the record, the organiser and the update stream, on the command line. Each milestone below
+> ships as a tagged release.
 
 ## Why
 
@@ -67,6 +67,16 @@ node dist/src/cli.js review
 node dist/src/cli.js runs
 ```
 
+To organise with the built-in AI, fetch and start the local model (about 2.5 GB, after asking; llama.cpp's
+`llama-server` must be installed, for example with `brew install llama.cpp`):
+
+```bash
+node dist/src/cli.js model fetch
+node dist/src/cli.js model serve --run    # in its own terminal
+node dist/src/cli.js model check
+node dist/src/cli.js run all
+```
+
 Then bring in your own data. The record lives in `~/.skeinwise` unless `SKEINWISE_HOME` says otherwise.
 
 ```bash
@@ -86,8 +96,17 @@ node dist/src/cli.js search sourdough starter
 | Codex | `~/.codex/sessions` |
 | Markdown, Obsidian, plain text | The folder itself; `--owner <name>` when the words are someone else's |
 
-Importing again is safe: entries already in the record are skipped, and changed text becomes a new version. Run
-`node dist/src/cli.js help` for every command.
+Importing again is safe: entries already in the record are skipped, and changed text becomes a new version.
+
+Keep it current with the update stream. After one `run all`, `live` imports new Claude Code and Codex chats, export
+files in Downloads and the note folders you name as they appear, and organises what is new in the background:
+
+```bash
+node dist/src/cli.js config liveFolders ~/Notes
+node dist/src/cli.js live
+```
+
+Run `node dist/src/cli.js help` for every command.
 
 ## Docs
 

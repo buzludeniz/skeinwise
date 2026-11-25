@@ -91,32 +91,44 @@ about entries that match a tag by one word. Linking and similarity are statistic
 
 ## The local model
 
-The server address and model are set with `skeinwise config` today. The `model` commands are *(planned, v0.3)*.
+The server address and model are set with `skeinwise config`; the `model` commands check, fetch and start the
+suggested one.
 
 - **Suggested model:** Qwen3-4B, quantised to Q4_K_M (about 2.5 GB), in GGUF form. Any instruction-tuned model that
   the server can run works; smaller ones are faster and rougher.
 - **Pointing at one you have:** set the address in Settings or `config.json`. `skeinwise model check` asks the server
-  for its models and runs one short test prompt.
+  for its models and runs one short test prompt, and says how long it took.
 - **Fetching one:** `skeinwise model fetch` downloads the suggested model into `~/.skeinwise/models/`, after showing
-  the size and the source and asking first. `skeinwise model serve` prints (or runs) the `llama-server` command for it.
+  the size and the source and asking first. It keeps the file only when its sha256 matches the one the source lists,
+  and a cut-off download picks up where it stopped. `skeinwise model serve` prints the `llama-server` command for it
+  (`--run` runs it).
 - **Weights never go in the repository,** and nothing is downloaded without that command.
 
-## The update stream *(planned, v0.3)*
+## The update stream
 
 The record keeps itself current without you running anything.
 
-1. **Live capture.** With **Record live** on, Skeinwise watches Claude Code and Codex history, the note folders and
-   vaults you chose, and Downloads for new ChatGPT, Claude and Gemini exports. New and changed entries are imported
-   within seconds, through the same importers as a manual import, so dedupe and versions work the same way.
-2. **Background organising.** After each capture, a queue runs the organiser over the new entries only (`--scope
-   new`: entries added since that task's last successful run): tag, file, link, then the summaries of the hubs those
-   entries touched, then a staleness check of the notes on those hubs. It works in small batches at low priority and
-   pauses while you use the computer heavily or the battery is low.
-3. **Status.** The app menu's two lines say what happened last: "saved 2 minutes ago", "caught up 3 chats from Claude
-   Code · organised 41 new entries". Every background pass is an ordinary run, listed in Runs and undoable.
+1. **Live capture.** With **Record live** on (`skeinwise live` on the command line), Skeinwise watches Claude Code
+   and Codex history, the note folders and vaults you chose (`liveFolders`), and Downloads for new ChatGPT, Claude and
+   Gemini exports. New and changed entries are imported within seconds, through the same importers as a manual
+   import, so dedupe and versions work the same way. On start-up it catches up on whatever changed while it was off.
+2. **Background organising.** After each capture, the organiser runs over the new entries only (`--scope new`:
+   entries added or changed since that task's last run): tag, file, link, then the summaries of the hubs those entries
+   joined, then a staleness check of the notes on those hubs. One pass runs at a time; captures that arrive during a
+   pass get one more pass after it. It waits while the computer is busy (load above 85% of its cores) or the battery
+   is below 20% and discharging, and tries again a minute later.
+3. **Status.** Two lines say what happened last: "saved 2 minutes ago", "caught up 3 chats from Claude Code ·
+   organised 41 new entries". Every background pass is an ordinary run, listed in Runs and undoable.
 
-With the local model, background organising needs no approval. With an outside model it runs only within the usage
-cap and only if you allow background runs in Settings. With No AI it uses the No-AI engine.
+- **The first pass is yours.** A task that has never run over the whole record is left alone, and the status line
+  says `not organised yet: run "skeinwise run all" once to start`. After that first run, the background keeps it
+  current.
+- **Layers stay manual.** The layer task asks the model once per entry, so it only runs when you run it.
+- **Engines.** With the local model, background organising needs no approval. With an outside model it runs only if
+  you allow it (`liveRemote`, off by default) and always within the monthly budget. With No AI it uses the No-AI
+  engine. If the model server doesn't answer, the status line says so and the next capture tries again.
+- **Stopping.** Closing live mid-run marks that run failed and saves nothing from it, so the next run isn't blocked.
+- **Off switch.** `skeinwise config liveOrganise off` keeps live capture and leaves organising to you.
 
 ## Tagging schemas
 
@@ -203,8 +215,8 @@ Two local MCP servers over stdio, so an agent can be given memory without the wi
 | `skeinwise run <task> [--scope new]` | Runs an organiser task |
 | `skeinwise runs`, `skeinwise undo <run>` | Lists runs; undoes one |
 | `skeinwise note <text>` | Appends to today's daily note |
-| `skeinwise live` | Turns on the update stream: live capture and background organising *(planned, v0.3)* |
-| `skeinwise model check`, `fetch`, `serve` | Tests, downloads (after asking) or starts the local model *(planned, v0.3)* |
+| `skeinwise live [--once]` | Turns on the update stream: live capture and background organising |
+| `skeinwise model check`, `fetch`, `serve` | Tests, downloads (after asking) or starts the local model |
 | `skeinwise serve` | Starts the app *(planned, v0.4)* |
 | `skeinwise mcp [--window]` | Starts the memory server, or the window server *(planned, v0.5)* |
 | `skeinwise demo` | Builds a demo record from invented data |
