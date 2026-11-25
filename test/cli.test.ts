@@ -128,3 +128,28 @@ describe('the demo record', () => {
     expect((await cli('demo', '--force')).code).toBe(0);
   });
 });
+
+describe('export and sync from the command line', () => {
+  it('lists them in help, exports a zip and starts a sync from a passphrase file', async () => {
+    expect((await cli('help')).out).toContain('sync init <folder>');
+    expect((await cli('demo', '--out', join(dir, 'demo'))).code).toBe(0);
+
+    const zip = join(dir, 'record.zip');
+    const exported = await cli('export', zip);
+    expect(exported.code).toBe(0);
+    expect(readFileSync(zip).subarray(0, 2).toString()).toBe('PK');
+
+    const pass = join(dir, 'pass.txt');
+    writeFileSync(pass, 'a long invented test passphrase\n');
+    const started = await cli('sync', 'init', join(dir, 'cloud'), '--passphrase-file', pass);
+    expect(started.code).toBe(0);
+    expect(statSync(join(dir, 'cloud')).isDirectory()).toBe(true);
+    expect((await cli('sync', 'status')).code).toBe(0);
+  });
+
+  it('says what to do when sync was never started', async () => {
+    const pushed = await cli('sync', 'push');
+    expect(pushed.code).toBe(2);
+    expect(pushed.err).toMatch(/sync init/);
+  });
+});

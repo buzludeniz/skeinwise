@@ -195,14 +195,17 @@ Two local MCP servers over stdio, so an agent can be given memory without the wi
 - Optionally, the latest ledger hash is stamped with OpenTimestamps to prove the record existed at that date. The
   proof is collected a few hours later and stored next to the ledger.
 
-## Encrypted sync *(planned, v0.5)*
+## Encrypted sync
 
 - Sync writes an encrypted bundle of the record to any folder you pick, such as a cloud drive folder.
 - A random key encrypts the bundle (AES-256-GCM). That key is stored twice: once wrapped by a key from your
   passphrase, and once by a key from a 24-word recovery phrase that is shown only once. Both keys are derived with
   scrypt.
-- Another computer joins with the passphrase, or restores with the recovery phrase.
+- Another computer with an empty record joins with the passphrase, or restores with the recovery phrase; Skeinwise
+  can't merge two records yet.
 - Nothing goes to a Skeinwise server, because there isn't one.
+
+Details: [sync.md](sync.md).
 
 ## Command line
 
@@ -220,5 +223,6 @@ Two local MCP servers over stdio, so an agent can be given memory without the wi
 | `skeinwise serve` | Starts the app *(planned, v0.4)* |
 | `skeinwise mcp [--window]` | Starts the memory server, or the window server *(planned, v0.5)* |
 | `skeinwise demo` | Builds a demo record from invented data |
-| `skeinwise export` | Writes a zip of the record *(planned, v0.5)* |
+| `skeinwise export` | Writes a zip of the record: chats, entries and notes as Markdown; tags, folders, hubs and runs as JSON |
+| `skeinwise sync init`, `push`, `join`, `restore`, `status` | Encrypted sync through a folder you pick |
 
