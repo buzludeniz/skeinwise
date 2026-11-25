@@ -56,12 +56,19 @@ const EXPORT_KINDS = new Set(['chatgpt', 'claude', 'gemini']);
 const DOWNLOAD_EXT = new Set(['.zip', '.json']);
 const TREE_EXT = new Set(['.jsonl', '.md', '.markdown', '.txt']);
 
-/** The places watched by default: Claude Code and Codex history and Downloads, where they exist, plus chosen folders. */
-export function defaultTargets(folders: { path: string; owner?: string }[] = [], home = homedir()): Target[] {
+/**
+ * The places watched: Claude Code and Codex history and the chosen folders, where they exist. Downloads only when
+ * asked for (`downloads`): anyone who can land a file there could otherwise rewrite the record (H1).
+ */
+export function defaultTargets(
+  folders: { path: string; owner?: string }[] = [],
+  home = homedir(),
+  options: { downloads?: boolean } = {},
+): Target[] {
   const targets: Target[] = [
     { kind: 'tree', path: join(home, '.claude', 'projects') },
     { kind: 'tree', path: join(home, '.codex', 'sessions') },
-    { kind: 'downloads', path: join(home, 'Downloads') },
+    ...(options.downloads ? [{ kind: 'downloads' as const, path: join(home, 'Downloads') }] : []),
     ...folders.map((f) => ({ kind: 'tree' as const, path: resolve(f.path), owner: f.owner })),
   ];
   return targets.filter((t) => existsSync(t.path));
