@@ -453,6 +453,12 @@ const disconnect: Command = async (ctx) => {
     await d.keychain.delete(items.token);
     await d.keychain.delete(items.clientSecret);
     ctx.io.out(revoked ? `Revoked Skeinwise's access at ${connector.label} and deleted the token from the Keychain.\n` : `Deleted the token from the Keychain.\n`);
+    // Google may end every grant a client holds when one of its tokens is revoked.
+    const sharing = revoked ? sameGoogleClient(ctx.home, connection) : undefined;
+    if (sharing) {
+      const other = CONNECTORS[sharing.service].label;
+      ctx.io.err(`Note: ${other} uses the same Google client, and Google may have ended its access too. If skeinwise connections shows it signed out, run: skeinwise connect ${sharing.service}\n`);
+    }
   }
   putConnection(ctx.home, service, null);
 
@@ -468,6 +474,13 @@ const disconnect: Command = async (ctx) => {
   ctx.io.out(`${connector.label} is disconnected.\n`);
   return 0;
 };
+
+/** The other Google connection (Gmail or Calendar) signed in with the same client, if any. */
+function sameGoogleClient(home: string, connection: Connection): Connection | undefined {
+  const google = (s: ServiceName) => s === 'gmail' || s === 'calendar';
+  if (!google(connection.service) || !connection.clientId) return undefined;
+  return loadConnections(home).find((c) => c.service !== connection.service && google(c.service) && c.clientId === connection.clientId);
+}
 
 function itemCount(n: number): string {
   return n === 1 ? '1 item' : `${n} items`;

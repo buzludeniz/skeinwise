@@ -400,6 +400,15 @@ describe('skeinwise disconnect', () => {
     expect(store.allEntries()).toHaveLength(1);
   });
 
+  it('warns that Calendar may lose its access too when it shares Gmail’s Google client', async () => {
+    await connectedGmail();
+    await seedConnection(home, keychain, { service: 'calendar', account: 'sam@example.com', clientId: 'c', picks: ['primary'] }, { access: 'test-calendar-token' });
+    const r = await run('disconnect', ['gmail'], { keep: true }, { fetch: gmailNetwork() });
+    expect(r.code).toBe(0);
+    expect(r.err).toContain('Note: Google Calendar uses the same Google client, and Google may have ended its access too.');
+    expect(findConnection(home, 'calendar')).not.toBeNull();
+  });
+
   it('says so when the service isn’t connected', async () => {
     const r = await run('disconnect', ['calendar'], { keep: true });
     expect(r.code).toBe(2);
