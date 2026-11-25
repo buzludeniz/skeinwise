@@ -299,7 +299,7 @@ describe('skeinwise model serve', () => {
   it('prints the locked llama-server command on the port in the settings, and makes the key', async () => {
     expect((await sw(['model', 'serve'])).err).toContain(`isn't in ${join(home, 'models')} yet. Fetch it with: skeinwise model fetch`);
     mkdirSync(join(home, 'models'), { recursive: true });
-    writeFileSync(target(), 'weights');
+    writeFileSync(target(), WEIGHTS);
     setConfigValue(home, 'localUrl', 'http://localhost:9100/v1');
     const r = await sw(['model', 'serve']);
     expect(r.code).toBe(0);
@@ -374,6 +374,37 @@ describe('skeinwise model serve', () => {
       chmodSync(join(planted, 'llama-server'), 0o755);
       expect((await sw(['model', 'serve', own, '--run'], { env: { SKEINWISE_HOME: home, PATH: `${planted}:${join(dir, 'bin')}` } })).code).toBe(3);
       expect(existsSync(join(dir, 'planted.txt'))).toBe(false);
+    });
+
+    // E1 (Deniz, Nov 25): fetch checked the file once, but anything that could write to models/ afterwards could swap it.
+    it('re-checks the file under the pinned name against the pin, printed or run, and leaves a .gguf of yours alone', async () => {
+      fakeServer(join(dir, 'bin'));
+      const env = { SKEINWISE_HOME: home, PATH: join(dir, 'bin') };
+      mkdirSync(join(home, 'models'), { recursive: true });
+      const swapped = WEIGHTS.slice();
+      swapped[150_000] = (swapped[150_000]! + 1) % 251;
+      for (const planted of [WEIGHTS.slice(0, 1000), swapped]) {
+        writeFileSync(target(), planted);
+        for (const argv of [['model', 'serve'], ['model', 'serve', '--run']]) {
+          const r = await sw(argv, { env });
+          expect(r.code).toBe(1);
+          expect(r.err).toContain(
+            `${target()} isn't the ${SUGGESTED.file} Skeinwise pins (its size or sha256 differs), so Skeinwise won't start it. ` +
+              'Download it again with: skeinwise model fetch',
+          );
+          expect(r.out).toBe('');
+        }
+      }
+      expect(existsSync(log())).toBe(false);
+
+      writeFileSync(target(), WEIGHTS);
+      const pinned = await sw(['model', 'serve', '--run'], { env });
+      expect(pinned.code).toBe(3);
+      expect(pinned.err).toContain(`Checking the sha256 of ${target()}...`);
+      expect(readFileSync(log(), 'utf8')).toContain(`-m ${target()} `);
+
+      // Your own file isn't held to the pin: `own` is seven bytes of 'weights'.
+      expect((await sw(['model', 'serve', own, '--run'], { env })).code).toBe(3);
     });
 
     it('refuses a llama-server that lacks a flag that keeps it closed, or a saved one that is gone', async () => {
