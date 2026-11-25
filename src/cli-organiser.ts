@@ -525,7 +525,11 @@ const deleteHubCommand: Command = (ctx) => {
 // Settings
 
 function shown(value: unknown): string {
-  if (Array.isArray(value)) return value.length ? value.join(', ') : '(none)';
+  if (Array.isArray(value)) {
+    if (!value.length) return '(none)';
+    // Live folders: the path, and whose words it holds when that isn't you.
+    return value.map((v) => (v && typeof v === 'object' && 'path' in v ? `${v.path}${v.owner ? ` (${v.owner})` : ''}` : String(v))).join(', ');
+  }
   if (value && typeof value === 'object') return JSON.stringify(value);
   if (value === '') return '(not set)';
   return String(value);
