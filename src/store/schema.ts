@@ -147,9 +147,13 @@ export const MIGRATIONS: readonly string[] = [
     kind TEXT NOT NULL DEFAULT 'concept' CHECK (kind IN ('concept')),
     sections TEXT NOT NULL,
     run_id INTEGER NOT NULL REFERENCES runs(id),
+    -- A run over new entries writes a fresh copy of each hub they touch; the copy hides the hub it replaces.
+    replaces INTEGER REFERENCES hubs(id),
+    -- The correction run that deleted this hub; undoing that run brings it back.
     deleted_by INTEGER REFERENCES runs(id)
   );
   CREATE INDEX hubs_run ON hubs (run_id);
+  CREATE INDEX hubs_replaces ON hubs (replaces);
 
   CREATE TABLE hub_entries (
     hub_id INTEGER NOT NULL REFERENCES hubs(id),
