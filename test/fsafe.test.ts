@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync, strToU8, zipSync } from 'fflate';
-import { openZipSafe, readSafe, readTextSafe, UnsafeFileError } from '../src/fsafe.ts';
+import { openSafe, openZipSafe, readRange, readSafe, readTextSafe, UnsafeFileError } from '../src/fsafe.ts';
 
 const MiB = 1024 ** 2;
 
@@ -161,6 +161,21 @@ describe('readSafe', () => {
     expect(error.reason).toBe('too-big');
     expect(error.message).toContain(big);
     expect(error.message).toContain('1 MiB limit');
+  });
+
+  it('opens a checked descriptor for partial reads, with the same refusals', () => {
+    const path = write('session.jsonl', 'line one\nline two\n');
+    const handle = openSafe(path, { root: dir });
+    try {
+      expect(handle.stat.size).toBe(18);
+      expect(readRange(handle.fd, 8, 9).toString('utf8')).toBe('line two');
+      expect(readRange(handle.fd, 100, 9).toString('utf8')).toBe('line two\n');
+    } finally {
+      closeSync(handle.fd);
+    }
+    const link = join(dir, 'session-link.jsonl');
+    symlinkSync(path, link);
+    expect(refused(() => openSafe(link)).reason).toBe('symlink');
   });
 
   it('passes ordinary fs errors through', () => {

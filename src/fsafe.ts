@@ -73,8 +73,19 @@ function mib(bytes: number): string {
   return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GiB` : `${Math.max(1, Math.round(bytes / 1024 ** 2))} MiB`;
 }
 
-/** Opens a file for reading after every check above. The caller closes the descriptor. */
-function openChecked(path: string, options: SafeOptions): { fd: number; stat: Stats; abs: string } {
+export interface SafeHandle {
+  /** The open descriptor, read-only. The caller closes it (closeSync) when done. */
+  fd: number;
+  /** fstat of the open descriptor, not of the path. */
+  stat: Stats;
+  abs: string;
+}
+
+/**
+ * Opens a file for reading after every check above, for callers that read part of a file (a tail, a fingerprint at an
+ * offset). The caller closes the descriptor; readRange reads from it.
+ */
+export function openSafe(path: string, options: SafeOptions = {}): SafeHandle {
   const abs = resolve(path);
   if (!options.followLink) {
     const link = lstatSync(abs);
@@ -115,7 +126,11 @@ function openChecked(path: string, options: SafeOptions): { fd: number; stat: St
   }
 }
 
-/** Reads at most `length` bytes from `position`; fewer only at the end of the file. */
+/** Reads at most `length` bytes from `position` of an open descriptor; fewer only at the end of the file. */
+export function readRange(fd: number, length: number, position: number): Buffer {
+  return readAt(fd, length, position);
+}
+
 function readAt(fd: number, length: number, position: number): Buffer {
   const buf = Buffer.allocUnsafe(length);
   let done = 0;
@@ -129,7 +144,7 @@ function readAt(fd: number, length: number, position: number): Buffer {
 
 /** Reads a whole file through the checks. Throws UnsafeFileError when it is refused, or the usual fs error. */
 export function readSafe(path: string, options: SafeOptions = {}): SafeFile {
-  const { fd, stat, abs } = openChecked(path, options);
+  const { fd, stat, abs } = openSafe(path, options);
   try {
     // The size from the open file: a file that grows meanwhile is read as it was, never past the limit.
     const bytes = readAt(fd, stat.size, 0);
@@ -265,7 +280,7 @@ function parseDirectory(dir: Buffer, count: number, path: string): ZipEntry[] {
  * many entries, too many bytes in all, or a ratio no export has. Close it when done.
  */
 export function openZipSafe(path: string, options: ZipOptions = {}): SafeZip {
-  const { fd, stat, abs } = openChecked(path, options);
+  const { fd, stat, abs } = openSafe(path, options);
   try {
     const maxEntries = options.maxEntries ?? ZIP_MAX_ENTRIES;
     const maxTotal = options.maxTotalBytes ?? ZIP_MAX_TOTAL_BYTES;
