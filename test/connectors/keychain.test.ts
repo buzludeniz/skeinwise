@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { keychainItems, macKeychain, type Runner } from '../../src/connectors/keychain.ts';
 
-// The real `security` command must never run in a test: Deniz's Keychain is neither read nor written.
+// The real `security` command must never run in a test: no real Keychain is read or written.
 vi.mock('node:child_process', () => ({
   spawn: () => {
     throw new Error('No processes in this test');
