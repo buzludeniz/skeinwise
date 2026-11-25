@@ -217,18 +217,6 @@ Details: [mcp.md](mcp.md).
 - Optionally, the latest ledger hash is stamped with OpenTimestamps to prove the record existed at that date. The
   proof is collected a few hours later and stored next to the ledger.
 
-## Encrypted sync
-
-- Sync writes an encrypted bundle of the record to any folder you pick, such as a cloud drive folder.
-- A random key encrypts the bundle (AES-256-GCM). That key is stored twice: once wrapped by a key from your
-  passphrase, and once by a key from a 24-word recovery phrase that is shown only once. Both keys are derived with
-  scrypt.
-- Another computer with an empty record joins with the passphrase, or restores with the recovery phrase; Skeinwise
-  can't merge two records yet.
-- Nothing goes to a Skeinwise server, because there isn't one.
-
-Details: [sync.md](sync.md).
-
 ## Command line
 
 | Command | Does |
@@ -247,7 +235,6 @@ Details: [sync.md](sync.md).
 | `skeinwise mcp allow`, `revoke`, `agents`, `lock`, `unlock` | Which agents may use the record, and the lock that stops them all |
 | `skeinwise demo` | Builds a demo record from invented data |
 | `skeinwise export` | Writes a zip of the record: chats, entries and notes as Markdown; tags, folders, hubs and runs as JSON |
-| `skeinwise sync init`, `push`, `join`, `restore`, `status` | Encrypted sync through a folder you pick |
 | `skeinwise connect <service>` | Connects Gmail, Calendar, Todoist or Slack, read-only, after showing what it reads |
 | `skeinwise connections` | What is connected and how the last pull went |
 | `skeinwise disconnect <service>` | Revokes the access and deletes the token; keeps or leaves out what was read |

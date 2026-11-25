@@ -217,7 +217,6 @@ Groups, top to bottom:
 
 | Group | Holds |
 |---|---|
-| Sync | An encrypted copy in a folder you choose, a passphrase and recovery words |
 | AI agents | Connected agents, **Copy config** for each, **Copy a sample question** |
 | AI model | **Local model** (the default: its address, the model file, a **Test** button), **Outside model** (address, model, the env var holding the key), or **No AI** |
 | Usage cap | A monthly token cap for an outside model. At the cap, runs wait for the next month |

@@ -17,7 +17,15 @@ import { MODEL_HELP } from './model-commands.ts';
 import { safeIo, safeJson } from './safe-text.ts';
 import { serveFromArgs } from './server/serve.ts';
 import type { Store } from './store/store.ts';
-import { SYNC_COMMANDS, SYNC_FLAGS, SYNC_HELP } from './sync/commands.ts';
+import { SYNC_COMMANDS } from './sync/commands.ts';
+
+// Sync is hidden in v1.0 (Deniz, Nov 25: hide it entirely, in place of an --experimental flag). Only export is
+// reachable; src/sync/** stays in the tree with its tests, and the sync command, its flags and its help are left out.
+const EXPORT_COMMANDS: typeof SYNC_COMMANDS = { export: SYNC_COMMANDS.export! };
+const EXPORT_HELP = `Export (a plain zip on this computer; nothing goes to any server):
+  export [<file>]           Write a zip of the record: chats, entries and notes as Markdown, and
+                            the tags, folders, hubs and runs as JSON (--force to replace the file)
+`;
 
 /** package.json sits one level up from src/ and two from dist/src/. */
 function readPackage(): { version: string } {
@@ -102,7 +110,7 @@ Corrections (each is a run you can undo):
 The local model:
 ${MODEL_HELP}
 
-${SYNC_HELP}
+${EXPORT_HELP}
 Agents (MCP):
 ${MCP_HELP}
 Settings:
@@ -181,7 +189,6 @@ async function run(argv: string[], io: Io): Promise<number> {
       unset: { type: 'boolean' },
       remove: { type: 'boolean' },
       run: { type: 'boolean' },
-      ...SYNC_FLAGS,
       ...MCP_FLAGS,
     },
   });
@@ -405,8 +412,8 @@ async function run(argv: string[], io: Io): Promise<number> {
 
     default: {
       // The connectors' commands (src/connectors/commands.ts) are left out: connectors are off in v1.0 and ship in v1.1
-      // behind their own consent screen (Deniz, Nov 25).
-      const organiser = ORGANISER_COMMANDS[command] ?? SYNC_COMMANDS[command] ?? MCP_COMMANDS[command];
+      // behind their own consent screen (Deniz, Nov 25). Of the sync module only export is wired (see EXPORT_COMMANDS).
+      const organiser = ORGANISER_COMMANDS[command] ?? EXPORT_COMMANDS[command] ?? MCP_COMMANDS[command];
       if (!organiser) throw new UsageError(`Unknown command: ${command}. Run "skeinwise help" for the list.`);
       const home = homeDir(io.env);
       return withStore(io, (store) => organiser({ io, home, store, values, args: positionals, json }));
