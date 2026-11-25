@@ -132,9 +132,9 @@ function layerRequest(entries: Entry[], purpose: string): ModelRequest {
       if (!e) invalid(purpose, `answers for an entry it wasn't shown: ${JSON.stringify(it.id)}`);
       if (answered.has(key)) invalid(purpose, `answers for ${key} twice`);
       answered.add(key);
-      out.push({ entryId: e.id, layer: 'expanded', body: text(purpose, it.expanded, 'expanded', 8000), byModel: true });
+      out.push({ entryId: e.id, layer: 'expanded', body: text(purpose, it.expanded, 'expanded', 8000, 'block'), byModel: true });
       if (typeof it.digest !== 'string') invalid(purpose, '"digest" must be text');
-      if (it.digest.trim()) out.push({ entryId: e.id, layer: 'digest', body: text(purpose, it.digest, 'digest', 1500), byModel: true });
+      if (it.digest.trim()) out.push({ entryId: e.id, layer: 'digest', body: text(purpose, it.digest, 'digest', 1500, 'block'), byModel: true });
       const ideas = list(purpose, it.ideas, 'ideas').map((x) => text(purpose, x, 'ideas', 400));
       if (ideas.length > 10) invalid(purpose, `lists ${ideas.length} ideas for ${key}; at most 10`);
       if (ideas.length) out.push({ entryId: e.id, layer: 'ideas', body: ideas.map((x) => `- ${x}`).join('\n'), byModel: true });
