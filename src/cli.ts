@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { ORGANISER_COMMANDS } from './cli-organiser.ts';
+import { CONNECTOR_COMMANDS, CONNECTOR_FLAGS, CONNECTOR_HELP } from './connectors/commands.ts';
 import { writeDemo } from './demo/demo.ts';
 import { needId, UsageError } from './errors.ts';
 import { day, entryHeader, indent, minute, speakerLabel } from './format.ts';
@@ -102,6 +103,7 @@ The local model:
       --run                 Run it here instead
 
 ${SYNC_HELP}
+${CONNECTOR_HELP}
 Settings:
   config [<key> [<value>...]]  Show or change a setting (--unset to go back to the default)
   define-tag <schema> <tag> [<words>...]
@@ -178,6 +180,7 @@ async function run(argv: string[], io: Io): Promise<number> {
       remove: { type: 'boolean' },
       run: { type: 'boolean' },
       ...SYNC_FLAGS,
+      ...CONNECTOR_FLAGS,
     },
   });
   const json = (v: unknown) => io.out(`${JSON.stringify(v, null, 2)}\n`);
@@ -296,9 +299,11 @@ async function run(argv: string[], io: Io): Promise<number> {
         onSaved: (status) => started && io.out(describeStatus(status)),
         onOrganised: (status) => started && !values.json && io.out(describeStatus(status)),
         progress: (line) => io.err(`${line}\n`),
+        onPulled: (lines) => !values.json && io.out(lines.map((l) => `${l}\n`).join('')),
       });
       if (values.once) {
         // Wait for the organiser, then report capture and organising together.
+        await live.pulled; // a pull that brought something starts a pass, which idle() then waits for
         await live.background?.idle();
         const status = readStatus(join(home, 'live.json'));
         store.db.close();
@@ -397,7 +402,7 @@ async function run(argv: string[], io: Io): Promise<number> {
     }
 
     default: {
-      const organiser = ORGANISER_COMMANDS[command] ?? SYNC_COMMANDS[command];
+      const organiser = ORGANISER_COMMANDS[command] ?? SYNC_COMMANDS[command] ?? CONNECTOR_COMMANDS[command];
       if (!organiser) throw new UsageError(`Unknown command: ${command}. Run "skeinwise help" for the list.`);
       const home = homeDir(io.env);
       return withStore(io, (store) => organiser({ io, home, store, values, args: positionals, json }));

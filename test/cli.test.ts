@@ -153,3 +153,21 @@ describe('export and sync from the command line', () => {
     expect(pushed.err).toMatch(/sync init/);
   });
 });
+
+describe('connectors from the command line', () => {
+  it('lists them in help and says when nothing is connected', async () => {
+    const help = (await cli('help')).out;
+    expect(help).toContain('connect <service>');
+    expect(help).toContain('disconnect <service>');
+    expect((await cli('demo', '--out', join(dir, 'demo'))).code).toBe(0);
+    const listed = await cli('connections');
+    expect(listed.code).toBe(0);
+    expect(listed.out).toMatch(/Nothing is connected/);
+  });
+
+  it('asks which service to connect', async () => {
+    const asked = await cli('connect');
+    expect(asked.code).toBe(2);
+    expect(asked.err).toMatch(/gmail, calendar, todoist, slack/);
+  });
+});

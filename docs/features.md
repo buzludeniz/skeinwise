@@ -28,6 +28,17 @@ The record is one SQLite file, `~/.skeinwise/record.db`, plus Markdown notes in 
 Each importer accepts a zip file, a single file or a folder. Unknown fields are skipped, and missing fields don't stop
 an import.
 
+## Connectors
+
+- Read-only Gmail, Google Calendar, Todoist and Slack.
+- Each has its own consent, which shows the permissions it asks for before any sign-in.
+- Each uses your own OAuth client or Slack app, so no one else's server sits between you and the service.
+- Tokens live in the macOS Keychain, never in a file.
+- `skeinwise live` pulls what changed from each connection every 5 minutes.
+- An item deleted at the service is kept in the record.
+
+Details: [connectors.md](connectors.md).
+
 ## Dedupe and versions
 
 - Each entry is keyed by its source and its external id, so re-importing the same export adds nothing.
@@ -129,6 +140,8 @@ The record keeps itself current without you running anything.
   engine. If the model server doesn't answer, the status line says so and the next capture tries again.
 - **Stopping.** Closing live mid-run marks that run failed and saves nothing from it, so the next run isn't blocked.
 - **Off switch.** `skeinwise config liveOrganise off` keeps live capture and leaves organising to you.
+- **Connectors.** Live also pulls from the services you connected, and what a pull brings is organised like a
+  capture.
 
 ## Tagging schemas
 
@@ -174,6 +187,7 @@ still holds, or skip. A skipped note comes back after the next review run.
 - **Usage cap:** a monthly token cap for an outside model. A run that would pass it is refused until the month
   resets.
 - **The record folder** is created with owner-only permissions.
+- Connectors only read, and their tokens live in the macOS Keychain, never in a file.
 - **The app's server** *(planned, v0.4)* listens on 127.0.0.1 only and needs a per-install token.
 
 ## Agent memory (MCP) *(planned, v0.5)*
@@ -218,11 +232,14 @@ Details: [sync.md](sync.md).
 | `skeinwise run <task> [--scope new]` | Runs an organiser task |
 | `skeinwise runs`, `skeinwise undo <run>` | Lists runs; undoes one |
 | `skeinwise note <text>` | Appends to today's daily note |
-| `skeinwise live [--once]` | Turns on the update stream: live capture and background organising |
+| `skeinwise live [--once]` | Turns on the update stream: live capture and background organising, and pulls from connected services |
 | `skeinwise model check`, `fetch`, `serve` | Tests, downloads (after asking) or starts the local model |
 | `skeinwise serve` | Starts the app *(planned, v0.4)* |
 | `skeinwise mcp [--window]` | Starts the memory server, or the window server *(planned, v0.5)* |
 | `skeinwise demo` | Builds a demo record from invented data |
 | `skeinwise export` | Writes a zip of the record: chats, entries and notes as Markdown; tags, folders, hubs and runs as JSON |
 | `skeinwise sync init`, `push`, `join`, `restore`, `status` | Encrypted sync through a folder you pick |
+| `skeinwise connect <service>` | Connects Gmail, Calendar, Todoist or Slack, read-only, after showing what it reads |
+| `skeinwise connections` | What is connected and how the last pull went |
+| `skeinwise disconnect <service>` | Revokes the access and deletes the token; keeps or leaves out what was read |
 

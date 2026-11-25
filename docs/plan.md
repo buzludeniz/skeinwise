@@ -75,7 +75,7 @@ bundles. Full detail: [features.md](features.md).
 
 ### Not in scope (yet)
 
-A browser extension, Notion, Evernote and Slack connectors, mobile apps, a hosted sync service.
+A browser extension, Notion and Evernote connectors, mobile apps, a hosted sync service.
 
 ## Milestones (each one a tagged release)
 

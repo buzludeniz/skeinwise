@@ -35,6 +35,7 @@ skein:
 | v0.3.0 | The update stream: live capture and background organising of what's new; `skeinwise model` to check or fetch the local model |
 | v0.4.0 | The app: first run, the 3D brain, Navigator, the reader, concept hubs, timeline, year rings, the Lab, themes, the command bar and settings |
 | v0.5.0 | Agents and safety: the memory and window MCP servers; the ledger with date proofs; encrypted sync and export |
+| v1.0.0 | Work tools: read-only Gmail, Google Calendar, Todoist and Slack connectors |
 
 ## Quick start
 
@@ -120,6 +121,7 @@ Run `node dist/src/cli.js help` for every command.
 - [Plan](docs/plan.md): stack, architecture, scope and milestones
 - [The organiser](docs/organiser.md): engines, the local model, runs, undo, hubs, asking and review
 - [Export and sync](docs/sync.md): what a bundle holds, the key scheme, and what join does
+- [Connectors](docs/connectors.md): what each one reads, its permissions, and how to make your own client
 - [Research](docs/research.md): the export formats and the landscape
 - [UI](docs/ui.md) and [features](docs/features.md): the detailed design
 

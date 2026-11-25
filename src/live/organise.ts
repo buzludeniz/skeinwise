@@ -61,9 +61,7 @@ export class Background {
       this.again = true;
       return;
     }
-    this.running = this.loop().finally(() => {
-      this.running = null;
-    });
+    this.running = this.loop();
   }
 
   /** Resolves when no pass is running or queued. */
@@ -88,11 +86,17 @@ export class Background {
   }
 
   private async loop(): Promise<void> {
-    do {
-      this.again = false;
-      const organised = await this.pass();
-      this.options.onDone?.(organised);
-    } while (this.again && !this.stopped);
+    // `running` is cleared in the same step as the last `again` check: cleared a step later (a .finally on the
+    // promise), a trigger arriving in between found a pass "running", set `again`, and was never run.
+    try {
+      do {
+        this.again = false;
+        const organised = await this.pass();
+        this.options.onDone?.(organised);
+      } while (this.again && !this.stopped);
+    } finally {
+      this.running = null;
+    }
   }
 
   /** One pass over what is new. Never throws: a failure is reported in the result and the status file. */

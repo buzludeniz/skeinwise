@@ -9,6 +9,8 @@ import { openHome } from '../src/home.ts';
 import { readImports } from '../src/importers/detect.ts';
 import { readStatus, statusLines } from '../src/live/capture.ts';
 import { Background, type BackgroundOptions, parsePmset } from '../src/live/organise.ts';
+import { startLive } from '../src/live/run.ts';
+import type { PollReport } from '../src/connectors/poll.ts';
 import { type RunOptions, runSteps, steps } from '../src/organiser/organise.ts';
 import { RecordView } from '../src/organiser/record.ts';
 import { listRuns } from '../src/organiser/runs.ts';
@@ -211,5 +213,72 @@ describe('skeinwise live --once', () => {
     expect(out).toMatch(/caught up 1 chat from Claude Code · organised 1 new entry/);
     expect(JSON.parse(readFileSync(join(home, 'live.json'), 'utf8')).organised.runs.length).toBeGreaterThan(0);
     store = openHome(home, () => LATER); // for afterEach
+  });
+});
+
+describe('connectors in live', () => {
+  const report = (extra: Partial<PollReport> = {}): PollReport => ({
+    service: 'todoist',
+    account: 'me',
+    pulled: true,
+    ok: true,
+    added: 0,
+    versioned: 0,
+    deleted: 0,
+    line: 'Todoist (me): nothing new',
+    ...extra,
+  });
+
+  it('reports the start-up pull and organises what it brought', async () => {
+    await runSteps(store, new RecordView(store), steps(store, 'all'), NONE);
+    clock = LATER;
+    const lines: string[] = [];
+    const live = startLive(store, home, {
+      once: true,
+      userHome: join(dir, 'me'),
+      env: {},
+      onPulled: (l) => lines.push(...l),
+      poll: async () => {
+        addNote('todo.md', 'Buy rye flour for the sourdough starter before the weekend bake.'); // as a pull's ingest would
+        return [report({ added: 1, line: 'Todoist (me): 1 new task' }), report({ service: 'gmail', pulled: false, line: 'Gmail (me): next pull in 4 minutes' })];
+      },
+    });
+    await live.pulled;
+    await live.background?.idle();
+    live.stop();
+    expect(lines).toEqual(['Todoist (me): 1 new task']);
+    expect(statusLines(readStatus(join(home, 'live.json')))[1]).toBe('up to date · organised 1 new entry');
+  });
+
+  it('says when connections.json cannot be read, and keeps going', async () => {
+    writeFileSync(join(home, 'connections.json'), '{ not json');
+    const lines: string[] = [];
+    const live = startLive(store, home, { once: true, userHome: join(dir, 'me'), env: {}, onPulled: (l) => lines.push(...l) });
+    await live.pulled;
+    await live.background?.idle();
+    live.stop();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^connectors: .*connections\.json is not valid JSON/);
+  });
+
+  it('after start-up, tells only pulls that brought something or failed', async () => {
+    setConfigValue(home, 'liveOrganise', 'off');
+    const replies = [report(), report(), report({ ok: false, failure: 'failed', line: 'Todoist (me): the service did not answer; trying again in 5 minutes' })];
+    let calls = 0;
+    const lines: string[] = [];
+    const live = startLive(store, home, {
+      userHome: join(dir, 'me'),
+      env: {},
+      pollSeconds: 0.01,
+      onPulled: (l) => lines.push(...l),
+      poll: async () => [replies[Math.min(calls++, replies.length - 1)]!],
+    });
+    const deadline = Date.now() + 3000;
+    while (calls < 3 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+    live.stop();
+    const after = calls;
+    await new Promise((r) => setTimeout(r, 40));
+    expect(calls).toBe(after); // stopped means no more pulls
+    expect(lines.slice(0, 2)).toEqual(['Todoist (me): nothing new', 'Todoist (me): the service did not answer; trying again in 5 minutes']);
   });
 });
