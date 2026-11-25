@@ -1,5 +1,5 @@
 // The brain: one WebGL view of every entry as a point of light. Notes sit in the two lobes, originals wind up the
-// brainstem and spine in time order. The same scene moves between the Brain view and the Timeline's strip, so the
+// stem below them in time order. The same scene moves between the Brain view and the Timeline's strip, so the
 // camera and colours carry over.
 
 import {
@@ -700,7 +700,7 @@ export class BrainScene {
     if (this.input) set(this.spokeLines, this.input.spokes, 2);
   }
 
-  /** Year rings: a faint circle per year, with month spokes, only in the rings layout. */
+  /** The activity layout's guides: a faint circle per year, with month spokes, only in that layout. */
   private buildRings(): void {
     if (this.rings) {
       this.scene.remove(this.rings);
@@ -834,7 +834,7 @@ export class BrainScene {
     const tv = Math.tan(((FOV / 2) * Math.PI) / 180);
     const th = tv * aspect;
     if (this.mode === 'strip') {
-      // From the side: the spine runs left to right, oldest on the left.
+      // From the side: the stem runs left to right, oldest on the left.
       const halfLen = (maxY - minY) / 2;
       const halfH = (maxZ - minZ) / 2;
       return { yaw: 0, pitch: 0, dist: Math.max(halfLen / th, halfH / tv) * 1.04 + (maxX - minX) / 2, target };

@@ -45,18 +45,18 @@ async function applySeed(): Promise<void> {
   const s = getState();
   if (!s.ready || s.locked || s.fatal) return;
   if (seed && seed !== 'firstrun') setState({ firstRun: false });
-  const views: Record<string, View> = { brain: 'brain', navigator: 'navigator', numbers: 'numbers', timeline: 'timeline', you: 'you', lab: 'lab' };
+  const views: Record<string, View> = { brain: 'brain', threads: 'threads', stats: 'stats', timeline: 'timeline', profile: 'profile', workbench: 'workbench' };
   if (seed && views[seed]) setState({ view: views[seed] });
   switch (seed) {
     case 'rings':
     case 'clusters':
       setState({ view: 'brain', layout: seed });
       break;
-    case 'tides':
-      setState({ view: 'lab', labTab: 'tides' });
+    case 'activity':
+      setState({ view: 'workbench', workbenchTab: 'activity' });
       break;
-    case 'learn':
-      openPanel({ kind: 'learn' });
+    case 'guide':
+      openPanel({ kind: 'guide' });
       break;
     case 'add':
       openPanel({ kind: 'add' });

@@ -900,15 +900,15 @@ code {
   margin: 0;
 }
 
-.numbers,
-.you,
-.lab {
+.stats,
+.profile,
+.workbench {
   padding: 24px 28px 40px;
 }
 
-.app.panel-open:not(.compact) .numbers,
-.app.panel-open:not(.compact) .you,
-.app.panel-open:not(.compact) .lab,
+.app.panel-open:not(.compact) .stats,
+.app.panel-open:not(.compact) .profile,
+.app.panel-open:not(.compact) .workbench,
 .app.panel-open:not(.compact) .timeline-body {
   padding-right: calc(var(--side) + 2 * var(--gap) + 12px);
 }
@@ -1248,7 +1248,7 @@ code {
   color: var(--accent) !important;
 }
 
-/* Side panels: Reader, Learn, Add, Hub. */
+/* Side panels: Reader, Guide, Add, Hub. */
 
 .side-panel {
   position: fixed;
@@ -1426,7 +1426,7 @@ code {
   cursor: pointer;
 }
 
-.learn dl,
+.guide-panel dl,
 .line-list {
   margin: 0 0 0.8em;
 }
@@ -1569,9 +1569,9 @@ code {
   color: var(--ink-soft);
 }
 
-/* Navigator. */
+/* Threads. */
 
-.navigator {
+.threads {
   display: grid;
   grid-template-columns: 220px minmax(260px, 360px) minmax(0, 1fr);
   overflow: hidden;
@@ -2659,27 +2659,27 @@ svg .mark:hover {
   gap: 6px;
 }
 
-/* Lab. */
+/* Workbench. */
 
-.lab > .tabs {
+.workbench > .tabs {
   border: 0;
 }
 
-.lab-builder,
-.tides {
+.workbench-builder,
+.activity {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.lab-controls {
+.workbench-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px 18px;
 }
 
-.lab-controls .field-inline {
+.workbench-controls .field-inline {
   margin: 0;
 }
 
@@ -2696,15 +2696,15 @@ svg .mark:hover {
   border-radius: var(--radius);
 }
 
-.lab-table {
+.workbench-table {
   border-collapse: separate;
   border-spacing: 0;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
-.lab-table th,
-.lab-table td {
+.workbench-table th,
+.workbench-table td {
   padding: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
   border-right: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
@@ -2712,20 +2712,20 @@ svg .mark:hover {
   white-space: nowrap;
 }
 
-.lab-table th {
+.workbench-table th {
   padding: 7px 10px;
   font-weight: 500;
   color: var(--ink-soft);
   background: var(--panel);
 }
 
-.lab-table thead th {
+.workbench-table thead th {
   position: sticky;
   top: 0;
   z-index: 1;
 }
 
-.lab-table tbody th {
+.workbench-table tbody th {
   position: sticky;
   left: 0;
   text-align: left;
@@ -2735,8 +2735,8 @@ svg .mark:hover {
   text-overflow: ellipsis;
 }
 
-.lab-table td button,
-.lab-table td .zero {
+.workbench-table td button,
+.workbench-table td .zero {
   display: block;
   width: 100%;
   min-width: 48px;
@@ -2744,16 +2744,16 @@ svg .mark:hover {
   text-align: right;
 }
 
-.lab-table td button:hover {
+.workbench-table td button:hover {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
 
-.lab-table td .zero {
+.workbench-table td .zero {
   color: color-mix(in srgb, var(--ink-soft) 50%, transparent);
 }
 
-.lab-table.heat td button.on-strong {
+.workbench-table.heat td button.on-strong {
   color: var(--on-accent);
   font-weight: 600;
 }
@@ -2776,10 +2776,10 @@ svg .mark:hover {
   margin: 0 -16px;
 }
 
-/* Numbers. */
+/* Stats. */
 
-.numbers-body,
-.you-body {
+.stats-body,
+.profile-body {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -2818,7 +2818,7 @@ svg .mark:hover {
   margin-top: 2px;
 }
 
-.numbers-grid {
+.stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 16px;
@@ -2907,9 +2907,9 @@ svg .mark:hover {
   gap: 7px;
 }
 
-/* You. */
+/* Profile. */
 
-.you-axis {
+.profile-axis {
   display: flex;
   justify-content: space-between;
   margin-left: calc(28px + 24%);
@@ -2918,12 +2918,12 @@ svg .mark:hover {
   color: var(--ink-soft);
 }
 
-.you-lines {
+.profile-lines {
   display: flex;
   flex-direction: column;
 }
 
-.you-row {
+.profile-row {
   display: grid;
   grid-template-columns: 16px minmax(90px, 24%) 1fr 190px;
   align-items: center;
@@ -2935,28 +2935,28 @@ svg .mark:hover {
   font-size: 13px;
 }
 
-.you-row:hover {
+.profile-row:hover {
   background: var(--hover);
 }
 
-.you-row > svg {
+.profile-row > svg {
   color: var(--ink-soft);
 }
 
-.you-label {
+.profile-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.you-track {
+.profile-track {
   position: relative;
   height: 8px;
   border-radius: 999px;
   background: var(--ground-soft);
 }
 
-.you-span {
+.profile-span {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -2964,7 +2964,7 @@ svg .mark:hover {
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, transparent), var(--accent));
 }
 
-.you-meta {
+.profile-meta {
   font-size: var(--text-small);
   color: var(--ink-soft);
   text-align: right;
@@ -2973,19 +2973,19 @@ svg .mark:hover {
   text-overflow: ellipsis;
 }
 
-.you-entries {
+.profile-entries {
   margin: 2px 0 10px 30px;
   padding: 8px 0 8px 12px;
   border-left: 2px solid var(--line);
 }
 
-.you-entries .item-list {
+.profile-entries .item-list {
   max-height: 260px;
   overflow-y: auto;
   margin-bottom: 8px;
 }
 
-.you-entries .item {
+.profile-entries .item {
   padding: 6px 8px;
 }
 
@@ -3154,9 +3154,9 @@ svg .mark:hover {
   bottom: calc(72px + env(safe-area-inset-bottom));
 }
 
-.compact .numbers,
-.compact .you,
-.compact .lab {
+.compact .stats,
+.compact .profile,
+.compact .workbench {
   padding: 16px 16px 28px;
 }
 
@@ -3168,25 +3168,25 @@ svg .mark:hover {
   height: 200px;
 }
 
-.compact .navigator {
+.compact .threads {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
 }
 
-.compact .navigator .nav-col {
+.compact .threads .nav-col {
   border-right: 0;
 }
 
-.compact .navigator .nav-reader {
+.compact .threads .nav-reader {
   display: none;
   padding: 14px 16px 24px;
 }
 
-.compact .navigator.reading .nav-items {
+.compact .threads.reading .nav-items {
   display: none;
 }
 
-.compact .navigator.reading .nav-reader {
+.compact .threads.reading .nav-reader {
   display: block;
 }
 
@@ -3292,15 +3292,15 @@ svg .mark:hover {
   padding: 18px 16px 20px;
 }
 
-.compact .you-row {
+.compact .profile-row {
   grid-template-columns: 16px minmax(70px, 32%) 1fr;
 }
 
-.compact .you-meta {
+.compact .profile-meta {
   display: none;
 }
 
-.compact .you-axis {
+.compact .profile-axis {
   margin-left: calc(26px + 32%);
   margin-right: 16px;
 }

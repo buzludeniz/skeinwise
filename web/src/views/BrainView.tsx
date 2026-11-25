@@ -14,7 +14,7 @@ import { Button, Empty, Segmented, Select, Switch } from '../ui/common.tsx';
 
 const LAYOUTS: [Layout, string][] = [
   ['brain', 'Brain'],
-  ['rings', 'Year rings'],
+  ['rings', 'Activity'],
   ['clusters', 'Clusters'],
 ];
 
@@ -53,7 +53,7 @@ export function BrainView() {
       {!ok && (
         <div class="brain-fallback">
           <Empty title="This browser can't draw the brain">
-            <p>It needs WebGL. Everything else works: try Navigator or Numbers.</p>
+            <p>It needs WebGL. Everything else works: try Threads or Stats.</p>
           </Empty>
         </div>
       )}

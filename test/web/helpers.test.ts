@@ -36,7 +36,7 @@ describe('chart helpers', () => {
   });
 });
 
-describe('navigator items', () => {
+describe('the Threads view items', () => {
   const points: BrainPoint[] = [
     [1, 0, 0, 7, 3, 1, -1, t('2025-03-02T10:00:00Z'), 'How deep?'],
     [2, 0, 1, 7, 3, 1, -1, t('2025-03-03T10:00:00Z'), 'About 3 cm'],

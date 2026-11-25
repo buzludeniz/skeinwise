@@ -77,8 +77,8 @@ export async function refreshStatus(): Promise<void> {
 
 export function go(target: Target): void {
   const s = getState();
-  if (target === 'learn') {
-    setState({ panel: s.panel?.kind === 'learn' ? null : { kind: 'learn' }, view: 'brain', editor: null });
+  if (target === 'guide') {
+    setState({ panel: s.panel?.kind === 'guide' ? null : { kind: 'guide' }, view: 'brain', editor: null });
     return;
   }
   if (target === 'add') {
@@ -106,7 +106,7 @@ export function openThread(id: number, focus?: number): void {
 }
 
 export function openNav(nav: NavSection): void {
-  setState({ view: 'navigator', nav, editor: null });
+  setState({ view: 'threads', nav, editor: null });
 }
 
 export function openEditor(id: number | null, title = ''): void {

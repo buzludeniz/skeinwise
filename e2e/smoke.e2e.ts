@@ -31,10 +31,10 @@ test('opens the record, finds an entry and moves between views', async ({ page }
 
   // The rail moves between views.
   const rail = page.getByRole('navigation', { name: 'Views' });
-  await rail.getByRole('button', { name: 'Navigator' }).click();
+  await rail.getByRole('button', { name: 'Threads' }).click();
   await expect(page.getByRole('navigation', { name: 'Sections' })).toBeVisible();
-  await rail.getByRole('button', { name: 'Numbers' }).click();
-  await expect(page.getByRole('heading', { name: 'Numbers', level: 1 })).toBeVisible();
+  await rail.getByRole('button', { name: 'Stats' }).click();
+  await expect(page.getByRole('heading', { name: 'Stats', level: 1 })).toBeVisible();
   await rail.getByRole('button', { name: 'Timeline' }).click();
   await expect(page.getByRole('heading', { name: 'Timeline', level: 1 })).toBeVisible();
 

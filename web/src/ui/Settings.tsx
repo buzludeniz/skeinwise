@@ -1,4 +1,4 @@
-// Settings: the groups from docs/ui.md, top to bottom, plus Record live's own settings under AI model. Each change
+// Settings: the groups from docs/ui.md, top to bottom, plus Live capture's own settings under AI model. Each change
 // saves at once; a note says where a setting isn't acted on yet.
 
 import { useEffect, useState } from 'preact/hooks';
@@ -184,7 +184,7 @@ function Model({ config }: { config: Config }) {
   );
 }
 
-/** Record live's settings: the folders it follows besides agent histories and Downloads, and how it organises. */
+/** Live capture's settings: the folders it follows besides agent histories and Downloads, and how it organises. */
 function LiveSettings({ config }: { config: Config }) {
   const { live } = config;
   const [path, setPath] = useState('');
@@ -203,8 +203,8 @@ function LiveSettings({ config }: { config: Config }) {
   };
   return (
     <>
-      <h4>Record live</h4>
-      <Switch label="Organise what Record live brings in" checked={live.organise} onChange={(organise) => void saveConfig({ live: { organise } })} />
+      <h4>Live capture</h4>
+      <Switch label="Organise what Live capture brings in" checked={live.organise} onChange={(organise) => void saveConfig({ live: { organise } })} />
       {config.ai.engine === 'remote' && (
         <Switch label="Let it use the outside model, within the usage cap" checked={live.remote} onChange={(remote) => void saveConfig({ live: { remote } })} />
       )}

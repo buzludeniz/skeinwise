@@ -1,4 +1,4 @@
-// The compact window's tabs: Brain, Notes, Write, Add and More. Below 700 px wide they replace the rail.
+// The compact window's tabs: Brain, Threads, Write, Add and More. Below 700 px wide they replace the rail.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { LucideIcon } from 'lucide-preact';
@@ -39,10 +39,10 @@ const MORE: [LucideIcon, string, () => void][] = [
   [Workflow, 'Runs', () => openNav({ kind: 'runs' })],
   [Undo2, 'Undo', () => void undo()],
   [CalendarRange, 'Timeline', () => go('timeline')],
-  [FlaskConical, 'Lab', () => go('lab')],
-  [UserRound, 'You', () => go('you')],
-  [Hash, 'Numbers', () => go('numbers')],
-  [GraduationCap, 'Learn', () => go('learn')],
+  [FlaskConical, 'Workbench', () => go('workbench')],
+  [UserRound, 'Profile', () => go('profile')],
+  [Hash, 'Stats', () => go('stats')],
+  [GraduationCap, 'Guide', () => go('guide')],
   [Search, 'Search', () => openCommand()],
   [SettingsIcon, 'Settings', () => setState({ settingsOpen: true })],
 ];
@@ -87,7 +87,7 @@ export function CompactTabs() {
       )}
       <nav class="compact-tabs" aria-label="Views">
         <Tab icon={Brain} label="Brain" on={!editor && view === 'brain' && panel !== 'add'} onClick={() => go('brain')} />
-        <Tab icon={NotebookText} label="Notes" on={!editor && view === 'navigator' && panel !== 'add'} onClick={() => go('navigator')} />
+        <Tab icon={NotebookText} label="Threads" on={!editor && view === 'threads' && panel !== 'add'} onClick={() => go('threads')} />
         <Tab icon={PenLine} label="Write" on={editor} onClick={() => openEditor(null)} />
         <Tab icon={Plus} label="Add" on={panel === 'add'} onClick={() => go('add')} />
         <Tab icon={Ellipsis} label="More" on={more} badge={review || undefined} onClick={() => setMore(!more)} />
