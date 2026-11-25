@@ -2,9 +2,8 @@
 // in the X-Skeinwise-Token header; requests must name this server's own host, so pages from other sites can't reach it.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
-import { pipeline } from 'node:stream/promises';
 import { gzipSync } from 'node:zlib';
 import { UsageError } from '../errors.ts';
 import { readImports } from '../importers/detect.ts';
@@ -41,6 +40,7 @@ import {
   organiserReady,
 } from './queries.ts';
 import { sameToken } from './token.ts';
+import { BATCH_ID, CutOff, saveUpload, TooLarge, UPLOAD_LIMIT } from './uploads.ts';
 
 export interface AppContext {
   home: string;
@@ -59,6 +59,8 @@ export interface AppContext {
   /** For the model engines: the environment that holds an outside key, and the network. Tests pass fakes. */
   env?: Record<string, string | undefined>;
   fetch?: typeof fetch;
+  /** The most one uploaded file may hold, in bytes: 1 GB unless a test sets less. */
+  uploadLimit?: number;
 }
 
 export class HttpError extends Error {
@@ -80,7 +82,6 @@ interface Req {
 type Handler = (req: Req) => unknown;
 
 const JSON_LIMIT = 2 * 1024 * 1024;
-const UPLOAD_LIMIT = 1024 * 1024 * 1024;
 
 async function readJson(raw: IncomingMessage): Promise<Record<string, unknown>> {
   const type = raw.headers['content-type'] ?? '';
@@ -311,19 +312,21 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     ['POST', /^\/api\/upload$/, async (req) => {
       const batch = req.url.searchParams.get('batch') ?? '';
       const rel = req.url.searchParams.get('path') ?? '';
-      if (!/^[a-z0-9]{8,40}$/.test(batch)) throw new HttpError(400, 'Bad batch id');
+      if (!BATCH_ID.test(batch)) throw new HttpError(400, 'Bad batch id');
       const dir = join(uploads, batch);
       const file = resolve(dir, normalize(rel).replace(/^(\.\.(\/|\\|$))+/, ''));
       if (!rel || !file.startsWith(dir + sep)) throw new HttpError(400, 'Bad file path');
-      const length = Number(req.raw.headers['content-length'] ?? 0);
-      if (length > UPLOAD_LIMIT) throw new HttpError(413, 'That file is larger than 1 GB');
       mkdirSync(resolve(file, '..'), { recursive: true, mode: 0o700 });
-      await pipeline(req.raw, createWriteStream(file, { mode: 0o600 }));
+      try {
+        await saveUpload(req.raw, file, ctx.uploadLimit ?? UPLOAD_LIMIT);
+      } catch (error) {
+        throw error instanceof TooLarge ? new HttpError(413, error.message) : error instanceof CutOff ? new HttpError(400, error.message) : error;
+      }
       return { saved: rel };
     }],
     ['POST', /^\/api\/upload\/finish$/, async (req) => {
       const { batch, owner } = await req.json();
-      if (typeof batch !== 'string' || !/^[a-z0-9]{8,40}$/.test(batch)) throw new HttpError(400, 'Bad batch id');
+      if (typeof batch !== 'string' || !BATCH_ID.test(batch)) throw new HttpError(400, 'Bad batch id');
       const dir = join(uploads, batch);
       if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new HttpError(404, 'Nothing was uploaded');
       // Each zip and each folder at the top is imported on its own, so a folder keeps its name as the source's.
