@@ -10,7 +10,10 @@ const STOP = new Set(
   so some still such sure take than that the their theirs them themselves then there these they thing things think this
   those though through to too two under until up upon us use used using very want was way we well went were what when
   where which while who whom why will with without would yes yet you your yours yourself yourselves ok okay let's i'm
-  it's don't can't won't that's there's here's what's i've i'll i'd we're they're you're isn't doesn't didn't`.split(/\s+/),
+  it's don't can't won't that's there's here's what's i've i'll i'd we're they're you're isn't doesn't didn't
+  three four five six seven eight nine ten twelve twenty hundred thousand half wants wanted lot lots bit maybe
+  something anything everything nothing day days week weeks month months year years hour hours minute minutes time
+  times today yesterday tomorrow`.split(/\s+/),
 );
 
 /** Lower-case words of three or more letters, minus common words. */
