@@ -96,3 +96,9 @@ export function snippetHtml(snippet: string): string {
 export function wikiLinks(src: string): string[] {
   return [...src.matchAll(/\[\[([^\]|]{1,200})(?:\|[^\]]*)?\]\]/g)].map((m) => m[1]!.trim());
 }
+
+/** The [[ being typed just before the caret, if any: where it starts and what has been typed after it. */
+export function openLink(text: string, caret: number): { start: number; typed: string } | null {
+  const m = /\[\[([^\]\n[]{0,80})$/.exec(text.slice(0, caret));
+  return m ? { start: caret - m[1]!.length, typed: m[1]! } : null;
+}
