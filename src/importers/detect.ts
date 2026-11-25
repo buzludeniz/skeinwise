@@ -72,8 +72,39 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
   const isZip = stat.isFile() && extname(abs).toLowerCase() === '.zip';
   const files = stat.isDirectory() ? walk(abs) : isZip ? unzip(abs) : [{ path: abs, text: () => readFileSync(abs, 'utf8'), modifiedAt: stat.mtime }];
   const root = stat.isDirectory() ? abs : isZip ? abs : dirname(abs);
-  const rel = (p: string) => (isZip ? p : relative(root, p));
+  const batches = collect(files, root, (p) => (isZip ? p : relative(root, p)), options);
+  if (!batches.length) throw new Error(`Nothing to import in ${path}`);
+  return batches;
+}
 
+/**
+ * Reads some files inside a folder that was imported (or watched) as a whole, so their entries land under that
+ * folder's source with the same ids as a full import. Files that are gone or unreadable are skipped. Returns an
+ * empty list when none of them holds anything Skeinwise reads.
+ */
+export function readFilesUnder(root: string, paths: string[], options: ImportOptions = {}): ImportBatch[] {
+  const abs = resolve(root);
+  const files: RawFile[] = [];
+  for (const p of paths) {
+    const full = resolve(abs, p);
+    const rel = relative(abs, full);
+    if (rel.startsWith('..') || rel.split(/[\\/]/).some((part) => part.startsWith('.') || SKIP_DIRS.has(part))) continue;
+    let mtime: Date;
+    try {
+      const st = statSync(full);
+      if (!st.isFile()) continue;
+      mtime = st.mtime;
+    } catch (error) {
+      // Deleted between the change and the read: the record keeps what it had.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw error;
+    }
+    files.push({ path: full, text: () => readFileSync(full, 'utf8'), modifiedAt: mtime });
+  }
+  return collect(files, abs, (p) => relative(abs, p), options);
+}
+
+function collect(files: RawFile[], root: string, rel: (p: string) => string, options: ImportOptions): ImportBatch[] {
   const batches: ImportBatch[] = [];
   const sessions: Record<'claude-code' | 'codex', ThreadInput[]> = { 'claude-code': [], codex: [] };
   const notes: EntryInput[] = [];
@@ -116,6 +147,5 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
       entries: notes,
     });
   }
-  if (!batches.length) throw new Error(`Nothing to import in ${path}`);
   return batches;
 }

@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import { writeDemo } from './demo/demo.ts';
 import { homeDir, openHome } from './home.ts';
 import { readImports } from './importers/detect.ts';
+import { describeStatus, startLive } from './live/run.ts';
 import type { Entry, Store } from './store/store.ts';
 
 /** package.json sits one level up from src/ and two from dist/src/. */
@@ -42,6 +43,8 @@ Commands:
   exclude <source>          Leave a source out of search and the map
   include <source>          Bring an excluded source back
   not-mine <thread>         Mark a thread as someone else's (--undo to reverse)
+  live                      Record live: import new chats and notes as they appear
+      --once                Catch up once and stop
   demo                      Build a demo record from invented data
       --out <dir>           Where to write the demo export files
       --force               Import even if the record is not empty
@@ -115,6 +118,7 @@ function run(argv: string[], io: Io): number {
       out: { type: 'string' },
       force: { type: 'boolean' },
       undo: { type: 'boolean' },
+      once: { type: 'boolean' },
       json: { type: 'boolean' },
     },
   });
@@ -218,6 +222,29 @@ function run(argv: string[], io: Io): number {
           }
         return 0;
       });
+    }
+
+    case 'live': {
+      const home = homeDir(io.env);
+      const store = openHome(home);
+      let started = false; // the catch-up pass is printed below, so only later passes print here
+      const { capture, first } = startLive(store, home, {
+        once: values.once,
+        onSaved: (status) => started && io.out(describeStatus(status)),
+      });
+      started = true;
+      if (values.json) json(first);
+      else io.out(describeStatus(first));
+      if (values.once) {
+        store.db.close();
+        return first.errors.length ? 1 : 0;
+      }
+      io.out('Recording live. Press Ctrl+C to stop.\n');
+      process.once('SIGINT', () => {
+        capture.stop();
+        store.db.close();
+      });
+      return 0;
     }
 
     case 'stats':
