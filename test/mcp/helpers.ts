@@ -26,8 +26,12 @@ export interface Output {
   json: unknown[];
 }
 
-/** A command context like the CLI's, with its output kept. */
-export function context(home: string, store: Store, extra: { args?: string[]; values?: Record<string, unknown>; fetch?: typeof fetch; now?: () => string } = {}): {
+/** A command context like the CLI's, with its output kept. `token` is the agent token its environment carries. */
+export function context(
+  home: string,
+  store: Store,
+  extra: { args?: string[]; values?: Record<string, unknown>; fetch?: typeof fetch; now?: () => string; token?: string } = {},
+): {
   ctx: Ctx;
   output: Output;
 } {
@@ -36,7 +40,7 @@ export function context(home: string, store: Store, extra: { args?: string[]; va
     io: {
       out: (t) => (output.out += t),
       err: (t) => (output.err += t),
-      env: { SKEINWISE_HOME: home },
+      env: { SKEINWISE_HOME: home, ...(extra.token ? { SKEINWISE_AGENT_TOKEN: extra.token } : {}) },
       ...(extra.fetch ? { fetch: extra.fetch } : {}),
       ...(extra.now ? { now: extra.now } : {}),
     },

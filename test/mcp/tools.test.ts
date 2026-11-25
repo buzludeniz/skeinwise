@@ -3,11 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { notesDir } from '../../src/notes.ts';
-import { ACCESS_FILE, allowAgent, readAccess, setLocked } from '../../src/mcp/access.ts';
+import { ACCESS_FILE, allowAgent, denyAgent, type Scope, setLocked } from '../../src/mcp/access.ts';
 import { memoryServer } from '../../src/mcp/commands.ts';
 import type { McpServer } from '../../src/mcp/protocol.ts';
+import type { Caller } from '../../src/mcp/session.ts';
 import { AGENT_SCHEMA } from '../../src/mcp/tags.ts';
-import type { MemoryCtx } from '../../src/mcp/tools.ts';
 import { type RunOptions, runSteps, steps } from '../../src/organiser/organise.ts';
 import { RecordView } from '../../src/organiser/record.ts';
 import { getRun, listRuns } from '../../src/organiser/runs.ts';
@@ -15,7 +15,8 @@ import { findSchema, liveHubs, liveTags } from '../../src/organiser/views.ts';
 import type { Store } from '../../src/store/store.ts';
 import { call, context, demoRecord, initialize, MODERN_VERSION, rpc } from './helpers.ts';
 
-// The memory server's twelve tools, called as an agent would, against a record holding the demo.
+// The memory server's twelve tools, called as an agent would, against a record holding the demo. The agent is the one
+// whose token its environment carries; the name its client gives is only a label.
 
 const LATER = '2026-11-21T09:00:00.000Z';
 const NONE: Omit<RunOptions, 'task'> = { scope: { kind: 'all' }, engine: 'none', yes: false, budget: 0, progress: () => {} };
@@ -23,15 +24,25 @@ const NONE: Omit<RunOptions, 'task'> = { scope: { kind: 'all' }, engine: 'none',
 let dir: string;
 let home: string;
 let store: Store;
-let server: McpServer<MemoryCtx>;
+let server: McpServer<Caller>;
+
+/** A session for `agent`, allowed with `scope`, its client calling itself `label`. */
+async function open(agent: string | null, scope: Scope = 'read', label: string | null = agent, token?: string): Promise<McpServer<Caller>> {
+  const t = token ?? (agent === null ? undefined : allowAgent(home, agent, LATER, scope).token);
+  const s = memoryServer(context(home, store, { now: () => LATER, ...(t ? { token: t } : {}) }).ctx);
+  await initialize(s, label);
+  return s;
+}
+
+const READ_TOOLS = ['search', 'ask', 'read_entry', 'read_thread', 'timeline', 'list_hubs', 'read_hub'];
+const WRITE_TOOLS = ['write_note', 'append_daily_note', 'tag_entries', 'not_mine', 'undo_run'];
+const listed = async (s: McpServer<Caller>) => ((await rpc(s, 'tools/list')).result as { tools: { name: string }[] }).tools.map((t) => t.name);
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'skeinwise-mcp-'));
   home = join(dir, 'home');
   store = demoRecord(dir, home);
-  allowAgent(home, 'claude-code', LATER);
-  server = memoryServer(context(home, store, { now: () => LATER }).ctx);
-  await initialize(server);
+  server = await open('claude-code', 'write');
 });
 afterEach(() => {
   store.db.close();
@@ -46,24 +57,65 @@ async function firstHit(query: string): Promise<{ id: number; thread: { id: numb
 }
 
 describe('who may use the tools', () => {
-  it('refuses an agent that is not allowed, and records that it asked', async () => {
-    const other = memoryServer(context(home, store, { now: () => LATER }).ctx);
-    await initialize(other, 'cursor');
-    const res = await call(other, 'search', { query: 'starter' });
-    expect(res).toMatchObject({ isError: true });
-    expect(res.text).toContain('hasn\'t allowed "cursor"');
-    expect(res.text).toContain('skeinwise mcp allow cursor');
-    expect(readAccess(home).asked).toEqual({ cursor: LATER });
-    allowAgent(home, 'cursor', LATER);
-    expect((await call(other, 'search', { query: 'starter' })).isError).toBe(false);
+  it("refuses every call without a token, whatever name the client gives", async () => {
+    const spoof = await open(null, 'read', 'claude-code');
+    for (const [name, args] of [
+      ['search', { query: 'starter' }],
+      ['read_entry', { entry_id: 1 }],
+      ['write_note', { title: 'x', body: 'y' }],
+    ] as const) {
+      const res = await call(spoof, name, args);
+      expect(res).toMatchObject({ isError: true });
+      expect(res.text).toMatch(/^This agent \(it calls itself "claude-code"\) has no Skeinwise token/);
+      expect(res.text).toContain('skeinwise connect claude-code');
+    }
+    expect(existsSync(join(notesDir(home), 'x.md'))).toBe(false);
   });
 
-  it('refuses a client that gives no name', async () => {
-    const nameless = memoryServer(context(home, store).ctx);
-    await initialize(nameless, null);
-    const res = await call(nameless, 'search', { query: 'starter' });
-    expect(res.isError).toBe(true);
-    expect(res.text).toContain("didn't give a name (clientInfo.name)");
+  it('refuses a token it does not know', async () => {
+    const res = await call(await open(null, 'read', 'claude-code', `swa_${'A'.repeat(43)}`), 'search', { query: 'starter' });
+    expect(res).toMatchObject({ isError: true });
+    expect(res.text).toMatch(/^This agent's Skeinwise token \(it calls itself "claude-code"\) isn't allowed/);
+  });
+
+  it("takes the agent from the token, not the client's name", async () => {
+    const cursor = await open('cursor', 'write', 'claude-code');
+    const made = await call(cursor, 'write_note', { title: 'Who wrote this', body: 'Cursor did.' });
+    expect(made.isError).toBe(false);
+    expect(readFileSync(join(home, 'notes', 'who-wrote-this.md'), 'utf8')).toContain('agent: cursor');
+    expect(store.history(made.json.entry_id).map((v) => v.editor)).toEqual(['cursor']);
+  });
+
+  it('stops a denied agent on its next call, and a new token replaces the old one', async () => {
+    expect((await call(server, 'search', { query: 'starter' })).isError).toBe(false);
+    denyAgent(home, 'claude-code');
+    expect((await call(server, 'search', { query: 'starter' })).text).toMatch(/token .*isn't allowed/);
+    const first = allowAgent(home, 'claude-code', LATER, 'read');
+    const second = allowAgent(home, 'claude-code', LATER, 'read');
+    expect(second.replaced).toBe(true);
+    expect((await call(await open(null, 'read', 'claude-code', first.token), 'search', { query: 'starter' })).isError).toBe(true);
+    expect((await call(await open(null, 'read', 'claude-code', second.token), 'search', { query: 'starter' })).isError).toBe(false);
+  });
+
+  it('gives a read-scope token the read tools only', async () => {
+    const reader = await open('codex');
+    expect(await listed(reader)).toEqual(READ_TOOLS);
+    expect((await call(reader, 'search', { query: 'starter' })).isError).toBe(false);
+    for (const name of WRITE_TOOLS) {
+      const res = await call(reader, name, { title: 'x', body: 'y', text: 'z', entry_ids: [1], tag: 't', thread_id: 1, run_id: 1 });
+      expect(res).toMatchObject({ isError: true });
+      expect(res.text).toMatch(/^not allowed: read scope\. codex may only read the record/);
+      expect(res.text).toContain('skeinwise mcp allow codex --write');
+    }
+    expect(existsSync(join(notesDir(home), 'x.md'))).toBe(false);
+    expect(await listed(server)).toEqual([...READ_TOOLS, ...WRITE_TOOLS]);
+    expect(await listed(await open(null))).toEqual(READ_TOOLS);
+  });
+
+  it('asks an agent allowed before tokens to connect again', async () => {
+    writeFileSync(join(home, ACCESS_FILE), JSON.stringify({ locked: false, allowed: { 'claude-code': LATER }, asked: {} }));
+    const res = await call(server, 'search', { query: 'starter' });
+    expect(res.text).toMatch(/token .*isn't allowed.*skeinwise connect claude-code/);
   });
 
   it('stops every tool while locked, from the next call on', async () => {
@@ -82,11 +134,13 @@ describe('who may use the tools', () => {
     expect((await call(server, 'search', { query: 'starter' })).isError).toBe(false);
   });
 
-  it('names the agent from each request on the newer protocol, with no handshake', async () => {
-    const fresh = memoryServer(context(home, store).ctx);
-    const meta = (name: string) => ({ 'io.modelcontextprotocol/protocolVersion': MODERN_VERSION, 'io.modelcontextprotocol/clientInfo': { name, version: '1' } });
+  it('serves the newer protocol with no handshake, the token deciding and the name only a label', async () => {
+    const token = allowAgent(home, 'codex', LATER).token;
+    const fresh = memoryServer(context(home, store, { token }).ctx);
+    const meta = (name?: string) => ({ 'io.modelcontextprotocol/protocolVersion': MODERN_VERSION, ...(name ? { 'io.modelcontextprotocol/clientInfo': { name, version: '1' } } : {}) });
     expect((await call(fresh, 'search', { query: 'starter' }, meta('claude-code'))).isError).toBe(false);
-    expect((await call(fresh, 'search', { query: 'starter' }, meta('codex'))).text).toContain('hasn\'t allowed "codex"');
+    expect((await call(fresh, 'search', { query: 'starter' }, meta())).isError).toBe(false);
+    expect((await call(fresh, 'write_note', { title: 'x', body: 'y' }, meta('claude-code'))).text).toMatch(/^not allowed: read scope\. codex /);
   });
 
   it('keeps a broken access file from letting anyone in', async () => {
@@ -97,7 +151,7 @@ describe('who may use the tools', () => {
 });
 
 describe('reading the record', () => {
-  it('lists the twelve tools, the reads marked read-only', async () => {
+  it('lists the twelve tools to a write-scope agent, the reads marked read-only', async () => {
     const reply = await rpc(server, 'tools/list');
     const tools = (reply.result as { tools: { name: string; annotations: { readOnlyHint: boolean } }[] }).tools;
     expect(tools.map((t) => t.name)).toEqual([
@@ -225,9 +279,7 @@ describe('writing to the record', () => {
     const again = await call(server, 'tag_entries', { entry_ids: [a], tag: 'TO BAKE' });
     expect(again.json).toMatchObject({ run_id: null, tagged: 0, already_tagged: 1 });
 
-    allowAgent(home, 'cursor', LATER);
-    const other = memoryServer(context(home, store).ctx);
-    await initialize(other, 'cursor');
+    const other = await open('cursor', 'write');
     const refused = await call(other, 'undo_run', { run_id: run.id });
     expect(refused.text).toBe(`Run ${run.id} wasn't made by cursor, so cursor can't undo it.`);
 

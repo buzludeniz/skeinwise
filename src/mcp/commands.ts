@@ -1,14 +1,16 @@
-// `skeinwise mcp`: the memory server (or with --window, the window server) on stdio for an AI agent, and the commands
-// that allow agents and lock them all out. An MCP client starts the server itself, from a config like the ones in
-// docs/mcp.md; stdout then carries only protocol messages, so everything else goes to stderr.
+// `skeinwise mcp`: the memory server on stdio for an AI agent, and the commands that allow agents, take them back and
+// lock them all out. An MCP client starts the server itself, from a config `skeinwise connect` writes or docs/mcp.md
+// shows; stdout then carries only protocol messages, so everything else goes to stderr. The window server (--window)
+// is kept for the app's own use and left out of the help and the docs for v1.0.
 
 import { existsSync, readFileSync } from 'node:fs';
 import type { Readable } from 'node:stream';
 import type { Ctx } from '../cli-organiser.ts';
 import { UsageError } from '../errors.ts';
-import { allowAgent, checkAccess, quoteArg, readAccess, revokeAgent, setLocked } from './access.ts';
+import { allowAgent, checkAccess, denyAgent, quoteArg, readAccess, setLocked, TOKEN_ENV } from './access.ts';
 import { McpServer, serveStdio } from './protocol.ts';
-import { INSTRUCTIONS, type MemoryCtx, MEMORY_TOOLS } from './tools.ts';
+import { type Caller, MemorySession } from './session.ts';
+import { INSTRUCTIONS } from './tools.ts';
 import { WINDOW_PORT, WINDOW_TOOLS, type WindowCtx } from './window.ts';
 
 type Command = (ctx: Ctx) => number | Promise<number>;
@@ -17,23 +19,24 @@ type Command = (ctx: Ctx) => number | Promise<number>;
 export interface McpValues {
   window?: boolean;
   port?: string;
+  write?: boolean;
 }
 
 export const MCP_FLAGS = {
   window: { type: 'boolean' },
   port: { type: 'string' },
+  write: { type: 'boolean' },
 } as const;
 
 const line = (command: string, text: string) => `  ${command.padEnd(26)}${text}\n`;
 const flag = (name: string, text: string) => `      ${name.padEnd(22)}${text}\n`;
 
 export const MCP_HELP =
-  line('mcp', 'Serve your record to an AI agent over stdio (setup: docs/mcp.md)') +
-  flag('--window', 'Serve the window tools instead: they move the app\'s view') +
-  flag('--port <n>', `The app's port for --window (default ${WINDOW_PORT})`) +
-  line('mcp allow <agent>', 'Let an agent use the record, by the name its client gives') +
-  line('mcp revoke <agent>', "Take an agent's allowance back") +
-  line('mcp agents', 'List allowed agents, the ones that asked, and the lock') +
+  line('mcp', 'Serve your record to an AI agent over stdio (setup: skeinwise connect)') +
+  line('mcp allow <agent>', 'Give an agent a token to read the record; it is shown once') +
+  flag('--write', 'Let it write notes and tags too') +
+  line('mcp deny <agent>', "Take an agent's token back (also: mcp revoke)") +
+  line('mcp agents', 'List the allowed agents, their scope, and the lock') +
   line('mcp lock', 'Stop every agent tool until you unlock') +
   line('mcp unlock', 'Let allowed agents use their tools again');
 
@@ -57,25 +60,29 @@ function port(values: McpValues): number {
   return n;
 }
 
+function token(ctx: Ctx): string | undefined {
+  return ctx.io.env[TOKEN_ENV];
+}
+
 /**
- * The memory server. Every tool call checks the access file first, so a lock, an allowance or a revoke takes effect on
- * the next call, without restarting the server.
+ * The memory server. Every tool call checks the access file first, so a lock, an allowance or a deny takes effect on
+ * the next call, without restarting the server. The agent is the one whose token the client's environment carries.
  */
-export function memoryServer(ctx: Ctx): McpServer<MemoryCtx> {
-  const now = clock(ctx);
-  return new McpServer<MemoryCtx>({
+export function memoryServer(ctx: Ctx): McpServer<Caller> {
+  const session = new MemorySession({ store: ctx.store, home: ctx.home, token: token(ctx), now: clock(ctx) });
+  return new McpServer<Caller>({
     name: 'skeinwise',
     version: version(),
     instructions: INSTRUCTIONS,
-    tools: MEMORY_TOOLS,
-    context: (agent) => ({ store: ctx.store, home: ctx.home, agent: checkAccess(ctx.home, agent, now()), now }),
+    tools: session.tools,
+    listed: () => session.listed(),
+    context: (label) => ({ label }),
     log: (text) => ctx.io.err(text),
   });
 }
 
 /** The window server, behind the same access check; it talks to the app on --port. */
 export function windowServer(ctx: Ctx): McpServer<WindowCtx> {
-  const now = clock(ctx);
   const target = { home: ctx.home, port: port(ctx.values as McpValues), fetch: ctx.io.fetch ?? fetch };
   return new McpServer<WindowCtx>({
     name: 'skeinwise-window',
@@ -83,7 +90,7 @@ export function windowServer(ctx: Ctx): McpServer<WindowCtx> {
     instructions:
       "Moves the Skeinwise app's view while the user watches: show entries in the brain, open an entry or a hub, change the layout, highlight. Use ids from Skeinwise's memory server.",
     tools: WINDOW_TOOLS,
-    context: (agent) => ({ ...target, store: ctx.store, agent: checkAccess(ctx.home, agent, now()) }),
+    context: (label) => ({ ...target, store: ctx.store, agent: checkAccess(ctx.home, token(ctx), label).agent }),
     log: (text) => ctx.io.err(text),
   });
 }
@@ -116,28 +123,40 @@ const mcp: Command = async (ctx) => {
       }
       return serveMcp(ctx, process.stdin);
     case 'allow': {
-      const allowed = allowAgent(ctx.home, name, clock(ctx)());
-      if (ctx.values.json) ctx.json({ agent: allowed.name, allowed: true });
-      else say(ctx, allowed.already ? `${allowed.name} was already allowed.` : `Allowed ${allowed.name}. It can read and write your record through skeinwise mcp now.`);
+      const allowed = allowAgent(ctx.home, name, clock(ctx)(), (ctx.values as McpValues).write ? 'write' : 'read');
+      if (ctx.values.json) {
+        ctx.json({ agent: allowed.name, scope: allowed.scope, token: allowed.token, replaced: allowed.replaced });
+        return 0;
+      }
+      const can = allowed.scope === 'write' ? 'read and write' : 'read';
+      say(
+        ctx,
+        `Allowed ${allowed.name} to ${can} your record.${allowed.replaced ? ' Its earlier token stops working now.' : ''} Its token, shown only this once:\n\n` +
+          `  ${allowed.token}\n\n` +
+          `Give it to the agent's MCP config as ${TOKEN_ENV}, or let "skeinwise connect" write the config for you.`,
+      );
       return 0;
     }
+    case 'deny':
     case 'revoke': {
-      const revoked = revokeAgent(ctx.home, name);
-      if (ctx.values.json) ctx.json({ agent: revoked, allowed: false });
-      else say(ctx, `${revoked} isn't allowed any more; its next tool call is refused.`);
+      const denied = denyAgent(ctx.home, name);
+      if (ctx.values.json) ctx.json({ agent: denied, allowed: false });
+      else say(ctx, `${denied} isn't allowed any more; its next tool call is refused.`);
       return 0;
     }
     case 'agents': {
       const access = readAccess(ctx.home);
+      const agents = Object.entries(access.agents);
       if (ctx.values.json) {
-        ctx.json(access);
+        ctx.json({ locked: access.locked, allowed: Object.fromEntries(agents.map(([n, g]) => [n, { scope: g.scope, since: g.since, token: g.tokenHash !== null }])) });
         return 0;
       }
-      const allowed = Object.entries(access.allowed);
-      const asked = Object.entries(access.asked);
       say(ctx, access.locked ? 'Locked: every agent tool is stopped. Unlock with: skeinwise mcp unlock' : 'Unlocked.');
-      say(ctx, allowed.length ? `Allowed:\n${allowed.map(([n, at]) => `  ${n}  (since ${at.slice(0, 10)})`).join('\n')}` : 'No agent is allowed yet.');
-      if (asked.length) say(ctx, `Asked, not allowed:\n${asked.map(([n, at]) => `  ${n}  (last asked ${at.slice(0, 10)}; allow with: skeinwise mcp allow ${quoteArg(n)})`).join('\n')}`);
+      const row = ([n, g]: (typeof agents)[number]) =>
+        g.tokenHash === null
+          ? `  ${n}  (allowed before tokens: give it one with skeinwise mcp allow ${quoteArg(n)}${g.scope === 'write' ? ' --write' : ''})`
+          : `  ${n}  ${g.scope}  (since ${g.since.slice(0, 10)})`;
+      say(ctx, agents.length ? `Allowed:\n${agents.map(row).join('\n')}` : 'No agent is allowed yet. Connect one with: skeinwise connect claude-code');
       return 0;
     }
     case 'lock':
@@ -149,7 +168,7 @@ const mcp: Command = async (ctx) => {
       say(ctx, setLocked(ctx.home, false) ? 'Unlocked: allowed agents can use their tools again.' : 'It was not locked.');
       return 0;
     default:
-      throw new UsageError(`Unknown mcp command: ${sub}. Use allow, revoke, agents, lock or unlock, or no word to serve.`);
+      throw new UsageError(`Unknown mcp command: ${sub}. Use allow, deny, agents, lock or unlock, or no word to serve.`);
   }
 };
 

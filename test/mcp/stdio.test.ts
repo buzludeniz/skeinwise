@@ -14,17 +14,18 @@ const SERVE = fileURLToPath(new URL('./fixtures/serve.ts', import.meta.url));
 
 let dir: string;
 let home: string;
+let token: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'skeinwise-stdio-'));
   home = join(dir, 'home');
   demoRecord(dir, home).db.close();
-  allowAgent(home, 'stdio-test', '2026-11-21T09:00:00.000Z');
+  token = allowAgent(home, 'stdio-test', '2026-11-21T09:00:00.000Z', 'write').token;
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-function session(messages: unknown[]): Promise<{ code: number | null; replies: Record<string, any>[]; stdout: string; stderr: string }> {
+function session(messages: unknown[], env: Record<string, string> = { SKEINWISE_AGENT_TOKEN: token }): Promise<{ code: number | null; replies: Record<string, any>[]; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [SERVE], { env: { ...process.env, SKEINWISE_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [SERVE], { env: { ...process.env, SKEINWISE_AGENT_TOKEN: '', SKEINWISE_HOME: home, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8').on('data', (c: string) => (stdout += c));
@@ -76,11 +77,15 @@ it('serves a whole session over stdio: initialize, list tools, search, write a n
   }
 }, 30_000);
 
-it('refuses tools to an agent that was not allowed, in the same session', async () => {
-  const { code, replies } = await session([
-    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: LEGACY_VERSION, clientInfo: { name: 'stranger', version: '1' } } },
-    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'search', arguments: { query: 'starter' } } },
-  ]);
+it('refuses every tool to a session whose token is unknown, whatever its client is called', async () => {
+  const { code, replies } = await session(
+    [
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: LEGACY_VERSION, clientInfo: { name: 'stdio-test', version: '1' } } },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'search', arguments: { query: 'starter' } } },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'write_note', arguments: { title: 'x', body: 'y' } } },
+    ],
+    { SKEINWISE_AGENT_TOKEN: `swa_${'B'.repeat(43)}` },
+  );
   expect(code).toBe(0);
-  expect(replies[1]!.result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('skeinwise mcp allow stranger') }] });
+  for (const r of replies.slice(1)) expect(r.result).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/token .*isn't allowed/) }] });
 }, 30_000);
