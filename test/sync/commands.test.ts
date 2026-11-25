@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -7,7 +7,7 @@ import { DEMO_NOW } from '../../src/demo/demo.ts';
 import { openHome } from '../../src/home.ts';
 import { newNote } from '../../src/notes.ts';
 import { main } from '../../src/cli.ts';
-import { phraseGrid, type SecretIo, SYNC_COMMANDS, SYNC_EXPERIMENTAL, SYNC_FLAGS, SYNC_HELP } from '../../src/sync/commands.ts';
+import { EXPORT_PLAIN_TEXT, phraseGrid, type SecretIo, SYNC_COMMANDS, SYNC_EXPERIMENTAL, SYNC_FLAGS, SYNC_HELP } from '../../src/sync/commands.ts';
 import { readState } from '../../src/sync/sync.ts';
 
 // The export and sync commands as the CLI will call them, with a Ctx built here and a fake hidden prompt. These run
@@ -26,6 +26,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 interface Run {
   code: number;
   out: string;
+  err: string;
   json: unknown;
   asked: string[];
 }
@@ -36,10 +37,11 @@ function computer(name = `c${++n}`) {
   const store = openHome(home, () => DEMO_NOW);
   const run = async (args: string[], values: Values & Record<string, unknown> = {}, answers: (string | null)[] = [], asked: string[] = []): Promise<Run> => {
     let out = '';
+    let err = '';
     let json: unknown;
     const io: SecretIo = {
       out: (t) => (out += t),
-      err: () => {},
+      err: (t) => (err += t),
       env: {},
       askSecret: async (prompt) => {
         asked.push(prompt);
@@ -51,7 +53,7 @@ function computer(name = `c${++n}`) {
     const flags: Values & Record<string, unknown> = { experimental: true, ...values };
     const ctx: Ctx = { io, home, store, values: flags, args: rest, json: (v) => (json = v) };
     const code = await SYNC_COMMANDS[command!]!(ctx);
-    return { code, out, json, asked };
+    return { code, out, err, json, asked };
   };
   return { home, store, run };
 }
@@ -130,6 +132,14 @@ describe('the sync commands', () => {
     const file = join(dir, 'e.zip');
     const r = await a.run(['export', file]);
     expect(r.out).toMatch(new RegExp(`Wrote ${file} .*0 chats, 0 other entries and 1 notes as Markdown`));
+    // L18: every export says it is plain text, on stderr so --json output stays one JSON value. The zip is owner-only.
+    expect(r.err).toBe(`${EXPORT_PLAIN_TEXT}\n`);
+    expect(EXPORT_PLAIN_TEXT).toMatch(/plain text, not encrypted/);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    const asJson = await a.run(['export', join(dir, 'e2.zip')], { json: true });
+    expect(asJson.out).toBe('');
+    expect(asJson.err).toContain('not encrypted');
+    expect(asJson.json).toMatchObject({ file: join(dir, 'e2.zip') });
     await expect(a.run(['export', file])).rejects.toThrow(/already exists/);
     expect((await a.run(['export', file], { force: true })).code).toBe(0);
     await expect(a.run(['export', 'one', 'two'])).rejects.toThrow(/at most one file/);

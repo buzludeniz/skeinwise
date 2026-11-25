@@ -142,10 +142,15 @@ export function phraseGrid(phrase: string): string {
 
 // export
 
+/** Said with every export, on stderr so --json stays clean (L18). */
+export const EXPORT_PLAIN_TEXT =
+  'The export is plain text, not encrypted: anyone who gets the file can read your whole record. Keep it somewhere private, and delete it when you are done.';
+
 const exportCommand: Command = (ctx) => {
   if (ctx.args.length > 1) throw new UsageError('Give at most one file to write, for example: skeinwise export ~/skeinwise.zip');
   const file = resolve(ctx.args[0] ?? `skeinwise-export-${day(ctx.store.now())}.zip`);
   const r = writeExport(ctx.store, ctx.home, file, { force: (ctx.values as SyncValues).force });
+  ctx.io.err(`${EXPORT_PLAIN_TEXT}\n`);
   if (ctx.values.json) ctx.json(r);
   else {
     ctx.io.out(`Wrote ${r.file} (${gigabytes(r.bytes)}): ${r.chats} chats, ${r.entries} other entries and ${r.notes} notes as Markdown,\n`);
