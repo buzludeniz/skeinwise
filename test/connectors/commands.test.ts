@@ -27,6 +27,12 @@ import {
   seedConnection,
   tempHome,
 } from './helpers.ts';
+import { keyShaped } from '../samples.ts';
+
+// Slack-shaped tokens are joined at run time, so the source holds no literal in Slack's key format.
+const USER_TOKEN = keyShaped('xo', 'xp-test-not-a-real-token');
+const SHORT_USER_TOKEN = keyShaped('xo', 'xp-test-token');
+const BOT_TOKEN = keyShaped('xo', 'xb-test-token');
 
 vi.mock('node:child_process', () => ({
   spawn: () => {
@@ -228,7 +234,7 @@ describe('skeinwise connect', () => {
   });
 
   it('Slack: takes a pasted user token with read scopes only, and the picked channels', async () => {
-    const tokenFile = secretFile('xoxp-test-not-a-real-token');
+    const tokenFile = secretFile(USER_TOKEN);
     const fetch = slackNetwork();
     const r = await run('connect', ['slack'], { 'token-file': tokenFile, channels: '#plants', yes: true }, { fetch });
     expect(r.err).toBe('');
@@ -236,16 +242,16 @@ describe('skeinwise connect', () => {
     expect(r.out).toContain('Connected Slack as Garden Club.');
     expect(r.out).toContain('Slack (Garden Club): 2 new');
     expect(findConnection(home, 'slack')).toMatchObject({ account: 'Garden Club', picks: ['C0PLANTS'] });
-    expect(keychain.items.get(keychainItems(home, 'slack').token)).toBe('{"access":"xoxp-test-not-a-real-token"}');
-    expect(allFilesText(home)).not.toContain('xoxp-test-not-a-real-token');
+    expect(keychain.items.get(keychainItems(home, 'slack').token)).toBe(JSON.stringify({ access: USER_TOKEN }));
+    expect(allFilesText(home)).not.toContain(USER_TOKEN);
     expect(fetch.calls.every((c) => c.method === 'GET')).toBe(true);
   });
 
   it('Slack: refuses a token that can do more than read, and a bot token', async () => {
-    const more = await run('connect', ['slack'], { 'token-file': secretFile('xoxp-test-token'), channels: 'plants', yes: true }, { fetch: slackNetwork(`${READ_SCOPES},chat:write`) });
+    const more = await run('connect', ['slack'], { 'token-file': secretFile(SHORT_USER_TOKEN), channels: 'plants', yes: true }, { fetch: slackNetwork(`${READ_SCOPES},chat:write`) });
     expect(more.code).toBe(2);
     expect(more.err).toContain('This token can do more than read (chat:write)');
-    const bot = await run('connect', ['slack'], { 'token-file': secretFile('xoxb-test-token'), channels: 'plants', yes: true }, { fetch: slackNetwork() });
+    const bot = await run('connect', ['slack'], { 'token-file': secretFile(BOT_TOKEN), channels: 'plants', yes: true }, { fetch: slackNetwork() });
     expect(bot.code).toBe(2);
     expect(bot.err).toContain("That isn't a User OAuth Token");
     expect(keychain.items.size).toBe(0);
@@ -253,7 +259,7 @@ describe('skeinwise connect', () => {
   });
 
   it('Slack: an unknown channel stops the connect with nothing saved', async () => {
-    const r = await run('connect', ['slack'], { 'token-file': secretFile('xoxp-test-token'), channels: 'plants,recipes', yes: true }, { fetch: slackNetwork() });
+    const r = await run('connect', ['slack'], { 'token-file': secretFile(SHORT_USER_TOKEN), channels: 'plants,recipes', yes: true }, { fetch: slackNetwork() });
     expect(r.code).toBe(2);
     expect(r.err).toContain('Slack has no channel you can read called #recipes');
     expect(keychain.items.size).toBe(0);
@@ -274,7 +280,7 @@ describe('skeinwise connections', () => {
   });
 
   it('lists each connection with how its last pull went and when the next one is', async () => {
-    await seedConnection(home, keychain, { service: 'slack', account: 'Garden Club', picks: ['C0PLANTS'], cursor: { channels: { C0PLANTS: { name: 'plants' } }, users: {} } }, { access: 'xoxp-test' });
+    await seedConnection(home, keychain, { service: 'slack', account: 'Garden Club', picks: ['C0PLANTS'], cursor: { channels: { C0PLANTS: { name: 'plants' } }, users: {} } }, { access: keyShaped('xo', 'xp-test') });
     await seedConnection(home, keychain, { service: 'gmail', account: 'sam@example.com', clientId: 'c' }, { access: 'test-access-token' });
     const fetch = slackNetwork();
     fetch.routes.push(on('GET', `${GMAIL}/profile`, () => json({ error: { code: 401 } }, 401)));
@@ -383,7 +389,7 @@ describe('skeinwise disconnect', () => {
     expect(call.headers.get('authorization')).toBe(`Basic ${Buffer.from('test-todoist-client:test-todoist-secret').toString('base64')}`);
     expect(Object.fromEntries(new URLSearchParams(call.body))).toEqual({ token: 'test-todoist-token', token_type_hint: 'access_token' });
 
-    await seedConnection(home, keychain, { service: 'slack', account: 'Garden Club', picks: [] }, { access: 'xoxp-test' });
+    await seedConnection(home, keychain, { service: 'slack', account: 'Garden Club', picks: [] }, { access: keyShaped('xo', 'xp-test') });
     const slack = slackNetwork();
     expect((await run('disconnect', ['slack'], {}, { fetch: slack })).code).toBe(0);
     expect(slack.calls.map((c) => c.url.pathname)).toEqual(['/api/auth.revoke']);

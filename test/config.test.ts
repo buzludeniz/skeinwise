@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { configPath, DEFAULT_CONFIG, loadConfig, setConfigValue, unsetConfigValue } from '../src/config.ts';
+import { keyShaped } from './samples.ts';
 
 describe('config', () => {
   let home: string;
@@ -30,7 +31,7 @@ describe('config', () => {
   it('refuses values that would half-work', () => {
     expect(() => setConfigValue(home, 'engine', 'cloud')).toThrow(/local, remote, none/);
     expect(() => setConfigValue(home, 'budget', 'lots')).toThrow(/whole number/);
-    expect(() => setConfigValue(home, 'apiKeyEnv', 'sk-abc123-not-a-name')).toThrow(/never the key itself/);
+    expect(() => setConfigValue(home, 'apiKeyEnv', keyShaped('s', 'k-abc123-not-a-name'))).toThrow(/never the key itself/);
     expect(() => setConfigValue(home, 'modelOptions', '{temperature: 0}')).toThrow(/must be JSON/);
     expect(() => setConfigValue(home, 'colour', 'blue')).toThrow(/Unknown setting "colour"/);
     writeFileSync(configPath(home), '{"engine": "local", "port": 1}');
