@@ -11,6 +11,7 @@ import { safeLine } from '../safe-text.ts';
 import { allowAgent, checkAccess, denyAgent, quoteArg, readAccess, setLocked, TOKEN_ENV } from './access.ts';
 import { type LogRecord, readLog } from './log.ts';
 import { McpServer, serveStdio } from './protocol.ts';
+import { confirmRequest, pendingRequests, refuseRequest } from './requests.ts';
 import { type Caller, MemorySession } from './session.ts';
 import { INSTRUCTIONS } from './tools.ts';
 import { WINDOW_PORT, WINDOW_TOOLS, type WindowCtx } from './window.ts';
@@ -41,7 +42,10 @@ export const MCP_HELP =
   line('mcp agents', 'List the allowed agents, their scope, and the lock') +
   line('mcp lock', 'Stop every agent tool until you unlock') +
   line('mcp unlock', 'Let allowed agents use their tools again') +
-  line('mcp log', 'What agents asked for and were sent, newest last (--limit <n>)');
+  line('mcp log', 'What agents asked for and were sent, newest last (--limit <n>)') +
+  line('mcp pending', 'Changes agents asked for that wait for your yes') +
+  line('mcp confirm <n>', 'Make the change request n asked for') +
+  line('mcp refuse <n>', 'Drop request n; nothing changes');
 
 function version(): string {
   // package.json sits two levels up from src/mcp/ and three from dist/src/mcp/.
@@ -196,8 +200,38 @@ const mcp: Command = async (ctx) => {
       say(ctx, records.map(logRow).join('\n'));
       return 0;
     }
+    case 'pending': {
+      if (rest.length) throw new UsageError('mcp pending takes no arguments.');
+      const waiting = pendingRequests(ctx.home, clock(ctx)());
+      if (ctx.values.json) {
+        ctx.json(waiting);
+        return 0;
+      }
+      if (!waiting.length) {
+        say(ctx, 'No agent request is waiting.');
+        return 0;
+      }
+      const rows = waiting.map((r) => `  ${r.id}  ${r.at.slice(0, 16).replace('T', ' ')}  ${r.agent} asks: ${safeLine(r.what)}`);
+      say(ctx, `Waiting for your yes:\n${rows.join('\n')}\nConfirm with: skeinwise mcp confirm <n>. Refuse with: skeinwise mcp refuse <n>.`);
+      return 0;
+    }
+    case 'confirm': {
+      if (rest.length !== 1) throw new UsageError('Give the request number: skeinwise mcp confirm <n>. "skeinwise mcp pending" lists them.');
+      const done = confirmRequest(ctx.home, ctx.store, needId(rest[0], 'request'), clock(ctx)());
+      if (ctx.values.json) ctx.json(done);
+      else if (done.request.tool === 'not_mine') say(ctx, `Done: thread ${done.request.target} is left out now. Bring it back with: skeinwise not-mine ${done.request.target} --undo`);
+      else say(ctx, `Done: run ${done.request.target} is undone.`);
+      return 0;
+    }
+    case 'refuse': {
+      if (rest.length !== 1) throw new UsageError('Give the request number: skeinwise mcp refuse <n>. "skeinwise mcp pending" lists them.');
+      const dropped = refuseRequest(ctx.home, needId(rest[0], 'request'), clock(ctx)());
+      if (ctx.values.json) ctx.json({ refused: dropped });
+      else say(ctx, `Refused request ${dropped.id}; nothing changed.`);
+      return 0;
+    }
     default:
-      throw new UsageError(`Unknown mcp command: ${sub}. Use allow, deny, agents, lock, unlock or log, or no word to serve.`);
+      throw new UsageError(`Unknown mcp command: ${sub}. Use allow, deny, agents, lock, unlock, log, pending, confirm or refuse, or no word to serve.`);
   }
 };
 

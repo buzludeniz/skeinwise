@@ -9,12 +9,12 @@ import { UsageError } from '../errors.ts';
 import { appendDailyNote, readNotes, writeAgentNote } from '../notes.ts';
 import { ask } from '../organiser/ask.ts';
 import { RecordView } from '../organiser/record.ts';
-import { getRun, undoRun } from '../organiser/runs.ts';
 import { getLiveHub, type HubItem, type HubSections, hubEntryIds, hubsOfEntry, liveHubs } from '../organiser/views.ts';
 import type { Entry, Store } from '../store/store.ts';
 import { MAX_ENTRIES } from './frame.ts';
 import type { JsonSchema, Tool } from './protocol.ts';
-import { AGENT_ENGINE, AGENT_SCHEMA, MAX_TAGGED, tagAsAgent } from './tags.ts';
+import { checkUndo, fileRequest, type McpRequest } from './requests.ts';
+import { AGENT_SCHEMA, MAX_TAGGED, tagAsAgent } from './tags.ts';
 
 export interface MemoryCtx {
   store: Store;
@@ -32,7 +32,7 @@ export const INSTRUCTIONS = [
   'for fewer, or page on with offset. A session gets 500 KB in all.',
   'An agent allowed to write saves under its own name: write_note makes or updates a note of its own,',
   `append_daily_note adds a line to today's note, and tag_entries tags entries in "${AGENT_SCHEMA}" unless you name`,
-  'another schema. undo_run takes back a run you made.',
+  'another schema. not_mine and undo_run only ask: the user confirms them in Skeinwise before anything changes.',
 ].join(' ');
 
 // Arguments
@@ -51,6 +51,15 @@ function text(a: Record<string, unknown>, key: string, max: number, required = f
 }
 
 const PAGE = { offset: { type: 'integer', minimum: 0, description: 'Entries to skip (default 0).' } };
+
+/** What not_mine and undo_run answer: the request waits for the user. */
+function waiting(request: McpRequest): { status: string; request: number; message: string } {
+  return {
+    status: 'waiting for confirm',
+    request: request.id,
+    message: `waiting for confirm (request ${request.id}): nothing has changed. The user decides with skeinwise mcp confirm ${request.id} or skeinwise mcp refuse ${request.id}.`,
+  };
+}
 
 function int(a: Record<string, unknown>, key: string, fallback: number, min: number, max: number): number {
   const v = a[key];
@@ -355,32 +364,29 @@ export const MEMORY_TOOLS: Tool<MemoryCtx>[] = [
     name: 'not_mine',
     title: 'Mark a thread not mine',
     description:
-      "Mark a whole thread as someone else's words, so search, questions and the organiser leave it out. Use it only when the user says a conversation isn't theirs; they can bring it back.",
+      "Ask to mark a whole thread as someone else's words, so search, questions and the organiser leave it out. Use it only when the user says a conversation isn't theirs. Nothing changes until the user confirms the request in Skeinwise.",
     inputSchema: { type: 'object', properties: { thread_id: integer('The thread.') }, required: ['thread_id'] },
     readOnly: false,
     run: (ctx, a) => {
       const threadId = id(a, 'thread_id');
       const thread = ctx.store.visibleThread(threadId);
       if (!thread) throw new UsageError(`There is no thread ${threadId} in the record.`);
-      ctx.store.setNotMine(threadId, true);
-      return { thread_id: threadId, not_mine: true, message: `"${thread.title}" is left out now. The user can bring it back with: skeinwise not-mine ${threadId} --undo` };
+      const request = fileRequest(ctx.home, { agent: ctx.agent, tool: 'not_mine', target: threadId, what: `Leave out thread ${threadId}, "${thread.title.slice(0, 80)}"` }, ctx.now());
+      return { thread_id: threadId, ...waiting(request) };
     },
   },
   {
     name: 'undo_run',
     title: 'Undo a run',
-    description: 'Take back a run you made (tag_entries gives its run_id): everything it added is removed. You can undo only your own runs.',
+    description:
+      'Ask to take back a run you made (tag_entries gives its run_id), removing everything it added. You can undo only your own runs, and nothing changes until the user confirms the request in Skeinwise.',
     inputSchema: { type: 'object', properties: { run_id: integer('The run.') }, required: ['run_id'] },
     readOnly: false,
     run: (ctx, a) => {
       const runId = id(a, 'run_id');
-      const run = getRun(ctx.store.db, runId);
-      if (!run) throw new UsageError(`There is no run ${runId}.`);
-      if (run.engine !== AGENT_ENGINE || run.model?.toLowerCase() !== ctx.agent.toLowerCase()) {
-        throw new UsageError(`Run ${runId} wasn't made by ${ctx.agent}, so ${ctx.agent} can't undo it.`);
-      }
-      const result = undoRun(ctx.store.db, runId);
-      return { run_id: runId, status: result.run.status, removed: result.removed };
+      checkUndo(ctx.store, ctx.agent, runId);
+      const request = fileRequest(ctx.home, { agent: ctx.agent, tool: 'undo_run', target: runId, what: `Undo run ${runId}, made by ${ctx.agent}` }, ctx.now());
+      return { run_id: runId, ...waiting(request) };
     },
   },
 ];

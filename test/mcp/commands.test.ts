@@ -6,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openHome } from '../../src/home.ts';
 import { ACCESS_FILE, AccessError, checkAccess, hashToken, readAccess } from '../../src/mcp/access.ts';
 import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP, serveMcp } from '../../src/mcp/commands.ts';
+import { fileRequest, pendingRequests, REQUESTS_FILE } from '../../src/mcp/requests.ts';
 import type { Store } from '../../src/store/store.ts';
-import { context } from './helpers.ts';
+import { context, demoRecord } from './helpers.ts';
 
 // `skeinwise mcp allow|deny|agents|lock|unlock`, called with a context built as the CLI builds it.
 
@@ -107,8 +108,50 @@ describe('skeinwise mcp', () => {
     expect(MCP_FLAGS).toEqual({ window: { type: 'boolean' }, port: { type: 'string' }, write: { type: 'boolean' } });
     expect(MCP_HELP).not.toMatch(/window|--port/);
     const lines = MCP_HELP.trimEnd().split('\n');
-    expect(lines).toHaveLength(8);
+    expect(lines).toHaveLength(11);
     for (const line of lines) expect(line).toMatch(/^ {2}mcp[ a-z<>]*\S? +\S|^ {6}--/);
     expect(lines.filter((l) => l.startsWith('  mcp')).map((l) => l.slice(28, 29))).not.toContain(' ');
+  });
+});
+
+describe('agent requests: mcp pending, confirm and refuse', () => {
+  // These need threads, so they run on the demo record in a folder of its own.
+  let demo: string;
+  beforeEach(() => {
+    store.db.close();
+    rmSync(home, { recursive: true, force: true });
+    demo = mkdtempSync(join(tmpdir(), 'skeinwise-mcp-req-'));
+    home = join(demo, 'home');
+    store = demoRecord(demo, home);
+  });
+  afterEach(() => rmSync(demo, { recursive: true, force: true }));
+
+  it('lists what agents asked for, makes the change on confirm, and drops it on refuse', async () => {
+    expect((await mcp(['pending'])).out).toBe('No agent request is waiting.\n');
+    const threads = store.allEntries().filter((e) => e.threadId !== null).map((e) => e.threadId!);
+    const [first, second] = [...new Set(threads)];
+    const a = fileRequest(home, { agent: 'claude-code', tool: 'not_mine', target: first!, what: `Leave out thread ${first}, "\u001b[31mred\u001b[0m"` }, NOW);
+    const b = fileRequest(home, { agent: 'cursor', tool: 'not_mine', target: second!, what: `Leave out thread ${second}` }, NOW);
+    const listed = (await mcp(['pending'])).out;
+    expect(listed).toContain(`  ${a.id}  2026-11-25 09:00  claude-code asks: Leave out thread ${first}, "red"`);
+    expect(listed).toContain(`  ${b.id}  2026-11-25 09:00  cursor asks: Leave out thread ${second}`);
+    expect(listed).not.toContain('\u001b');
+    expect(statSync(join(home, REQUESTS_FILE)).mode & 0o777).toBe(0o600);
+
+    expect((await mcp(['confirm', String(a.id)])).out).toBe(`Done: thread ${first} is left out now. Bring it back with: skeinwise not-mine ${first} --undo\n`);
+    expect(store.visibleThread(first!)).toBeUndefined();
+    expect((await mcp(['refuse', String(b.id)])).out).toBe(`Refused request ${b.id}; nothing changed.\n`);
+    expect(store.visibleThread(second!)).toBeDefined();
+    expect(pendingRequests(home, NOW)).toEqual([]);
+    await expect(mcp(['confirm', String(b.id)])).rejects.toThrow(`No agent request ${b.id} is waiting.`);
+    await expect(mcp(['confirm'])).rejects.toThrow(/Give the request number/);
+  });
+
+  it('lets a request wait seven days at most', () => {
+    fileRequest(home, { agent: 'claude-code', tool: 'undo_run', target: 3, what: 'Undo run 3' }, '2026-11-01T09:00:00.000Z');
+    expect(pendingRequests(home, '2026-11-08T08:59:00.000Z')).toHaveLength(1);
+    expect(pendingRequests(home, '2026-11-08T09:01:00.000Z')).toEqual([]);
+    // Numbers aren't reused once a request is gone.
+    expect(fileRequest(home, { agent: 'claude-code', tool: 'undo_run', target: 3, what: 'Undo run 3' }, '2026-11-09T09:00:00.000Z').id).toBe(2);
   });
 });

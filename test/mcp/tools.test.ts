@@ -8,6 +8,7 @@ import { memoryServer } from '../../src/mcp/commands.ts';
 import { FRAME_CLOSE, FRAME_OPEN, MAX_CALL_BYTES, MAX_SESSION_BYTES } from '../../src/mcp/frame.ts';
 import type { McpServer } from '../../src/mcp/protocol.ts';
 import type { Caller } from '../../src/mcp/session.ts';
+import { confirmRequest, pendingRequests } from '../../src/mcp/requests.ts';
 import { AGENT_SCHEMA } from '../../src/mcp/tags.ts';
 import { type RunOptions, runSteps, steps } from '../../src/organiser/organise.ts';
 import { RecordView } from '../../src/organiser/record.ts';
@@ -299,9 +300,13 @@ describe('writing to the record', () => {
     const refused = await call(other, 'undo_run', { run_id: run.id });
     expect(refused.text).toBe(`Run ${run.id} wasn't made by cursor, so cursor can't undo it.`);
 
-    const undone = await call(server, 'undo_run', { run_id: run.id });
-    expect(undone.json).toMatchObject({ run_id: run.id, status: 'undone' });
+    const asked = await call(server, 'undo_run', { run_id: run.id });
+    expect(asked.json).toMatchObject({ run_id: run.id, status: 'waiting for confirm', request: 1 });
+    expect(asked.json.message).toMatch(/^waiting for confirm \(request 1\): nothing has changed\./);
+    expect(liveTags(store.db, schema.id)).toHaveLength(1);
+    expect(confirmRequest(home, store, 1, LATER).result).toMatchObject({ run_id: run.id, status: 'undone' });
     expect(liveTags(store.db, schema.id)).toEqual([]);
+    expect((await call(server, 'undo_run', { run_id: run.id })).text).toBe(`Run ${run.id} is already undone.`);
   });
 
   it("tag_entries keeps to schemas an agent may add to, and to entries the record shows", async () => {
@@ -322,13 +327,19 @@ describe('writing to the record', () => {
     expect(getRun(store.db, run.id)!.status).toBe('done');
   });
 
-  it('not_mine leaves a thread out of every read', async () => {
+  it('not_mine only asks; once the user confirms, the thread is out of every read', async () => {
     const hit = await firstHit('starter');
     const threadId = hit.thread?.id ?? store.allEntries().find((e) => e.threadId !== null)!.threadId!;
     const entryId = store.threadEntries(threadId)[0]!.id;
     const res = await call(server, 'not_mine', { thread_id: threadId });
-    expect(res.json).toMatchObject({ thread_id: threadId, not_mine: true });
-    expect(res.json.message).toContain(`skeinwise not-mine ${threadId} --undo`);
+    expect(res.json).toMatchObject({ thread_id: threadId, status: 'waiting for confirm', request: 1 });
+    expect(res.json.message).toBe('waiting for confirm (request 1): nothing has changed. The user decides with skeinwise mcp confirm 1 or skeinwise mcp refuse 1.');
+    expect((await call(server, 'read_entry', { entry_id: entryId })).isError).toBe(false);
+    // Asking again gives the same request back.
+    expect((await call(server, 'not_mine', { thread_id: threadId })).json.request).toBe(1);
+    expect(pendingRequests(home, LATER)).toHaveLength(1);
+    confirmRequest(home, store, 1, LATER);
+    expect(pendingRequests(home, LATER)).toEqual([]);
     expect((await call(server, 'read_entry', { entry_id: entryId })).isError).toBe(true);
     expect((await call(server, 'read_thread', { thread_id: threadId })).text).toBe(`There is no thread ${threadId} in the record.`);
     expect((await call(server, 'not_mine', { thread_id: threadId })).isError).toBe(true);
