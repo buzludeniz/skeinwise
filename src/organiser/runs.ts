@@ -176,6 +176,15 @@ export interface Finish {
   now: string;
 }
 
+/**
+ * A token count as the runs table keeps it: a whole number, never below zero. The model client already counts its own
+ * estimate when a server reports 0 or less (model.ts `reported`); this keeps any other figure from lowering the
+ * month's sum (LS-15, M13).
+ */
+function counted(tokens: number): number {
+  return Number.isFinite(tokens) && tokens > 0 ? Math.ceil(tokens) : 0;
+}
+
 /** Marks a run done. Call it inside the transaction that saves the run's rows. */
 export function finishRun(db: DatabaseSync, id: number, finish: Finish): void {
   const res = db
@@ -183,7 +192,7 @@ export function finishRun(db: DatabaseSync, id: number, finish: Finish): void {
       `UPDATE runs SET status = 'done', counts = ?, message = ?, tokens_in = ?, tokens_out = ?, finished_at = ?
        WHERE id = ? AND status = 'running'`,
     )
-    .run(JSON.stringify(finish.counts), finish.message ?? null, finish.tokensIn, finish.tokensOut, finish.now, id);
+    .run(JSON.stringify(finish.counts), finish.message ?? null, counted(finish.tokensIn), counted(finish.tokensOut), finish.now, id);
   if (res.changes === 0) throw new Error(`Run ${id} was undone while it ran, so nothing was saved.`);
 }
 
@@ -191,7 +200,7 @@ export function failRun(db: DatabaseSync, id: number, message: string, tokensIn:
   db.prepare(
     `UPDATE runs SET status = 'failed', message = ?, tokens_in = ?, tokens_out = ?, finished_at = ?
      WHERE id = ? AND status = 'running'`,
-  ).run(message, tokensIn, tokensOut, now, id);
+  ).run(message, counted(tokensIn), counted(tokensOut), now, id);
 }
 
 /** The run ids whose output is current (see the live_runs view), as SQL to put after "IN". */
@@ -295,11 +304,16 @@ function reverseCorrection(db: DatabaseSync, run: Run): void {
   }
 }
 
-/** Tokens an outside model used in the calendar month (UTC) that `now` falls in. */
+/**
+ * Tokens an outside model used in the calendar month (UTC) that `now` falls in. Only what is above zero counts: a
+ * row an earlier version wrote, or a synced record brought in, may hold a negative figure (LS-15).
+ */
 export function remoteTokensThisMonth(db: DatabaseSync, now: string): number {
   const month = `${now.slice(0, 7)}-01`;
   const row = db
-    .prepare("SELECT COALESCE(SUM(tokens_in + tokens_out), 0) AS n FROM runs WHERE engine = 'remote' AND started_at >= ?")
+    .prepare(
+      "SELECT COALESCE(SUM(MAX(tokens_in, 0) + MAX(tokens_out, 0)), 0) AS n FROM runs WHERE engine = 'remote' AND started_at >= ?",
+    )
     .get(month) as { n: number };
   return Number(row.n);
 }
