@@ -107,7 +107,7 @@ describe('skeinwise mcp', () => {
     expect(MCP_FLAGS).toEqual({ window: { type: 'boolean' }, port: { type: 'string' }, write: { type: 'boolean' } });
     expect(MCP_HELP).not.toMatch(/window|--port/);
     const lines = MCP_HELP.trimEnd().split('\n');
-    expect(lines).toHaveLength(7);
+    expect(lines).toHaveLength(8);
     for (const line of lines) expect(line).toMatch(/^ {2}mcp[ a-z<>]*\S? +\S|^ {6}--/);
     expect(lines.filter((l) => l.startsWith('  mcp')).map((l) => l.slice(28, 29))).not.toContain(' ');
   });

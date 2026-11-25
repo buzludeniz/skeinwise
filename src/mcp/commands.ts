@@ -6,8 +6,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { Readable } from 'node:stream';
 import type { Ctx } from '../cli-organiser.ts';
-import { UsageError } from '../errors.ts';
+import { needId, UsageError } from '../errors.ts';
+import { safeLine } from '../safe-text.ts';
 import { allowAgent, checkAccess, denyAgent, quoteArg, readAccess, setLocked, TOKEN_ENV } from './access.ts';
+import { type LogRecord, readLog } from './log.ts';
 import { McpServer, serveStdio } from './protocol.ts';
 import { type Caller, MemorySession } from './session.ts';
 import { INSTRUCTIONS } from './tools.ts';
@@ -38,7 +40,8 @@ export const MCP_HELP =
   line('mcp deny <agent>', "Take an agent's token back (also: mcp revoke)") +
   line('mcp agents', 'List the allowed agents, their scope, and the lock') +
   line('mcp lock', 'Stop every agent tool until you unlock') +
-  line('mcp unlock', 'Let allowed agents use their tools again');
+  line('mcp unlock', 'Let allowed agents use their tools again') +
+  line('mcp log', 'What agents asked for and were sent, newest last (--limit <n>)');
 
 function version(): string {
   // package.json sits two levels up from src/mcp/ and three from dist/src/mcp/.
@@ -109,6 +112,18 @@ export async function serveMcp(ctx: Ctx, input: Readable): Promise<number> {
   return 0;
 }
 
+/** One log record as a line of text; what the agent sent is made safe to print. */
+function logRow(r: LogRecord): string {
+  const who = r.agent ?? 'unknown agent';
+  const called = r.label && r.label !== r.agent ? ` (calls itself "${safeLine(r.label).slice(0, 64)}")` : '';
+  const ids = r.entry_ids ? `entries ${r.entry_ids.join(', ')}` : r.hub_ids ? `hubs ${r.hub_ids.join(', ')}` : 'no entries';
+  const what =
+    r.outcome === 'ok'
+      ? `${ids}, ${(r.bytes / 1024).toFixed(1)} KB${r.truncated ? ', cut to fit' : ''}`
+      : `${r.outcome}: ${safeLine(r.reason ?? '').slice(0, 160)}`;
+  return `${r.at.slice(0, 19).replace('T', ' ')}  ${who}${called}  ${r.tool} ${safeLine(JSON.stringify(r.args)).slice(0, 120)}  ${what}`;
+}
+
 function say(ctx: Ctx, text: string): void {
   ctx.io.out(text.endsWith('\n') ? text : `${text}\n`);
 }
@@ -167,8 +182,22 @@ const mcp: Command = async (ctx) => {
       if (rest.length) throw new UsageError('mcp unlock takes no arguments.');
       say(ctx, setLocked(ctx.home, false) ? 'Unlocked: allowed agents can use their tools again.' : 'It was not locked.');
       return 0;
+    case 'log': {
+      if (rest.length) throw new UsageError('mcp log takes no arguments; use --limit <n> for more or fewer calls.');
+      const records = readLog(ctx.home, ctx.values.limit ? needId(ctx.values.limit, 'limit') : 20);
+      if (ctx.values.json) {
+        ctx.json(records);
+        return 0;
+      }
+      if (!records.length) {
+        say(ctx, 'No agent has called a Skeinwise tool yet.');
+        return 0;
+      }
+      say(ctx, records.map(logRow).join('\n'));
+      return 0;
+    }
     default:
-      throw new UsageError(`Unknown mcp command: ${sub}. Use allow, deny, agents, lock or unlock, or no word to serve.`);
+      throw new UsageError(`Unknown mcp command: ${sub}. Use allow, deny, agents, lock, unlock or log, or no word to serve.`);
   }
 };
 
