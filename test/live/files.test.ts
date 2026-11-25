@@ -1,6 +1,8 @@
 // H2 and LS-04: capture keeps one row per watched file, so one file's failure is that file's alone, a failed file is
 // tried again on a schedule, and nothing is skipped because a pass moved past it. Built from the audit's PoC 04 (five
-// good sessions and one with a nanosecond timestamp) and PoC 04b (fifty notes and one with an impossible date).
+// good sessions and one with a nanosecond timestamp) and PoC 04b (fifty notes and one with an impossible date). Since
+// the importer skips or flags one bad value instead of failing (M7), neither of those fails a file any more: what fails
+// one now is a file that can't be read.
 
 import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -58,10 +60,11 @@ async function until(check: () => boolean, ms = 5000): Promise<void> {
   }
 }
 
-async function liveOnce(): Promise<{ code: number; out: string }> {
+async function liveOnce(): Promise<{ code: number; out: string; err: string }> {
   let out = '';
-  const code = await main(['live', '--once'], { out: (t) => (out += t), err: () => {}, env: { SKEINWISE_HOME: home, HOME: userHome } });
-  return { code, out };
+  let err = '';
+  const code = await main(['live', '--once'], { out: (t) => (out += t), err: (t) => (err += t), env: { SKEINWISE_HOME: home, HOME: userHome } });
+  return { code, out, err };
 }
 
 function withStore<T>(fn: (store: Store) => T): T {
@@ -74,27 +77,42 @@ function withStore<T>(fn: (store: Store) => T): T {
 }
 
 describe('one bad file', () => {
-  it('fails alone: the other sessions are saved, and the bad one is listed by its path (PoC 04)', async () => {
+  it('with a time it cannot read costs nothing: all six sessions are saved, and the line is named (PoC 04)', async () => {
     for (let s = 0; s < 5; s++) writeFileSync(join(projects, `sess-${s}.jsonl`), goodSession(s));
     writeFileSync(join(projects, 'zz-bad.jsonl'), BAD);
 
     const first = await liveOnce();
-    expect(first.code).toBe(1);
-    expect(first.out).toContain('caught up 5 chats from Claude Code · 1 file(s) failed');
-    expect(first.out).toContain(`failed: ${join(projects, 'zz-bad.jsonl')}: Invalid time value`);
-    expect(withStore((s) => s.allEntries())).toHaveLength(20);
-
-    // Still failing on the next pass, until the file is fixed.
-    expect((await liveOnce()).out).toContain(`failed: ${join(projects, 'zz-bad.jsonl')}`);
-
-    writeFileSync(join(projects, 'zz-bad.jsonl'), BAD.replace('1700000000000000000', '"2026-11-20T11:00:00Z"'));
-    const fixed = await liveOnce();
-    expect(fixed.code).toBe(0);
-    expect(fixed.out).not.toContain('failed');
+    expect(first.code).toBe(0);
+    expect(first.out).toContain('caught up 6 chats from Claude Code');
+    expect(first.out).not.toContain('failed');
+    expect(first.err).toContain('-Users-me-proj/zz-bad.jsonl:1: 1700000000000000000 is not a time; kept the entry with no time');
     expect(withStore((s) => s.allEntries())).toHaveLength(21);
   });
 
-  it('in a notes folder fails alone, and renaming it saves it (PoC 04b)', async () => {
+  it('that cannot be read fails alone: the other sessions are saved, and it is listed by its path (H2)', async () => {
+    for (let s = 0; s < 5; s++) writeFileSync(join(projects, `sess-${s}.jsonl`), goodSession(s));
+    const locked = join(projects, 'zz-locked.jsonl');
+    writeFileSync(locked, goodSession(5));
+    chmodSync(locked, 0o200); // unreadable, still writable
+
+    const first = await liveOnce();
+    expect(first.code).toBe(1);
+    expect(first.out).toContain('caught up 5 chats from Claude Code · 1 file(s) failed');
+    expect(first.out).toContain(`failed: ${locked}: EACCES`);
+    expect(withStore((s) => s.allEntries())).toHaveLength(20);
+
+    // Still failing on the next pass, until the file is fixed.
+    expect((await liveOnce()).out).toContain(`failed: ${locked}`);
+
+    chmodSync(locked, 0o644);
+    appendFileSync(locked, goodSession(5, 1, 4)); // fixed, and changed: read at once
+    const fixed = await liveOnce();
+    expect(fixed.code).toBe(0);
+    expect(fixed.out).not.toContain('failed');
+    expect(withStore((s) => s.allEntries())).toHaveLength(25);
+  });
+
+  it('in a notes folder, with an impossible date in its name, is saved with the file date (PoC 04b)', async () => {
     const vault = join(userHome, 'Vault');
     mkdirSync(vault);
     for (let i = 0; i < 50; i++) writeFileSync(join(vault, `note-${i}.md`), `# Note ${i}\n\nPlot ${i} gets beans.`);
@@ -103,15 +121,32 @@ describe('one bad file', () => {
     setConfigValue(home, 'liveFolders', vault);
 
     const first = await liveOnce();
-    expect(first.code).toBe(1);
-    expect(first.out).toContain(`failed: ${join(vault, 'Meeting 2023-14-02.md')}: Invalid time value`);
-    expect(withStore((s) => s.allEntries())).toHaveLength(50);
-
-    renameSync(join(vault, 'Meeting 2023-14-02.md'), join(vault, 'Meeting 2023-02-14.md'));
-    const renamed = await liveOnce();
-    expect(renamed.code).toBe(0);
+    expect(first.code).toBe(0);
+    expect(first.out).not.toContain('failed');
     expect(withStore((s) => s.search('shed rota'))).toHaveLength(1);
     expect(withStore((s) => s.allEntries())).toHaveLength(51);
+  });
+
+  it('in a Codex session, a line with a bad time is saved and named; the file never fails', () => {
+    const sessions = join(userHome, '.codex', 'sessions');
+    mkdirSync(sessions, { recursive: true });
+    const text =
+      json({ type: 'session_meta', timestamp: '2026-11-20T10:00:00Z', payload: { id: 'cx-1' } }) +
+      json({ type: 'response_item', timestamp: '2026-11-20T10:01:00Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Mulch the beds?' }] } }) +
+      json({ type: 'response_item', timestamp: 1.7e18, payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Yes, in October.' }] } });
+    writeFileSync(join(sessions, 'cx.jsonl'), text);
+    const store = openHome(home);
+    try {
+      const warnings: string[] = [];
+      const live = new LiveCapture(store, [{ kind: 'tree', path: sessions }], { statusFile: join(home, 'live.json'), onWarning: (l) => warnings.push(l) });
+      expect(live.scan().errors).toEqual([]);
+      expect(warnings).toEqual(['cx.jsonl:3: 1700000000000000000 is not a time; kept the entry with no time']);
+      expect(store.search('October')).toHaveLength(1);
+      expect(store.allEntries()).toHaveLength(2);
+      expect(new FileTable(store.db).get(join(sessions, 'cx.jsonl'))).toMatchObject({ attempts: 0, lastError: null });
+    } finally {
+      store.db.close();
+    }
   });
 });
 
@@ -129,14 +164,16 @@ describe('the per-file record', () => {
   afterEach(() => store.db.close());
 
   it('tries a failed file again after 1 min, 5 min, 30 min, then hourly, and at once when it changes', () => {
-    const bad = join(projects, 'zz-bad.jsonl');
-    writeFileSync(bad, BAD);
+    const bad = join(projects, 'zz-locked.jsonl');
+    writeFileSync(bad, goodSession(9));
+    chmodSync(bad, 0o200); // unreadable, still writable
     const live = capture();
     const at = (ms: number) => (clock = new Date(Date.parse('2026-11-25T12:00:00.000Z') + ms));
     const min = 60_000;
+    const denied = expect.stringMatching(/^EACCES/);
 
     live.scan();
-    expect(row(bad)).toMatchObject({ attempts: 1, nextTryAt: '2026-11-25T12:01:00.000Z', lastError: 'Invalid time value' });
+    expect(row(bad)).toMatchObject({ attempts: 1, nextTryAt: '2026-11-25T12:01:00.000Z', lastError: denied });
     at(30_000);
     live.scan();
     expect(row(bad)!.attempts).toBe(1); // not due yet
@@ -155,11 +192,12 @@ describe('the per-file record', () => {
 
     // Changed, though not due: read at once.
     at(100 * min);
-    appendFileSync(bad, BAD);
-    expect(live.scan().errors).toEqual([{ path: bad, error: 'Invalid time value' }]);
+    appendFileSync(bad, goodSession(9, 1, 4));
+    expect(live.scan().errors).toEqual([{ path: bad, error: denied }]);
     expect(row(bad)!.attempts).toBe(6);
 
-    writeFileSync(bad, goodSession(9));
+    chmodSync(bad, 0o644);
+    appendFileSync(bad, goodSession(9, 1, 5));
     const status = live.scan();
     expect(status.errors).toEqual([]);
     expect(row(bad)).toMatchObject({ attempts: 0, nextTryAt: null, lastError: null });
@@ -186,8 +224,9 @@ describe('the per-file record', () => {
   });
 
   it('forgets a file that is gone, and its error with it', () => {
-    const bad = join(projects, 'zz-bad.jsonl');
-    writeFileSync(bad, BAD);
+    const bad = join(projects, 'zz-locked.jsonl');
+    writeFileSync(bad, goodSession(9));
+    chmodSync(bad, 0o000);
     const live = capture();
     expect(live.scan().errors).toHaveLength(1);
     rmSync(bad);
@@ -229,6 +268,29 @@ describe('the per-file record', () => {
     expect(row(file)!.sha256).toMatch(/^[0-9a-f]{64}$/); // read whole again
   });
 
+  it('names a bad line in a growing session, reading it whole once so the line number is right', () => {
+    const warnings: string[] = [];
+    const live = new LiveCapture(store, [{ kind: 'tree', path: join(userHome, '.claude', 'projects') }], {
+      statusFile: statusFile(),
+      now: () => clock,
+      onWarning: (l) => warnings.push(l),
+    });
+    const file = join(projects, 'sess-6.jsonl');
+    writeFileSync(file, goodSession(6, 10));
+    live.scan();
+    appendFileSync(file, json({ type: 'user', sessionId: 'sess-6', uuid: 'u-6-10', timestamp: 1.7e18, message: { role: 'user', content: 'A late line.' } }));
+    live.scan();
+    expect(warnings).toEqual(['-Users-me-proj/sess-6.jsonl:11: 1700000000000000000 is not a time; kept the entry with no time']);
+    expect(row(file)!.sha256).toMatch(/^[0-9a-f]{64}$/); // read whole
+    expect(store.allEntries()).toHaveLength(11);
+
+    appendFileSync(file, goodSession(6, 1, 11));
+    live.scan();
+    expect(warnings).toHaveLength(1); // a clean tail: read from the offset, and nothing named again
+    expect(row(file)!.sha256).toBeNull();
+    expect(store.allEntries()).toHaveLength(12);
+  });
+
   it('saves from a session exactly what the importer saves from it', () => {
     const file = join(projects, 'sess-5.jsonl');
     const summary = json({ type: 'summary', summary: 'Shed planning' });
@@ -245,6 +307,10 @@ describe('the per-file record', () => {
         .map((e) => ({ id: e.externalId, seq: e.seq, body: e.body, thread: e.threadTitle, at: e.createdAt, speaker: e.speaker }));
     expect(shape(store)).toEqual(shape(byImporter));
     expect(store.sources().map((x) => [x.kind, x.label, x.location])).toEqual(byImporter.sources().map((x) => [x.kind, x.label, x.location]));
+    // And each version names the file it came from, as the importer's do.
+    const origins = (st: Store) => st.allEntries().flatMap((e) => st.history(e.id).map((v) => v.origin));
+    expect(origins(store)).toEqual(origins(byImporter));
+    expect(origins(store)[0]).toEqual({ path: file, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
   });
 
   it('keeps no place in a session whose source is left out, so it is read whole once back in', () => {

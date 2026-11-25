@@ -113,6 +113,13 @@ describe('a growing session', () => {
     expect(tail(text.replace('Message 199 ', 'Message 991 ') + session(1, 200), state!)).toEqual({ kind: 'whole', why: 'rewritten' });
   });
 
+  it('is read whole when a tail line is skipped or kept without its time, so the warning names the right line', () => {
+    const text = session(4);
+    const { state } = whole(text);
+    const untimed = line('user', 4, 'When was this?').replace('"2026-11-20T10:00:04.000Z"', '1700000000000000000');
+    expect(tail(text + untimed, state!)).toEqual({ kind: 'whole', why: 'warning' });
+  });
+
   it('is read whole when a tail line has no id of its own', () => {
     const text = session(4);
     const { state } = whole(text);

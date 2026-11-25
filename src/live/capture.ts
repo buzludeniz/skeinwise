@@ -8,6 +8,7 @@ import { basename, extname, join, relative, resolve } from 'node:path';
 import { openSafe, readRange, readSafe, UnsafeFileError } from '../fsafe.ts';
 import { parseClaudeCodeSession } from '../importers/chats.ts';
 import { readFilesUnder, readImports, sniffSession } from '../importers/detect.ts';
+import { FileReport } from '../importers/util.ts';
 import type { ImportBatch, ImportResult, Store } from '../store/store.ts';
 import { type FileExtra, type FileRow, FileTable } from './files.ts';
 import { type ReadAt, readTail, stateAfterWholeRead } from './session.ts';
@@ -389,11 +390,15 @@ export class LiveCapture {
     }
     const warnings: string[] = [];
     const batches = readFilesUnder(target.path, [relative(target.path, file)], { owner: target.owner, onWarning: (m) => warnings.push(m) });
-    if (warnings.length) {
-      // The importer skips a file it can't or mustn't read, with a warning. Which was it?
+    const entries = batches.reduce((n, b) => n + (b.entries?.length ?? 0) + b.threads.reduce((m, t) => m + t.entries.length, 0), 0);
+    if (warnings.length && !entries) {
+      // Nothing came of it, with a warning: the importer skipped the file because it couldn't or mustn't read it, or it
+      // failed as a whole. Which was it?
       readSafe(file, { root: target.path }); // throws the refusal or the read error
       throw new Error(warnings[0]); // readable now: a passing failure, tried again soon
     }
+    // Entries it skipped or kept without their time: the rest is saved, and the warnings name them.
+    for (const w of warnings) this.warn(w);
     return { batches, ...NOTHING };
   }
 
@@ -419,10 +424,14 @@ export class LiveCapture {
       const bytes = read(0, stat.size);
       const text = bytes.toString('utf8');
       if (sniffSession(text) !== 'claude-code') return null;
-      const thread = parseClaudeCodeSession(text, id);
+      // Named as the importer names them: relative to the watched folder.
+      const report = new FileReport(relative(target.path, file), this.warn);
+      const thread = parseClaudeCodeSession(text, id, report);
+      report.done();
       const { offset = 0, ...extra } = stateAfterWholeRead(bytes, thread) ?? {};
       const sha256 = createHash('sha256').update(bytes).digest('hex');
-      return { batches: [{ source, threads: [thread] }], offset, extra, sha256 };
+      // A whole read names its file, as the importer does. A tail read can't: the file's hash would mean reading it all.
+      return { batches: [{ source, threads: [{ ...thread, origin: { path: file, sha256 } }] }], offset, extra, sha256 };
     } finally {
       closeSync(fd);
     }
@@ -476,8 +485,9 @@ export class LiveCapture {
         };
         // One thread at a time, so "caught up N chats" counts only the chats that gained or changed entries (a
         // re-downloaded export holds hundreds that didn't).
-        for (const thread of batch.threads) if (count(this.store.ingest({ source: batch.source, threads: [thread] }))) c.threads += 1;
-        if (batch.entries?.length) count(this.store.ingest({ source: batch.source, threads: [], entries: batch.entries }));
+        // The batch is spread so its origin and account go with each thread.
+        for (const thread of batch.threads) if (count(this.store.ingest({ ...batch, threads: [thread], entries: [] }))) c.threads += 1;
+        if (batch.entries?.length) count(this.store.ingest({ ...batch, threads: [] }));
       }
       // The version is the one stat'ed before the read: a file that changed meanwhile is read again next time.
       this.files.ok(file, target.path, { size: st.size, mtimeMs: st.mtimeMs, sha256: read.sha256, offset: read.offset, extra: read.extra, saved }, now.toISOString());

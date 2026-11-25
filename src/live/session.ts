@@ -5,7 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import { parseClaudeCodeSession } from '../importers/chats.ts';
-import { firstLine, parseJsonl } from '../importers/util.ts';
+import { FileReport, firstLine, parseJsonl } from '../importers/util.ts';
 import { type EntryInput, normalizeText, type ThreadInput } from '../store/store.ts';
 
 /** Bytes fingerprinted at the start of the file and before the read offset. */
@@ -37,7 +37,7 @@ export interface SessionState {
 
 export type TailRead =
   | { kind: 'same' }
-  | { kind: 'whole'; why: 'shrunk' | 'rewritten' | 'torn' | 'summary' | 'fallback id' | 'session id' | 'title' }
+  | { kind: 'whole'; why: 'shrunk' | 'rewritten' | 'torn' | 'summary' | 'fallback id' | 'session id' | 'title' | 'warning' }
   | { kind: 'tail'; thread: ThreadInput; state: SessionState };
 
 const sha = (buf: Buffer) => createHash('sha256').update(buf).digest('hex');
@@ -89,7 +89,10 @@ export function readTail(read: ReadAt, size: number, state: SessionState, fallba
   const { session } = state;
   if (!session.summaryTitle && parseJsonl(text).some((l) => l.type === 'summary')) return { kind: 'whole', why: 'summary' };
 
-  const parsed = parseClaudeCodeSession(text, fallbackId);
+  const report = new FileReport(`${fallbackId}.jsonl`);
+  const parsed = parseClaudeCodeSession(text, fallbackId, report);
+  // A line skipped or kept without its time is named by its line number, which only a whole read knows.
+  if (report.skipped + report.untimed > 0) return { kind: 'whole', why: 'warning' };
   // Ids made from a line's place in the file differ when counted from the offset.
   const placeId = new RegExp(`^${fallbackId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\d+$`);
   if (parsed.entries.some((e) => placeId.test(e.externalId))) return { kind: 'whole', why: 'fallback id' };
