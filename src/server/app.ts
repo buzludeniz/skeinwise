@@ -2,7 +2,7 @@
 // in the X-Skeinwise-Token header; requests must name this server's own host, so pages from other sites can't reach it.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { gzipSync } from 'node:zlib';
@@ -282,10 +282,12 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       const { batch, owner } = await req.json();
       if (typeof batch !== 'string' || !/^[a-z0-9]{8,40}$/.test(batch)) throw new HttpError(400, 'Bad batch id');
       const dir = join(uploads, batch);
-      if (!existsSync(dir)) throw new HttpError(404, 'Nothing was uploaded');
-      const entries = statSync(dir).isDirectory() ? dir : null;
-      if (!entries) throw new HttpError(400, 'Bad batch');
-      return importPath(store, dir, owner);
+      if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new HttpError(404, 'Nothing was uploaded');
+      // Each zip and each folder at the top is imported on its own, so a folder keeps its name as the source's.
+      // The page puts loose files in a folder of their own.
+      return readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isDirectory() || (e.isFile() && e.name.toLowerCase().endsWith('.zip')))
+        .flatMap((e) => importPath(store, join(dir, e.name), owner));
     }],
     ['GET', /^\/api\/agents$/, () => findAgents(ctx.scanRoot)],
 
@@ -438,9 +440,4 @@ function importPath(store: Store, path: string, owner: unknown): { source: strin
     const r = store.ingest(batch);
     return { source: batch.source.label, kind: batch.source.kind, added: r.added, versioned: r.versioned, unchanged: r.unchanged, threads: r.threads };
   });
-}
-
-/** Removes an upload batch's copies once imported. Exported for tests. */
-export function clearUploads(home: string): void {
-  rmSync(join(home, 'imports'), { recursive: true, force: true });
 }

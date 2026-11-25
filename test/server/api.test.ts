@@ -207,6 +207,27 @@ describe('writing', () => {
     expect((await api(`sources/${chatgpt.id}`, { body: { status: 'gone' } })).status).toBe(400);
   });
 
+  it('takes uploaded files and imports each top folder as its own source', async () => {
+    const put = (batch: string, path: string, text: string) =>
+      fetch(`http://127.0.0.1:${app.port}/api/upload?batch=${batch}&path=${encodeURIComponent(path)}`, {
+        method: 'POST',
+        headers: { 'X-Skeinwise-Token': app.token, 'Content-Type': 'application/octet-stream' },
+        body: text,
+      });
+    expect((await put('upload01', 'Garden notes/beans.md', '# Beans\n\nSow after the frost.')).status).toBe(200);
+    expect((await put('upload01', 'Garden notes/peas.md', '# Peas\n\nNet them early.')).status).toBe(200);
+    expect((await put('upload01', '../../escape.md', 'x')).status).toBe(200);
+    expect(existsSync(join(home, 'imports', 'upload01', 'escape.md'))).toBe(true);
+    expect(existsSync(join(home, 'escape.md'))).toBe(false);
+    expect((await put('Bad!', 'a.md', 'x')).status).toBe(400);
+    expect((await put('upload01', '', 'x')).status).toBe(400);
+
+    const done = await api('upload/finish', { body: { batch: 'upload01', owner: 'you' } });
+    expect(done.status).toBe(200);
+    expect(done.body).toEqual([{ source: 'Garden notes', kind: 'notes', added: 2, versioned: 0, unchanged: 0, threads: 0 }]);
+    expect((await api('upload/finish', { body: { batch: 'nothing00' } })).status).toBe(404);
+  });
+
   it('writes a backup zip', async () => {
     const b = (await api('backup', { body: {} })).body;
     expect(existsSync(b.file)).toBe(true);
