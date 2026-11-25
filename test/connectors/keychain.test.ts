@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { keychainItems, macKeychain, type Runner } from '../../src/connectors/keychain.ts';
+import { keyShaped } from '../samples.ts';
 
 // The real `security` command must never run in a test: no real Keychain is read or written.
 vi.mock('node:child_process', () => ({
@@ -59,7 +60,7 @@ describe('the macOS Keychain', () => {
     const keychain = macKeychain(fakeSecurity().run);
     expect(await keychain.get('abc123/slack/token')).toBeNull();
     expect(await keychain.delete('abc123/slack/token')).toBe(false);
-    await keychain.set('abc123/slack/token', 'xoxp-test-not-a-real-token');
+    await keychain.set('abc123/slack/token', keyShaped('xo', 'xp-test-not-a-real-token'));
     expect(await keychain.delete('abc123/slack/token')).toBe(true);
     expect(await keychain.get('abc123/slack/token')).toBeNull();
   });

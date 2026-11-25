@@ -7,3 +7,13 @@ playwright-report/
 *.gguf
 .DS_Store
 e2e/.run/
+
+# Never committed: audit material, secrets, model weights, and the demo capture's home, token and uploads.
+.audit/
+.env*
+*.pem
+*.key
+*.safetensors
+models/
+.demo-home/
+.demo-upload/

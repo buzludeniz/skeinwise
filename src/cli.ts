@@ -14,6 +14,7 @@ import { readImports } from './importers/detect.ts';
 import { readStatus } from './live/capture.ts';
 import { describeStatus, startLive } from './live/run.ts';
 import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP } from './mcp/commands.ts';
+import { safeIo, safeJson } from './safe-text.ts';
 import { serveFromArgs } from './server/serve.ts';
 import type { Store } from './store/store.ts';
 import { SYNC_COMMANDS, SYNC_FLAGS, SYNC_HELP } from './sync/commands.ts';
@@ -192,7 +193,7 @@ async function run(argv: string[], io: Io): Promise<number> {
       ...MCP_FLAGS,
     },
   });
-  const json = (v: unknown) => io.out(`${JSON.stringify(v, null, 2)}\n`);
+  const json = (v: unknown) => io.out(`${safeJson(v, 2)}\n`);
 
   switch (command) {
     case 'help':
@@ -421,11 +422,14 @@ async function run(argv: string[], io: Io): Promise<number> {
 
 /** Runs one command. Returns the exit code; never throws. */
 export async function main(argv: string[], io: Io = defaultIo): Promise<number> {
+  // Everything a command prints goes through these two printers, so imported text can't send the terminal escape
+  // sequences or bidi overrides (LS-07).
+  const safe = safeIo(io);
   try {
-    return await run(argv, io);
+    return await run(argv, safe);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    io.err(`skeinwise: ${message}\n`);
+    safe.err(`skeinwise: ${message}\n`);
     return error instanceof UsageError ? 2 : 1;
   }
 }
