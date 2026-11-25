@@ -198,9 +198,13 @@ function samplers(options: ModelOptions): ModelOptions {
   return out;
 }
 
-/** A usage number the server reported: never below zero, and null when it is missing or not a number. */
+/**
+ * A usage number the server reported, or null when it is missing, not a number, or not above zero. A request always
+ * sends something and an answer always says something, so a server reporting 0 or less is wrong (or hiding what it
+ * spent), and the caller counts its own estimate instead (E2, Deniz, Nov 25).
+ */
 function reported(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.ceil(value)) : null;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.ceil(value) : null;
 }
 
 interface Target {
