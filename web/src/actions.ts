@@ -6,6 +6,7 @@ import type { ColourGrouping } from './groups.ts';
 import type { Layout } from './layout.ts';
 import { getState, type NavSection, type Organiser, type Panel, setState, type Target, type Toast } from './store.ts';
 import { engineLabel } from '../../src/format.ts';
+import { modelName } from './format.ts';
 import { plural } from './format.ts';
 import type { BrainData, Config, OrganiseJob, Run, Status } from './types.ts';
 
@@ -235,7 +236,7 @@ export interface OrganiseRequest {
 
 /** "No-AI", "local model qwen3-4b", "by you". */
 export function engineName(engine: string, model: string | null): string {
-  return engineLabel(engine, model);
+  return engineLabel(engine, model && modelName(model));
 }
 
 /** Takes back runs newest first, so no run is undone before the ones built on it. */

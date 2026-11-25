@@ -5,7 +5,7 @@ import { useMemo, useState } from 'preact/hooks';
 import { Check, FolderTree, GitCompareArrows, ListChecks, Merge, Network, RotateCcw, SkipForward, Sparkles, Workflow } from 'lucide-preact';
 import { changed, engineName, loadRecord, message, openEntry, openNav, openPanel, organise, toast, undoRun } from '../actions.ts';
 import { api } from '../api.ts';
-import { fmtDate, fmtNum, plural } from '../format.ts';
+import { fmtDate, fmtNum, plural, runMade } from '../format.ts';
 import { folderCounts } from '../nav.ts';
 import { useApp } from '../store.ts';
 import type { EntryDetail, Folder, ReviewItem, Run } from '../types.ts';
@@ -179,48 +179,27 @@ export function RunsList() {
     );
   return (
     <div class="runs-wrap">
-    <OrganiseButton />
-    <table class="runs">
-      <thead>
-        <tr>
-          <th scope="col">Task</th>
-          <th scope="col">Engine</th>
-          <th scope="col">When</th>
-          <th scope="col">Made</th>
-          <th scope="col">
-            <span class="sr-only">Undo</span>
-          </th>
-        </tr>
-      </thead>
-      <tbody>
+      <OrganiseButton />
+      <ol class="run-list">
         {runs.map((r) => (
-          <tr key={r.id} class={r.status === 'undone' ? 'undone' : ''}>
-            <td>
-              {TASKS[r.task]}
+          <li key={r.id} class={`card run${r.status === 'undone' ? ' undone' : ''}`}>
+            <p class="run-head">
+              <strong>{TASKS[r.task]}</strong>
               {r.status !== 'done' && <span class="tag">{r.status}</span>}
-            </td>
-            <td>{engineName(r.engine, r.model)}</td>
-            <td>
-              {fmtDate(r.startedAt)} <span class="soft">{r.startedAt.slice(11, 16)}</span>
-            </td>
-            <td>
-              {r.task === 'correction' && r.message
-                ? r.message
-                : Object.entries(r.counts)
-                    .map(([k, v]) => `${fmtNum(v)} ${k}`)
-                    .join(', ') || '—'}
-            </td>
-            <td>
-              {r.status === 'done' && r.task !== 'ask' && (
-                <Button icon={RotateCcw} small kind="quiet" onClick={() => void undoRun(r).catch((error: unknown) => toast(message(error), { tone: 'error' }))}>
-                  Undo run
-                </Button>
-              )}
-            </td>
-          </tr>
+              <span class="soft small">
+                {engineName(r.engine, r.model)} · {fmtDate(r.startedAt)} {r.startedAt.slice(11, 16)}
+              </span>
+            </p>
+            {r.task === 'correction' ? <p>{r.message ?? '—'}</p> : <p>{runMade(r.counts)}</p>}
+            {r.task !== 'correction' && r.message && <p class="soft small">{r.message}</p>}
+            {r.status === 'done' && r.task !== 'ask' && (
+              <Button icon={RotateCcw} small kind="quiet" onClick={() => void undoRun(r).catch((error: unknown) => toast(message(error), { tone: 'error' }))}>
+                Undo run
+              </Button>
+            )}
+          </li>
         ))}
-      </tbody>
-    </table>
+      </ol>
     </div>
   );
 }

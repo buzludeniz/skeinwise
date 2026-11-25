@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BrainData, BrainPoint } from '../../src/server/queries.ts';
-import { ago, fmtBytes, fmtDate, fmtMonth, fmtNum, fmtRange, plural } from '../../web/src/format.ts';
+import { ago, fmtBytes, fmtDate, fmtMonth, fmtNum, fmtRange, modelName, plural, runMade } from '../../web/src/format.ts';
 import { groupPoints, layoutPoints, linkDegree, linkPairs, threadPairs } from '../../web/src/groups.ts';
 
 const t = (iso: string) => Date.parse(iso);
@@ -83,6 +83,20 @@ describe('format', () => {
     expect(fmtRange('2024-01-18T00:00:00Z', '2026-09-11T20:56:58Z')).toBe('Jan 2024 – Sep 2026');
     expect(fmtRange('2024-01-18T01:00:00Z', '2024-01-18T05:00:00Z')).toBe('18 Jan 2024');
     expect(fmtRange(null, null)).toBe('');
+  });
+
+  it('names a model without its folders or .gguf ending', () => {
+    expect(modelName('models/Qwen3-4B-Q4_K_M.gguf')).toBe('Qwen3-4B-Q4_K_M');
+    expect(modelName('C:\\models\\small.GGUF')).toBe('small');
+    expect(modelName('qwen3:4b')).toBe('qwen3:4b');
+  });
+
+  it('sums what a run made, leaving out zeros', () => {
+    expect(runMade({ hubs: 8, updated: 0, entries: 1422, skipped: 2 })).toBe('8 hubs, 1,422 entries, 2 skipped');
+    expect(runMade({ tagged: 3, coverage: 40, byModel: 2 })).toBe('3 tagged, 40% covered, 2 by the model');
+    expect(runMade({ someThing: 1 })).toBe('1 some thing');
+    expect(runMade({ cross: 324, note: 1, tags: 1 })).toBe('324 cross links, 1 note link, 1 tag');
+    expect(runMade({ cross: 0 })).toBe('Nothing new');
   });
 
   it('writes numbers, plurals and sizes', () => {

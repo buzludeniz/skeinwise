@@ -39,6 +39,42 @@ export function fmtNum(n: number): string {
     .replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
+/** A model as people name it: a file path or address loses its folders and its .gguf ending. */
+export function modelName(model: string): string {
+  return model.split(/[\\/]/).pop()!.replace(/\.gguf$/i, '') || model;
+}
+
+/** The run counts that name things, in the singular. The rest (tagged, flagged, skipped…) read as they are. */
+const COUNTED: Record<string, [string, string]> = {
+  entries: ['entry', 'entries'],
+  hubs: ['hub', 'hubs'],
+  folders: ['folder', 'folders'],
+  tags: ['tag', 'tags'],
+  notes: ['note', 'notes'],
+  reasons: ['reason', 'reasons'],
+  ideas: ['idea', 'ideas'],
+  hits: ['hit', 'hits'],
+  cites: ['citation', 'citations'],
+  cross: ['cross link', 'cross links'],
+  note: ['note link', 'note links'],
+};
+
+/**
+ * What a run made, from its counts: "8 hubs, 422 entries, 2 skipped". Zero counts are left out; coverage is a share
+ * and byModel counts the entries a model wrote for.
+ */
+export function runMade(counts: Record<string, number>): string {
+  const parts = Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .map(([key, n]) => {
+      if (key === 'coverage') return `${n}% covered`;
+      if (key === 'byModel') return `${fmtNum(n)} by the model`;
+      const noun = COUNTED[key];
+      return noun ? plural(n, noun[0], noun[1]) : `${fmtNum(n)} ${key.replace(/[A-Z]/g, (c) => ` ${c.toLowerCase()}`)}`;
+    });
+  return parts.join(', ') || 'Nothing new';
+}
+
 /** 0.4567 → "46%". */
 export function fmtShare(x: number): string {
   return `${Math.round(x * 100)}%`;
