@@ -1,15 +1,16 @@
 // Live capture: watches agent histories, chosen note folders and Downloads, and imports what changes within seconds,
 // through the same importers as a manual import (so dedupe and versions behave the same).
 
+import { createHash } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, openSync, readdirSync, readFileSync, renameSync, statSync, watch, writeSync, type FSWatcher } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, extname, join, relative, resolve } from 'node:path';
-import { readSafe, UnsafeFileError } from '../fsafe.ts';
+import { openSafe, readRange, readSafe, UnsafeFileError } from '../fsafe.ts';
 import { parseClaudeCodeSession } from '../importers/chats.ts';
 import { readFilesUnder, readImports, sniffSession } from '../importers/detect.ts';
 import type { ImportBatch, ImportResult, Store } from '../store/store.ts';
 import { type FileExtra, type FileRow, FileTable } from './files.ts';
-import { stateAfterWholeRead } from './session.ts';
+import { type ReadAt, readTail, stateAfterWholeRead } from './session.ts';
 
 /**
  * A place to watch. `tree`: a folder imported as a whole (agent histories, a notes folder or vault); a changed file is
@@ -371,7 +372,7 @@ export class LiveCapture {
    * Reads one file through the safe reader (LS-01). A file it refuses is skipped with a warning; any other error is the
    * file's failure, kept and tried again on the schedule (H2).
    */
-  private readFile(target: Target, file: string): FileRead {
+  private readFile(target: Target, file: string, row: FileRow | undefined): FileRead {
     if (target.kind === 'downloads') {
       let batches: ImportBatch[] = [];
       try {
@@ -383,7 +384,7 @@ export class LiveCapture {
       return { batches, ...NOTHING };
     }
     if (extname(file).toLowerCase() === '.jsonl') {
-      const read = this.readSession(target, file);
+      const read = this.readSession(target, file, row);
       if (read) return read;
     }
     const warnings: string[] = [];
@@ -397,16 +398,34 @@ export class LiveCapture {
   }
 
   /**
-   * A Claude Code session, read whole as the importer reads it, with the state a later read can start from; or null for
-   * any other JSONL (Codex), which the importer reads.
+   * A Claude Code session: from where the last read stopped when the file only grew (L6), else whole, as the importer
+   * reads it. Null for any other JSONL (Codex), which the importer reads.
    */
-  private readSession(target: Target, file: string): FileRead | null {
-    const { bytes, sha256 } = readSafe(file, { root: target.path });
-    const text = bytes.toString('utf8');
-    if (sniffSession(text) !== 'claude-code') return null;
-    const thread = parseClaudeCodeSession(text, basename(file).replace(/\.jsonl$/i, ''));
-    const { offset = 0, ...extra } = stateAfterWholeRead(bytes, thread) ?? {};
-    return { batches: [{ source: { kind: 'claude-code', label: 'Claude Code', location: resolve(target.path) }, threads: [thread] }], offset, extra, sha256 };
+  private readSession(target: Target, file: string, row: FileRow | undefined): FileRead | null {
+    const { fd, stat } = openSafe(file, { root: target.path });
+    try {
+      const read: ReadAt = (start, length) => readRange(fd, length, start);
+      const id = basename(file).replace(/\.jsonl$/i, '');
+      const source = { kind: 'claude-code', label: 'Claude Code', location: resolve(target.path) };
+      const { head, tail, session } = row?.extra ?? {};
+      if (row && head && tail && session && row.offset > 0) {
+        const t = readTail(read, stat.size, { offset: row.offset, head, tail, session }, id);
+        if (t.kind === 'same') return { batches: [], offset: row.offset, extra: row.extra, sha256: row.sha256 };
+        if (t.kind === 'tail') {
+          const { offset, ...extra } = t.state;
+          return { batches: [{ source, threads: [t.thread] }], offset, extra, sha256: null };
+        }
+      }
+      const bytes = read(0, stat.size);
+      const text = bytes.toString('utf8');
+      if (sniffSession(text) !== 'claude-code') return null;
+      const thread = parseClaudeCodeSession(text, id);
+      const { offset = 0, ...extra } = stateAfterWholeRead(bytes, thread) ?? {};
+      const sha256 = createHash('sha256').update(bytes).digest('hex');
+      return { batches: [{ source, threads: [thread] }], offset, extra, sha256 };
+    } finally {
+      closeSync(fd);
+    }
   }
 
   /**
@@ -422,10 +441,11 @@ export class LiveCapture {
       this.files.remove(file); // deleted: the record keeps what it had, and the file's error goes
       return;
     }
-    if (!force && !due(this.files.get(file), st, now.getTime())) return;
+    const row = this.files.get(file);
+    if (!force && !due(row, st, now.getTime())) return;
     let read: FileRead;
     try {
-      read = this.readFile(target, file);
+      read = this.readFile(target, file, row);
     } catch (error) {
       if (!(error instanceof UnsafeFileError)) {
         if (isBusy(error)) throw error;

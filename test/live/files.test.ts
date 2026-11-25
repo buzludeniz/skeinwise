@@ -211,9 +211,12 @@ describe('the per-file record', () => {
     live.scan();
     expect(row(file)).toMatchObject({ offset: statSync(file).size, extra: { session: { thread: 'sess-7', entries: 10 } } });
 
+    expect(row(file)!.sha256).toMatch(/^[0-9a-f]{64}$/); // read whole
+
     appendFileSync(file, goodSession(7, 2, 10));
     live.scan();
-    expect(row(file)).toMatchObject({ offset: statSync(file).size, extra: { session: { entries: 12 } } });
+    // Read from the offset: no whole-file hash (see the byte count in session.test.ts).
+    expect(row(file)).toMatchObject({ offset: statSync(file).size, sha256: null, extra: { session: { entries: 12 } } });
     const entries = store.allEntries().sort((a, b) => a.seq - b.seq);
     expect(entries.map((e) => e.seq)).toEqual([...Array(12).keys()]);
     expect(new Set(entries.map((e) => e.threadTitle))).toEqual(new Set(['important work, session 7, line 0']));
@@ -223,6 +226,7 @@ describe('the per-file record', () => {
     live.scan();
     expect(store.allEntries()).toHaveLength(13);
     expect(row(file)!.extra.session!.entries).toBe(13);
+    expect(row(file)!.sha256).toMatch(/^[0-9a-f]{64}$/); // read whole again
   });
 
   it('saves from a session exactly what the importer saves from it', () => {
