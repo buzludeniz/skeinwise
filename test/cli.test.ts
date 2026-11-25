@@ -84,7 +84,11 @@ describe('the skeinwise command', () => {
     expect(show.out).toMatch(/rye loaf/);
     expect((await cli('history', String(hits[0]!.id))).out).toMatch(/^v1 .* by import/);
 
-    expect((await cli('stats')).out).toContain('Woven from 2 entries');
+    const stats = (await cli('stats')).out;
+    expect(stats).toContain('Woven from 2 entries');
+    // Plan 7.3: the busiest months are plain text, with no bar glyphs.
+    expect(stats).toMatch(/Busiest months:\n {2}\d{4}-\d{2} {2}2 entries\n/);
+    expect(stats).not.toMatch(/[\u2580-\u259F\u2500-\u257F]/);
     expect((await cli('sources')).out).toMatch(/1 {2}in {4}vault \(notes\): 2 entries/);
     expect(JSON.parse((await cli('exclude', '1', '--json')).out)).toEqual({ source: 1, status: 'out' });
     expect((await cli('search', 'rye')).out).toContain('Nothing found');

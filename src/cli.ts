@@ -349,8 +349,8 @@ async function run(argv: string[], io: Io): Promise<number> {
         const busiest = [...s.byMonth].sort((a, b) => b.entries - a.entries).slice(0, 5);
         if (busiest.length) {
           io.out('\nBusiest months:\n');
-          const max = busiest[0]!.entries;
-          for (const m of busiest) io.out(`  ${m.month}  ${'█'.repeat(Math.max(1, Math.round((m.entries / max) * 24)))} ${m.entries}\n`);
+          // Plain text, no bar glyphs: it reads the same with NO_COLOR, in a pipe and to a screen reader (plan 7.3).
+          for (const m of busiest) io.out(`  ${m.month}  ${m.entries} ${m.entries === 1 ? 'entry' : 'entries'}\n`);
         }
         return 0;
       });
