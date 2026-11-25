@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'preact/hooks';
 import { Check, CircleDashed, LoaderCircle, TriangleAlert } from 'lucide-preact';
-import { loadRecord, message, saveConfig, toast } from '../actions.ts';
+import { loadRecord, message, organise, saveConfig, toast } from '../actions.ts';
 import { api } from '../api.ts';
 import { growOnNextLoad } from '../brain/useBrain.ts';
 import { fmtNum, fmtRange, plural } from '../format.ts';
@@ -268,6 +268,7 @@ function Grow({ owners }: { owners: Record<string, string> }) {
   const brain = useApp((s) => s.brain);
   const hubs = useApp((s) => s.organiser.hubs.length);
   const organiserReady = useApp((s) => s.organiser.ready);
+  const job = useApp((s) => s.job);
   const [phase, setPhase] = useState<'importing' | 'done'>('importing');
   const [note, setNote] = useState('');
   const box = useFocusTrap(phase === 'done');
@@ -292,6 +293,11 @@ function Grow({ owners }: { owners: Record<string, string> }) {
       await loadRecord();
       if (!live) return;
       setNote(todo.length ? importSummary(results) : 'Your record, point by point, oldest first.');
+      // The first organising pass, with the engine set in Settings. A model run can take a while: it carries on after
+      // Done, and its progress shows wherever runs are shown.
+      const s = getState();
+      const organised = s.organiser.runs.some((r) => r.task !== 'correction' && r.task !== 'ask');
+      if (s.brain?.points.length && !organised) void organise({ task: 'all', scope: 'all' }).catch((error: unknown) => toast(message(error), { tone: 'error' }));
       setTimeout(() => live && setPhase('done'), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 3800);
     })();
     return () => {
@@ -322,7 +328,14 @@ function Grow({ owners }: { owners: Record<string, string> }) {
         </div>
       </div>
       <p class="soft small">{note}</p>
-      {!organiserReady && <p class="soft small">Hubs appear once the organiser has run. It isn’t part of this build yet.</p>}
+      {job && !job.finished ? (
+        <p class="soft small" aria-live="polite">
+          Organising: {job.line ?? 'starting…'}
+        </p>
+      ) : (
+        phase === 'done' &&
+        hubs === 0 && <p class="soft small">Hubs appear once the organiser has run. Start it any time from Navigator’s Runs, or type “organise” in the command bar.</p>
+      )}
       {phase === 'done' && (
         <>
           <ol class="tips">
