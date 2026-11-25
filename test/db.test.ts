@@ -127,6 +127,22 @@ describe('openDb', () => {
     expect(() => db.prepare("INSERT INTO tags (schema_id, name, run_id) VALUES (1, 'rye', 99)").run()).toThrow(/FOREIGN KEY/);
   });
 
+  it('upgrades a migration-3 record with live capture’s per-file table, empty', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec('PRAGMA foreign_keys = ON');
+    for (const m of MIGRATIONS.slice(0, 3)) db.exec(m);
+    db.exec('PRAGMA user_version = 3');
+    migrate(db);
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM live_files').get()).toEqual({ n: 0 });
+    db.prepare("INSERT INTO live_files (path, target) VALUES ('/v/a.md', 'vault')").run();
+    expect(db.prepare('SELECT byte_offset, attempts, extra FROM live_files').get()).toEqual({ byte_offset: 0, attempts: 0, extra: null });
+    expect(() => db.prepare("INSERT INTO live_files (path, target) VALUES ('/v/a.md', 'vault')").run()).toThrow(/UNIQUE/);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'live_files' AND sql IS NOT NULL").all()).toEqual([
+      { name: 'live_files_target' },
+    ]);
+  });
+
   it('refuses a migration that would leave a broken reference, and changes nothing', () => {
     const db = new DatabaseSync(':memory:');
     db.exec(MIGRATIONS[0]!);

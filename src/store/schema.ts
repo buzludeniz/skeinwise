@@ -255,4 +255,24 @@ export const MIGRATIONS: readonly string[] = [
         AND (later.scope = 'all' OR (later.scope = r.scope AND later.scope <> 'new'))
     ));
   `,
+
+  // 4. Live capture's state, one row per file it watches, so one bad file never moves another's cursor. Only
+  // src/live reads and writes it; extra is JSON that live alone interprets (fingerprints, a session's cursor).
+  `
+  CREATE TABLE live_files (
+    path TEXT PRIMARY KEY,
+    target TEXT NOT NULL,
+    size INTEGER,
+    mtime_ms REAL,
+    sha256 TEXT,
+    byte_offset INTEGER NOT NULL DEFAULT 0,
+    last_ok_at TEXT,
+    saved_at TEXT,
+    last_error TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_try_at TEXT,
+    extra TEXT
+  );
+  CREATE INDEX live_files_target ON live_files (target);
+  `,
 ];
