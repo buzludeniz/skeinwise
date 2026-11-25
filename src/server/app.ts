@@ -8,7 +8,7 @@ import { gzipSync } from 'node:zlib';
 import { UsageError } from '../errors.ts';
 import { readImports } from '../importers/detect.ts';
 import { deleteHub, mergeFolders, REVIEW_ACTIONS, type ReviewAction, renameHub, resolveReview } from '../organiser/corrections.ts';
-import type { ModelDeps } from '../organiser/model.ts';
+import { type ModelDeps, readServerKey } from '../organiser/model.ts';
 import { undoRun } from '../organiser/runs.ts';
 import type { Store } from '../store/store.ts';
 import { backup } from './backup.ts';
@@ -148,7 +148,9 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
   const { store, home } = ctx;
   let locked = false;
   const uploads = resolve(home, 'imports');
-  const deps = (): ModelDeps => ({ fetch: ctx.fetch ?? fetch, env: ctx.env ?? process.env });
+  // The record folder goes in too, so asks and the model test send the key of the server `model serve --run` locked for
+  // this record (<home>/models/.key), whatever SKEINWISE_HOME the process happens to hold.
+  const deps = (): ModelDeps => ({ fetch: ctx.fetch ?? fetch, env: ctx.env ?? process.env, home });
   /**
    * A path the page sent, when its real path lies under the scan root (M2). Anything else, missing, unreadable or
    * elsewhere (a symlink out included), gets the same 403, so the answer says nothing about the rest of the computer.
@@ -349,8 +351,21 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       if (!['127.0.0.1', 'localhost', '[::1]', '::1'].includes(host)) {
         return { ok: false, message: 'The local model must be on this computer (127.0.0.1 or localhost)' };
       }
+      const key = readServerKey(deps());
       try {
-        const res = await fetch(`${address}/models`, { signal: AbortSignal.timeout(2500) });
+        const res = await deps().fetch(`${address}/models`, {
+          signal: AbortSignal.timeout(2500),
+          redirect: 'error',
+          headers: key ? { authorization: `Bearer ${key}` } : {},
+        });
+        if (res.status === 401 || res.status === 403) {
+          return {
+            ok: false,
+            message: key
+              ? `The server at ${address} refused this record's key. Restart it with: skeinwise model serve --run`
+              : `The server at ${address} wants a key. Start it with skeinwise model serve --run, which gives it the key Skeinwise sends.`,
+          };
+        }
         if (!res.ok) return { ok: false, message: `The server answered ${res.status}` };
         const data = (await res.json()) as { data?: { id?: string }[] };
         const models = (data.data ?? []).map((m) => m.id).filter(Boolean);

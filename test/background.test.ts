@@ -10,7 +10,7 @@ import { readImports } from '../src/importers/detect.ts';
 import { readStatus, statusLines } from '../src/live/capture.ts';
 import { Background, type BackgroundOptions, parsePmset } from '../src/live/organise.ts';
 import { startLive } from '../src/live/run.ts';
-import type { PollReport } from '../src/connectors/poll.ts';
+import { type PollReport, pollConnectors } from '../src/connectors/poll.ts';
 import { type RunOptions, runSteps, steps } from '../src/organiser/organise.ts';
 import { RecordView } from '../src/organiser/record.ts';
 import { listRuns } from '../src/organiser/runs.ts';
@@ -250,10 +250,26 @@ describe('connectors in live', () => {
     expect(statusLines(readStatus(join(home, 'live.json')))[1]).toBe('up to date · organised 1 new entry');
   });
 
-  it('says when connections.json cannot be read, and keeps going', async () => {
+  it('never reads connections.json unless the caller passes a poll (connectors are off in v1.0)', async () => {
     writeFileSync(join(home, 'connections.json'), '{ not json');
     const lines: string[] = [];
     const live = startLive(store, home, { once: true, userHome: join(dir, 'me'), env: {}, onPulled: (l) => lines.push(...l) });
+    await live.pulled;
+    await live.background?.idle();
+    live.stop();
+    expect(lines).toEqual([]);
+  });
+
+  it('says when connections.json cannot be read, and keeps going', async () => {
+    writeFileSync(join(home, 'connections.json'), '{ not json');
+    const lines: string[] = [];
+    const live = startLive(store, home, {
+      once: true,
+      userHome: join(dir, 'me'),
+      env: {},
+      onPulled: (l) => lines.push(...l),
+      poll: (s, h) => pollConnectors(s, h),
+    });
     await live.pulled;
     await live.background?.idle();
     live.stop();
