@@ -117,7 +117,7 @@ describe('PoC 06: a drive-by export is proposed, never written', () => {
     const { pendingId } = s.ingest(driveBy!, { trusted: false, origin: driveByOrigin });
     expect(s.acceptPending(pendingId!)).toEqual({ added: 1, versioned: 1, unchanged: 0, skipped: 0, threads: 2 });
     expect(s.history(1).map((v) => [v.version, v.origin?.sha256 ?? null])).toEqual([
-      [1, null],
+      [1, genuine.origin!.sha256],
       [2, driveByOrigin.sha256],
     ]);
     expect(s.history(1)[0]!.body).toContain('Postgres');
