@@ -110,15 +110,58 @@ export function firstLine(text: string, max = 80): string {
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
 
+/**
+ * Plain text out of reply HTML: line breaks for <br> and block ends, "- " for list items, other tags dropped, entities
+ * decoded. Linear in the length of the HTML: `/<li[^>]*>/` and `/<[^>]+>/` rescan to the end from every "<" that has
+ * no ">" after it, which took 69 s on 200,000 of them (PoC 11), so those two steps are scanners. Each step still runs
+ * over the previous one's output, as the regexes did, so the text comes out the same.
+ */
 export function stripHtml(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|h\d|pre|tr)>/gi, '\n')
-    .replace(/<li[^>]*>/gi, '- ')
-    .replace(/<[^>]+>/g, '')
+  const breaks = html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|h\d|pre|tr)>/gi, '\n');
+  return dropTags(listItems(breaks))
     .replace(/&(#?\w+);/g, (m, name: string) => entity(name) ?? m)
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** `.replace(/<li[^>]*>/gi, '- ')` in one pass. (Not by lower-casing the text: that can change its length.) */
+function listItems(text: string): string {
+  let out = '';
+  let from = 0;
+  let at = text.indexOf('<');
+  while (at >= 0) {
+    if ((text[at + 1] === 'l' || text[at + 1] === 'L') && (text[at + 2] === 'i' || text[at + 2] === 'I')) {
+      const end = text.indexOf('>', at + 3);
+      // No ">" after this "<li" means none after any later one either.
+      if (end < 0) break;
+      out += `${text.slice(from, at)}- `;
+      from = end + 1;
+      at = text.indexOf('<', from);
+    } else {
+      at = text.indexOf('<', at + 1);
+    }
+  }
+  return out + text.slice(from);
+}
+
+/** `.replace(/<[^>]+>/g, '')` in one pass. */
+function dropTags(text: string): string {
+  let out = '';
+  let from = 0;
+  let at = text.indexOf('<');
+  while (at >= 0) {
+    const end = text.indexOf('>', at + 1);
+    if (end < 0) break;
+    if (end === at + 1) {
+      // "<>" is not a tag; the next "<" may start one.
+      at = text.indexOf('<', at + 1);
+      continue;
+    }
+    out += text.slice(from, at);
+    from = end + 1;
+    at = text.indexOf('<', from);
+  }
+  return out + text.slice(from);
 }
 
 /** The character an entity name stands for, or undefined when it stands for none (`&#x;`, `&#99999999;`). */
