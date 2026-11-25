@@ -1,9 +1,21 @@
 // Live capture: watches agent histories, chosen note folders and Downloads, and imports what changes within seconds,
 // through the same importers as a manual import (so dedupe and versions behave the same).
 
-import { existsSync, readdirSync, readFileSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  watch,
+  writeSync,
+  type FSWatcher,
+} from 'node:fs';
 import { homedir } from 'node:os';
-import { extname, join, relative, resolve } from 'node:path';
+import { basename, extname, join, relative, resolve } from 'node:path';
 import { readFilesUnder, readImports } from '../importers/detect.ts';
 import type { ImportBatch, ImportResult, Store } from '../store/store.ts';
 
@@ -78,13 +90,49 @@ function emptyStatus(): LiveStatus {
   return { lastSavedAt: null, lastPassAt: null, caught: [], errors: [] };
 }
 
+/** Reads live.json; throws when it holds anything but a status object. */
 export function readStatus(file: string): LiveStatus {
   if (!existsSync(file)) return emptyStatus();
-  return { ...emptyStatus(), ...(JSON.parse(readFileSync(file, 'utf8')) as Partial<LiveStatus>) };
+  const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('it holds no status');
+  return { ...emptyStatus(), ...(parsed as Partial<LiveStatus>) };
 }
 
+/**
+ * Reads live.json for live itself, which must keep going (L5). A file that can't be read is moved aside to
+ * `live.json.bad-<time>` with one warning, and live starts from an empty status: its next catch-up reads every watched
+ * file again, which saves nothing twice.
+ */
+export function loadStatus(file: string, warn: (line: string) => void, now = new Date()): LiveStatus {
+  try {
+    return readStatus(file);
+  } catch (error) {
+    const aside = `${file}.bad-${now.toISOString().replace(/[:.]/g, '-')}`;
+    renameSync(file, aside);
+    warn(`${basename(file)} couldn't be read (${(error as Error).message}), so it was moved to ${basename(aside)} and live starts afresh.`);
+    return emptyStatus();
+  }
+}
+
+/** Writes live.json whole or not at all: a temporary file, flushed to disk, renamed over it (L5). */
 export function writeStatus(file: string, status: LiveStatus): void {
-  writeFileSync(file, JSON.stringify(status, null, 1));
+  const temp = `${file}.tmp-${process.pid}`;
+  const fd = openSync(temp, 'w');
+  try {
+    writeSync(fd, JSON.stringify(status, null, 1));
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(temp, file);
+}
+
+/** SQLite's "database is busy" or "locked": another process holds the record's write lock (M8). */
+export function isBusy(error: unknown): boolean {
+  const e = error as { code?: unknown; errcode?: unknown } | null;
+  if (e?.code !== 'ERR_SQLITE_ERROR' || typeof e.errcode !== 'number') return false;
+  const primary = e.errcode & 0xff;
+  return primary === 5 || primary === 6;
 }
 
 /** The first sentence of a message, for a status line. */
@@ -150,14 +198,21 @@ export interface CaptureOptions {
   now?: () => Date;
   /** Called after every pass that saved something: the hook background organising hangs on. */
   onSaved?: (status: LiveStatus) => void;
+  /** How long to wait before trying again when another process holds the record (default 5 s). */
+  busyRetryMs?: number;
+  /** Something live carries on past: an unreadable live.json, a pass that failed. */
+  onWarning?: (line: string) => void;
 }
 
 export class LiveCapture {
   private watchers: FSWatcher[] = [];
   private pending = new Map<Target, Set<string>>();
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private watching = false;
   private readonly debounceMs: number;
+  private readonly busyRetryMs: number;
   private readonly now: () => Date;
+  private readonly warn: (line: string) => void;
 
   private readonly store: Store;
   private readonly targets: Target[];
@@ -168,11 +223,13 @@ export class LiveCapture {
     this.targets = targets;
     this.options = options;
     this.debounceMs = options.debounceMs ?? 1500;
+    this.busyRetryMs = options.busyRetryMs ?? 5000;
     this.now = options.now ?? (() => new Date());
+    this.warn = options.onWarning ?? (() => {});
   }
 
   status(): LiveStatus {
-    return readStatus(this.options.statusFile);
+    return loadStatus(this.options.statusFile, this.warn, this.now());
   }
 
   /** Imports every file under the targets changed after `since` (default: the last pass). */
@@ -190,33 +247,54 @@ export class LiveCapture {
 
   /** Starts watching. Changes are gathered and imported together once things go quiet for `debounceMs`. */
   start(): void {
+    this.watching = true;
     for (const t of this.targets) {
       const w = watch(t.path, { recursive: t.kind === 'tree' }, (_event, name) => {
         if (!name) return;
         const full = join(t.path, name.toString());
         const exts = t.kind === 'downloads' ? DOWNLOAD_EXT : TREE_EXT;
         if (!exts.has(extname(full).toLowerCase())) return;
-        let set = this.pending.get(t);
-        if (!set) this.pending.set(t, (set = new Set()));
-        set.add(full);
-        clearTimeout(this.timer);
-        this.timer = setTimeout(() => this.flush(), this.debounceMs);
+        this.queue(t, [full]);
+        this.schedule(this.debounceMs);
       });
       this.watchers.push(w);
     }
+    // A catch-up the busy record cut short left its files queued.
+    if (this.pending.size) this.schedule(this.busyRetryMs);
   }
 
   stop(): void {
+    this.watching = false;
     clearTimeout(this.timer);
     for (const w of this.watchers) w.close();
     this.watchers = [];
   }
 
-  /** Imports whatever the watchers gathered so far. */
+  /**
+   * Imports whatever the watchers gathered so far. Never throws, because the watch timer calls it: a pass that fails is
+   * reported through `onWarning` and in the status, and live keeps watching (M8).
+   */
   flush(): LiveStatus {
     const changes = this.pending;
     this.pending = new Map();
-    return this.importChanges(changes);
+    try {
+      return this.importChanges(changes);
+    } catch (error) {
+      const message = (error as Error).message;
+      this.warn(`a capture pass failed: ${message}. Live keeps watching.`);
+      return { ...emptyStatus(), errors: [{ path: 'live', error: message }] };
+    }
+  }
+
+  private queue(target: Target, files: Iterable<string>): void {
+    let set = this.pending.get(target);
+    if (!set) this.pending.set(target, (set = new Set()));
+    for (const f of files) set.add(f);
+  }
+
+  private schedule(ms: number): void {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), ms);
   }
 
   private batchesFor(target: Target, files: Set<string>, errors: LiveStatus['errors']): ImportBatch[] {
@@ -246,40 +324,55 @@ export class LiveCapture {
   private importChanges(changes: Map<Target, Set<string>>): LiveStatus {
     const errors: LiveStatus['errors'] = [];
     const caught = new Map<string, Caught>();
-    const excluded = new Set(
-      this.store
-        .sources()
-        .filter((s) => s.status === 'out')
-        .map((s) => `${s.kind}\u0000${s.location}`),
-    );
-    for (const [target, files] of changes) {
-      for (const batch of this.batchesFor(target, files, errors)) {
-        if (excluded.has(`${batch.source.kind}\u0000${batch.source.location ?? ''}`)) continue;
-        const key = `${batch.source.kind}\u0000${batch.source.label}`;
-        const c = caught.get(key) ?? { label: batch.source.label, kind: batch.source.kind, threads: 0, added: 0, versioned: 0 };
-        const count = (r: ImportResult) => {
-          c.added += r.added;
-          c.versioned += r.versioned;
-          return r.added + r.versioned > 0;
-        };
-        // One thread at a time, so "caught up N chats" counts only the chats that gained or changed entries (a
-        // re-downloaded export holds hundreds that didn't).
-        for (const thread of batch.threads) if (count(this.store.ingest({ source: batch.source, threads: [thread] }))) c.threads += 1;
-        if (batch.entries?.length) count(this.store.ingest({ source: batch.source, threads: [], entries: batch.entries }));
-        caught.set(key, c);
+    let busy = false;
+    try {
+      const excluded = new Set(
+        this.store
+          .sources()
+          .filter((s) => s.status === 'out')
+          .map((s) => `${s.kind}\u0000${s.location}`),
+      );
+      for (const [target, files] of changes) {
+        for (const batch of this.batchesFor(target, files, errors)) {
+          if (excluded.has(`${batch.source.kind}\u0000${batch.source.location ?? ''}`)) continue;
+          const key = `${batch.source.kind}\u0000${batch.source.label}`;
+          const c = caught.get(key) ?? { label: batch.source.label, kind: batch.source.kind, threads: 0, added: 0, versioned: 0 };
+          caught.set(key, c);
+          const count = (r: ImportResult) => {
+            c.added += r.added;
+            c.versioned += r.versioned;
+            return r.added + r.versioned > 0;
+          };
+          // One thread at a time, so "caught up N chats" counts only the chats that gained or changed entries (a
+          // re-downloaded export holds hundreds that didn't).
+          for (const thread of batch.threads) if (count(this.store.ingest({ source: batch.source, threads: [thread] }))) c.threads += 1;
+          if (batch.entries?.length) count(this.store.ingest({ source: batch.source, threads: [], entries: batch.entries }));
+        }
       }
+    } catch (error) {
+      // Another process holds the record (an import, an organiser run, the web app): stop here and keep every file of
+      // this pass for the next one. What was saved stays saved, and saving it again changes nothing (M8).
+      if (!isBusy(error)) throw error;
+      busy = true;
+      for (const [target, files] of changes) this.queue(target, files);
     }
     const now = this.now().toISOString();
     const prev = this.status();
     const list = [...caught.values()].filter((c) => c.added + c.versioned > 0);
+    if (busy) {
+      const next = this.watching ? `trying again in ${Math.max(1, Math.round(this.busyRetryMs / 1000))} s` : 'run live again once it is free';
+      errors.push({ path: 'the record', error: `another skeinwise command is writing to it; ${next}` });
+    }
     const status: LiveStatus = {
       ...prev,
       lastSavedAt: list.length ? now : prev.lastSavedAt,
-      lastPassAt: now,
+      // A pass cut short isn't a finished pass: the next catch-up looks at its files again.
+      lastPassAt: busy ? prev.lastPassAt : now,
       caught: list.length ? list : prev.caught,
       errors,
     };
     writeStatus(this.options.statusFile, status);
+    if (busy && this.watching) this.schedule(this.busyRetryMs);
     if (list.length) this.options.onSaved?.(status);
     return status;
   }

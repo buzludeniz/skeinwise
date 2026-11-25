@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { loadConfig } from '../config.ts';
 import { type PollReport, pollConnectors } from '../connectors/poll.ts';
 import type { Store } from '../store/store.ts';
-import { defaultTargets, LiveCapture, type LiveStatus, readStatus, statusLines } from './capture.ts';
+import { defaultTargets, LiveCapture, type LiveStatus, loadStatus, statusLines } from './capture.ts';
 import { Background } from './organise.ts';
 
 export interface LiveOptions {
@@ -22,6 +22,8 @@ export interface LiveOptions {
   /** After every background pass. */
   onOrganised?: (status: LiveStatus) => void;
   progress?: (line: string) => void;
+  /** Something live carries on past (an unreadable live.json, a capture pass that failed). Defaults to `progress`. */
+  onWarning?: (line: string) => void;
   /** After every connector pull that read something or failed: one line per connection, or the error. */
   onPulled?: (lines: string[]) => void;
   /** Seconds between connector checks (default 60). Each connection keeps its own pace; most checks pull nothing. */
@@ -49,6 +51,7 @@ export interface LiveRun {
 export function startLive(store: Store, home: string, options: LiveOptions = {}): LiveRun {
   const config = loadConfig(home);
   const statusFile = join(home, 'live.json');
+  const warn = options.onWarning ?? options.progress ?? ((line: string) => process.stderr.write(`skeinwise live: ${line}\n`));
   const background = config.liveOrganise
     ? new Background({
         store,
@@ -58,12 +61,14 @@ export function startLive(store: Store, home: string, options: LiveOptions = {})
         env: options.env ?? process.env,
         busy: options.once ? null : options.busy,
         ...(options.progress ? { progress: options.progress } : {}),
-        onDone: () => options.onOrganised?.(readStatus(statusFile)),
+        onWarning: warn,
+        onDone: () => options.onOrganised?.(loadStatus(statusFile, warn)),
       })
     : null;
   const targets = defaultTargets(config.liveFolders, options.userHome);
   const capture = new LiveCapture(store, targets, {
     statusFile,
+    onWarning: warn,
     onSaved: (status) => {
       options.onSaved?.(status);
       background?.trigger();

@@ -17,7 +17,7 @@ import { runTask, steps } from '../organiser/organise.ts';
 import { RecordView } from '../organiser/record.ts';
 import { failRun, lastMark, scopeEntries, type Task } from '../organiser/runs.ts';
 import type { Store } from '../store/store.ts';
-import { type Organised, readStatus, writeStatus } from './capture.ts';
+import { loadStatus, type Organised, writeStatus } from './capture.ts';
 
 export type { Organised };
 
@@ -35,6 +35,8 @@ export interface BackgroundOptions {
   /** How long to wait before trying again when busy. */
   retryMs?: number;
   progress?: (line: string) => void;
+  /** An unreadable live.json, moved aside (see {@link loadStatus}). */
+  onWarning?: (line: string) => void;
   onDone?: (organised: Organised) => void;
 }
 
@@ -107,7 +109,7 @@ export class Background {
       organised.at = store.now();
       // A pass that found nothing to do leaves the last useful line ("organised 41 new entries") in place.
       const idle = !organised.runs.length && !organised.error && !organised.waiting && !organised.notStarted;
-      const status = readStatus(this.options.statusFile);
+      const status = loadStatus(this.options.statusFile, this.options.onWarning ?? (() => {}));
       if (!idle || !status.organised) writeStatus(this.options.statusFile, { ...status, organised });
       return organised;
     };
