@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo-mark-dark.svg">
+  <img src="brand/logo-mark.svg" alt="" width="40" height="40">
+</picture>
+
 # Skeinwise: connectors
 
 Connectors read four work tools into the record: Gmail, Google Calendar, Todoist and Slack. What they read becomes
