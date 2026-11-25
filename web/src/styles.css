@@ -837,6 +837,10 @@ code {
   color: var(--ink-soft);
 }
 
+.menu-status.menu-error {
+  color: var(--danger);
+}
+
 .submenu {
   margin: 2px 0 4px 10px;
   padding: 4px;
@@ -3309,4 +3313,48 @@ svg .mark:hover {
   .segmented button.on {
     outline: 2px solid CanvasText;
   }
+}
+
+.live-folders {
+  list-style: none;
+  margin: 4px 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.live-folders li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+.organise-go {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0 0 12px;
+}
+
+.runs-wrap {
+  overflow-x: auto;
+}
+
+.model-answer {
+  margin: 8px 0 14px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-small);
+}
+
+.model-answer > p:first-child {
+  margin-top: 0;
+  line-height: 1.55;
+}
+
+.model-answer .band {
+  margin: 0;
 }

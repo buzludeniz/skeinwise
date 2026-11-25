@@ -47,6 +47,15 @@ describe('settings', () => {
     expect(() => writeConfig(home, { ai: { remote: { keyEnv: 'sk-not a name' } } })).toThrow(ConfigError);
   });
 
+  it("keeps Record live's folders and switches in config.json, under the organiser's keys", () => {
+    const next = writeConfig(home, { live: { folders: [{ path: '/notes' }, { path: '/mara', owner: ' Mara ' }], organise: false, remote: true } });
+    expect(next.live).toEqual({ folders: [{ path: '/notes' }, { path: '/mara', owner: 'Mara' }], organise: false, remote: true });
+    expect(loadConfig(home)).toMatchObject({ liveFolders: [{ path: '/notes' }, { path: '/mara', owner: 'Mara' }], liveOrganise: false, liveRemote: true });
+    expect(existsSync(join(home, 'app.json'))).toBe(false);
+    expect(() => writeConfig(home, { live: { folders: [{ path: ' ' }] } })).toThrow(ConfigError);
+    expect(() => writeConfig(home, { live: { folders: ['/notes'] } })).toThrow(ConfigError);
+  });
+
   it('refuses values of the wrong type or outside the lists', () => {
     expect(() => writeConfig(home, { appearance: { theme: 'neon' } })).toThrow(ConfigError);
     expect(() => writeConfig(home, { brain: { pointSize: 'big' } })).toThrow(ConfigError);

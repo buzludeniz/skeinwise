@@ -1,5 +1,5 @@
-// Settings: the groups from docs/ui.md, top to bottom. Each change saves at once; a note says where a setting
-// isn't acted on yet.
+// Settings: the groups from docs/ui.md, top to bottom, plus Record live's own settings under AI model. Each change
+// saves at once; a note says where a setting isn't acted on yet.
 
 import { useEffect, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
@@ -14,7 +14,6 @@ import { Button, Segmented, Switch, useFocusTrap } from './common.tsx';
 
 const GROUPS = ['Sync', 'AI agents', 'AI model', 'Usage cap', 'Proof of date', 'Backup', 'Exclusions', 'Appearance'] as const;
 
-const ORGANISER_NOTE = 'The organiser uses this. It isn’t part of this build yet, so for now the setting is only kept.';
 const LATER_NOTE = 'Comes in version 0.5. The choice is kept until then.';
 
 function slug(g: string): string {
@@ -150,7 +149,12 @@ function Model({ config }: { config: Config }) {
       {ai.engine === 'local' && (
         <div class="fields">
           <Field label="Address" value={ai.local.address} onSave={(address) => void saveConfig({ ai: { local: { address } } })} hint="A llama-server or Ollama on this computer." />
-          <Field label="Model file" value={ai.local.model} onSave={(model) => void saveConfig({ ai: { local: { model } } })} />
+          <Field
+            label="Model file"
+            value={ai.local.model}
+            onSave={(model) => void saveConfig({ ai: { local: { model } } })}
+            hint="Empty means the first model the server lists."
+          />
           <div class="row">
             <Button icon={FlaskConical} small onClick={() => void run()} disabled={testing}>
               {testing ? 'Testing…' : 'Test'}
@@ -173,10 +177,73 @@ function Model({ config }: { config: Config }) {
             onSave={(keyEnv) => void saveConfig({ ai: { remote: { keyEnv } } })}
             hint="Skeinwise reads the key from this variable when it runs. The key itself is never saved."
           />
-          <Note>{ORGANISER_NOTE}</Note>
         </div>
       )}
       {ai.engine === 'none' && <Note>Search, the brain and every view work without AI. Organising uses plain text rules only.</Note>}
+    </>
+  );
+}
+
+/** Record live's settings: the folders it follows besides agent histories and Downloads, and how it organises. */
+function LiveSettings({ config }: { config: Config }) {
+  const { live } = config;
+  const [path, setPath] = useState('');
+  const [owner, setOwner] = useState('');
+  const folders = live.folders;
+  const add = () => {
+    const p = path.trim();
+    if (!p) return;
+    const folder = owner.trim() ? { path: p, owner: owner.trim() } : { path: p };
+    void saveConfig({ live: { folders: [...folders, folder] } }).then((ok) => {
+      if (ok) {
+        setPath('');
+        setOwner('');
+      }
+    });
+  };
+  return (
+    <>
+      <h4>Record live</h4>
+      <Switch label="Organise what Record live brings in" checked={live.organise} onChange={(organise) => void saveConfig({ live: { organise } })} />
+      {config.ai.engine === 'remote' && (
+        <Switch label="Let it use the outside model, within the usage cap" checked={live.remote} onChange={(remote) => void saveConfig({ live: { remote } })} />
+      )}
+      <p class="field-label">Note folders it follows</p>
+      {folders.length ? (
+        <ul class="live-folders">
+          {folders.map((f, i) => (
+            <li key={f.path}>
+              <span class="grow">
+                {f.path}
+                {f.owner && <span class="soft"> · {f.owner}’s words</span>}
+              </span>
+              <Button
+                small
+                kind="quiet"
+                aria-label={`Stop following ${f.path}`}
+                onClick={() => void saveConfig({ live: { folders: folders.filter((_, j) => j !== i) } })}
+              >
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p class="soft small">None yet. Claude Code and Codex history and Downloads are followed wherever they exist.</p>
+      )}
+      <form
+        class="row wrap"
+        onSubmit={(e) => {
+          e.preventDefault();
+          add();
+        }}
+      >
+        <input class="grow" value={path} placeholder="/Users/you/Notes" spellcheck={false} aria-label="Folder to follow" onInput={(e) => setPath((e.currentTarget as HTMLInputElement).value)} />
+        <input value={owner} placeholder="Whose words (you)" aria-label="Whose words the folder holds" onInput={(e) => setOwner((e.currentTarget as HTMLInputElement).value)} />
+        <Button small type="submit" disabled={!path.trim()}>
+          Add folder
+        </Button>
+      </form>
     </>
   );
 }
@@ -305,6 +372,7 @@ function Sheet() {
             </Group>
             <Group title="AI model">
               <Model config={config} />
+              <LiveSettings config={config} />
             </Group>
             <Group title="Usage cap">
               <Field
@@ -318,7 +386,6 @@ function Sheet() {
                 }}
                 hint={`Now ${fmtNum(config.usageCap.monthlyTokens)}. At the cap, runs wait for the next month.`}
               />
-              <Note>{ORGANISER_NOTE}</Note>
             </Group>
             <Group title="Proof of date">
               <Switch label="Prove when each entry was written" checked={config.proofOfDate} onChange={(proofOfDate) => void saveConfig({ proofOfDate })} />
@@ -349,10 +416,10 @@ function Sheet() {
                     if (rules.join('\n') !== config.exclusions.rules.join('\n')) void saveConfig({ exclusions: { rules } });
                   }}
                 />
-                <span class="field-hint">By source, folder or a pattern. Matching entries are left out of organising.</span>
+                <span class="field-hint">By source, folder or a pattern.</span>
               </label>
+              <Note>The organiser doesn’t apply these rules yet; they are kept. To leave a whole source out now, use skeinwise exclude.</Note>
               <Switch label="Redact names and numbers before an outside model" checked={config.exclusions.redact} onChange={(redact) => void saveConfig({ exclusions: { redact } })} />
-              <Note>{ORGANISER_NOTE}</Note>
             </Group>
             <Group title="Appearance">
               <Appearance config={config} />

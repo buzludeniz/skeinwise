@@ -11,6 +11,8 @@ import { parseArgs } from 'node:util';
 import { homeDir, openHome } from '../home.ts';
 import type { Store } from '../store/store.ts';
 import { createHandler } from './app.ts';
+import { readConfig } from './config.ts';
+import { AppLive } from './live.ts';
 import { loadToken } from './token.ts';
 
 export const DEFAULT_PORT = 7319;
@@ -78,6 +80,8 @@ function listen(server: Server, port: number): Promise<number> {
 export async function startServer(options: StartOptions): Promise<Running> {
   const store = openHome(options.home);
   const token = loadToken(options.home);
+  const scanRoot = options.scanRoot ?? homedir();
+  const live = new AppLive(store, options.home, { userHome: scanRoot });
   let port = 0;
   let running: Running | undefined;
   const server = createServer(
@@ -87,7 +91,8 @@ export async function startServer(options: StartOptions): Promise<Running> {
       token,
       webDir: options.webDir === undefined ? findWebDir() : options.webDir,
       version: version(),
-      scanRoot: options.scanRoot ?? homedir(),
+      scanRoot,
+      live,
       port: () => port,
       onQuit: () => {
         void running?.close().then(() => options.onQuit?.());
@@ -109,6 +114,15 @@ export async function startServer(options: StartOptions): Promise<Running> {
       }
     }
   }
+  // Record live picks up where the app left it. A settings file that can't be read keeps it off; GET /api/settings
+  // reports that file's error to the page.
+  let recordLive = false;
+  try {
+    recordLive = readConfig(options.home).recordLive;
+  } catch {
+    recordLive = false;
+  }
+  live.set(recordLive);
   let closed = false;
   running = {
     server,
@@ -120,6 +134,7 @@ export async function startServer(options: StartOptions): Promise<Running> {
       new Promise<void>((resolve) => {
         if (closed) return resolve();
         closed = true;
+        live.stop();
         server.close(() => {
           store.db.close();
           resolve();

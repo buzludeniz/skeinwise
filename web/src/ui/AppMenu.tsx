@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { ChevronRight } from 'lucide-preact';
-import { lock, message, openCommand, openPanel, quit, saveConfig, toast } from '../actions.ts';
+import { lock, message, openCommand, openPanel, quit, refreshStatus, saveConfig, toast } from '../actions.ts';
 import { api } from '../api.ts';
 import { ago } from '../format.ts';
 import { setState, useApp } from '../store.ts';
@@ -54,6 +54,14 @@ export function AppMenu({ onAddFiles }: { onAddFiles: () => void }) {
     };
   }, [open, sub]);
 
+  // The two lines under Record live change as things happen, so they're read again while the menu is open.
+  useEffect(() => {
+    if (!open) return;
+    void refreshStatus();
+    const timer = setInterval(() => void refreshStatus(), 2000);
+    return () => clearInterval(timer);
+  }, [open]);
+
   useEffect(() => {
     if (sub === 'connect' && !agents) api.get<Agent[]>('agents').then(setAgents, () => setAgents([]));
   }, [sub]);
@@ -64,7 +72,12 @@ export function AppMenu({ onAddFiles }: { onAddFiles: () => void }) {
     close();
     fn();
   };
-  const saved = status?.lastSaved ? `Saved ${ago(status.lastSaved)}` : 'Nothing saved yet';
+  // Once the stream has run, its own two lines (src/live/capture.ts statusLines); before that, what the record holds.
+  const live = status?.live;
+  const lines = live?.lines ?? [
+    status?.lastSaved ? `saved ${ago(status.lastSaved)}` : 'nothing saved yet',
+    `${status?.entries ?? 0} entries in the record`,
+  ];
 
   return (
     <div class="app-menu" role="menu" aria-label="Skeinwise" ref={ref}>
@@ -83,12 +96,18 @@ export function AppMenu({ onAddFiles }: { onAddFiles: () => void }) {
           checked={recordLive}
           label="Record live"
           onChange={(v) => {
-            void saveConfig({ recordLive: v });
-            if (v) toast('Live recording comes in version 0.3. Your choice is saved, and it starts then.');
+            void saveConfig({ recordLive: v }).then((ok) => {
+              if (ok) void refreshStatus();
+            });
           }}
         />
-        <p class="menu-status">{saved}</p>
-        <p class="menu-status">{recordLive ? 'Waiting for version 0.3 to watch your chats' : `${status?.entries ?? 0} entries in the record`}</p>
+        <p class="menu-status">{lines[0]}</p>
+        <p class="menu-status">{lines[1]}</p>
+        {live?.error && (
+          <p class="menu-status menu-error" role="alert">
+            {live.error}
+          </p>
+        )}
       </div>
       <div class="menu-sep" />
       <div class="menu-sub-wrap">

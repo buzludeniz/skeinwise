@@ -1,10 +1,11 @@
-// The app's settings. The engine, the model addresses, the token cap and redaction belong to the organiser and live in
-// config.json (src/config.ts), so the CLI and the app agree on them; everything else lives in app.json beside it.
+// The app's settings. The engine, the model addresses, the token cap, redaction and Record live's settings belong to
+// the organiser and live in config.json (src/config.ts), so the CLI and the app agree on them; everything else lives
+// in app.json beside it.
 // Reading fills in defaults; writing applies a checked patch and keeps any keys this module doesn't know.
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadConfig, parseConfigValue, saveConfig, type Config as EngineConfig } from '../config.ts';
+import { type LiveFolder, loadConfig, parseConfigValue, saveConfig, type Config as EngineConfig } from '../config.ts';
 
 export const THEMES = ['dusk', 'ink', 'slate', 'moss', 'linen', 'paper'] as const;
 export const PALETTES = ['ember', 'tide', 'lichen', 'heather', 'graphite', 'saffron', 'mono'] as const;
@@ -42,6 +43,8 @@ export interface Config {
     remote: { address: string; model: string; keyEnv: string };
   };
   usageCap: { monthlyTokens: number };
+  /** Record live's settings, kept in config.json: the folders it follows, and whether and how it organises. */
+  live: { folders: LiveFolder[]; organise: boolean; remote: boolean };
   proofOfDate: boolean;
   backup: { daily: boolean };
   exclusions: { rules: string[]; redact: boolean };
@@ -63,6 +66,7 @@ export const DEFAULT_CONFIG: Config = {
     remote: { address: '', model: '', keyEnv: '' },
   },
   usageCap: { monthlyTokens: 1_000_000 },
+  live: { folders: [], organise: true, remote: false },
   proofOfDate: false,
   backup: { daily: false },
   exclusions: { rules: [], redact: true },
@@ -91,6 +95,13 @@ export class ConfigError extends Error {}
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+function checkLiveFolder(v: unknown, path: string): LiveFolder {
+  if (!isObj(v) || typeof v.path !== 'string' || !v.path.trim()) throw new ConfigError(`${path} needs a folder path`);
+  if (v.owner !== undefined && typeof v.owner !== 'string') throw new ConfigError(`${path}.owner must be text`);
+  const owner = typeof v.owner === 'string' ? v.owner.trim().slice(0, 200) : '';
+  return owner ? { path: v.path.slice(0, 2000), owner } : { path: v.path.slice(0, 2000) };
+}
 
 function checkLabView(v: unknown, path: string): LabView {
   if (!isObj(v)) throw new ConfigError(`${path} must be an object`);
@@ -134,7 +145,9 @@ export function checkPatch(patch: unknown, shape: unknown = DEFAULT_CONFIG, path
       out[key] =
         at === 'lab.views'
           ? value.map((v, i) => checkLabView(v, `${at}[${i}]`))
-          : value.map((v, i) => {
+          : at === 'live.folders'
+            ? value.map((v, i) => checkLiveFolder(v, `${at}[${i}]`))
+            : value.map((v, i) => {
               if (typeof v !== 'string') throw new ConfigError(`${at}[${i}] must be text`);
               return v.slice(0, 500);
             });
@@ -176,7 +189,7 @@ function readRaw(home: string): Obj {
 }
 
 /** The organiser's settings that the app shows, read from config.json. A bad file there fails loudly. */
-function engineSettings(home: string): Pick<Config, 'ai' | 'usageCap'> & { redact: boolean } {
+function engineSettings(home: string): Pick<Config, 'ai' | 'usageCap' | 'live'> & { redact: boolean } {
   const c = loadConfig(home);
   return {
     ai: {
@@ -185,6 +198,7 @@ function engineSettings(home: string): Pick<Config, 'ai' | 'usageCap'> & { redac
       remote: { address: c.remoteUrl, model: c.remoteModel, keyEnv: c.apiKeyEnv },
     },
     usageCap: { monthlyTokens: c.budget },
+    live: { folders: c.liveFolders, organise: c.liveOrganise, remote: c.liveRemote },
     redact: c.redaction,
   };
 }
@@ -199,6 +213,9 @@ const ENGINE_KEYS: [path: string, key: keyof EngineConfig][] = [
   ['ai.remote.keyEnv', 'apiKeyEnv'],
   ['usageCap.monthlyTokens', 'budget'],
   ['exclusions.redact', 'redaction'],
+  ['live.folders', 'liveFolders'],
+  ['live.organise', 'liveOrganise'],
+  ['live.remote', 'liveRemote'],
 ];
 
 function take(obj: Obj, path: string): { found: boolean; value: unknown } {
@@ -227,7 +244,8 @@ function writeEngineSettings(home: string, patch: Obj): void {
   for (const { key, value } of changes) {
     let parsed;
     try {
-      parsed = parseConfigValue(key, String(value));
+      // The organiser's parser reads the text form a CLI user types; a list of folders goes over as JSON.
+      parsed = parseConfigValue(key, Array.isArray(value) ? JSON.stringify(value) : String(value));
     } catch (error) {
       throw new ConfigError(error instanceof Error ? error.message : String(error));
     }
@@ -274,6 +292,7 @@ export function readConfig(home: string): Config {
   const engine = engineSettings(home);
   config.ai = engine.ai;
   config.usageCap = engine.usageCap;
+  config.live = engine.live;
   config.exclusions.redact = engine.redact;
   config.bringIn = isObj(raw.bringIn)
     ? (Object.fromEntries(

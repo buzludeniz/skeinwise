@@ -16,6 +16,7 @@ import { backup } from './backup.ts';
 import { cellEntries, parseFilter, tableCounts, type TableProp, tides, timelineBuckets } from './buckets.ts';
 import { ConfigError, readConfig, TABLE_PROPS, writeConfig } from './config.ts';
 import { findAgents, findSources, preview } from './found.ts';
+import type { AppLive } from './live.ts';
 import { appendDaily, createNote, NoteError, noteTitles, ownFile, saveEntry } from './notes.ts';
 import {
   askQuestion,
@@ -50,6 +51,8 @@ export interface AppContext {
   version: string;
   /** Where to look for sources and agents: the home directory unless SKEINWISE_SCAN_ROOT says otherwise. */
   scanRoot: string;
+  /** Record live: the update stream, run in this server while the app menu's switch is on. */
+  live: AppLive;
   /** The port the server listens on, for the Host check. */
   port: () => number;
   onQuit?: () => void;
@@ -155,6 +158,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       entries: store.stats().entries,
       lastSaved: lastSaved(store.db),
       organiser: organiserReady(store.db),
+      live: ctx.live.state(),
     })],
     ['POST', /^\/api\/lock$/, () => {
       locked = true;
@@ -170,7 +174,11 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     }],
 
     ['GET', /^\/api\/settings$/, () => readConfig(home)],
-    ['PUT', /^\/api\/settings$/, async (req) => writeConfig(home, await req.json())],
+    ['PUT', /^\/api\/settings$/, async (req) => {
+      const saved = writeConfig(home, await req.json());
+      ctx.live.set(saved.recordLive);
+      return saved;
+    }],
 
     ['GET', /^\/api\/stats$/, () => numbers(store)],
     ['GET', /^\/api\/sources$/, () => store.sources()],

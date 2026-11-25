@@ -8,6 +8,8 @@ export type { Config, LabView } from '../../src/server/config.ts';
 export type { Timeline, Table, Series, TableProp, EntryRow } from '../../src/server/buckets.ts';
 export type { Found, Preview, Agent } from '../../src/server/found.ts';
 export type { Entry, Version, Source, Thread } from '../../src/store/store.ts';
+import type { LiveState } from '../../src/server/live.ts';
+export type { LiveState };
 
 export interface Status {
   version: string;
@@ -15,6 +17,8 @@ export interface Status {
   entries: number;
   lastSaved: string | null;
   organiser: boolean;
+  /** Record live: whether the stream runs, and its two status lines. */
+  live: LiveState;
 }
 
 export interface Hit {
