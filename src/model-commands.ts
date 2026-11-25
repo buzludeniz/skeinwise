@@ -46,11 +46,12 @@ export const SUGGESTED: SuggestedModel = {
   name: 'Qwen3-4B, quantised to Q4_K_M',
   repo: 'Qwen/Qwen3-4B-GGUF',
   file: 'Qwen3-4B-Q4_K_M.gguf',
-  // The branch, until the commit id is looked up on huggingface.co. The size and sha256 below hold either way: a
-  // file that differs from them is deleted, whatever the branch serves.
-  revision: 'main',
-  size: 2_497_280_640,
-  sha256: 'ab27b9bfa375a178d6cba48f3ad892b94b7739659dcc7aae8058ce0ffed6b328',
+  // The repo's commit, with the file's size and sha256 as huggingface.co lists them there. A download that differs from
+  // them is deleted. The ggml-org build of a file by the same name differs (sha256 ab27b9bf…b328, 2497280640 bytes), so
+  // a copy from ggml-org/Qwen3-4B-GGUF doesn't match this pin.
+  revision: 'bc640142c66e1fdd12af0bd68f40445458f3869b',
+  size: 2_497_280_256,
+  sha256: '7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5',
 };
 const HUB = 'https://huggingface.co';
 

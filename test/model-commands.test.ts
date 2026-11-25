@@ -181,8 +181,9 @@ describe('skeinwise model fetch', () => {
     expect(sha(readFileSync(target()))).toBe(SHA);
   });
 
-  it('pins the real model by size and sha256', () => {
-    expect(REAL).toMatchObject({ repo: 'Qwen/Qwen3-4B-GGUF', file: 'Qwen3-4B-Q4_K_M.gguf', size: 2_497_280_640 });
+  it('pins the real model by commit, size and sha256', () => {
+    expect(REAL).toMatchObject({ repo: 'Qwen/Qwen3-4B-GGUF', file: 'Qwen3-4B-Q4_K_M.gguf', size: 2_497_280_256 });
+    expect(REAL.revision).toMatch(/^[0-9a-f]{40}$/);
     expect(REAL.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 });
