@@ -143,6 +143,54 @@ describe('openDb', () => {
     ]);
   });
 
+  // Migration 5 (LS-02, L14) on a v0.3 record and on an mcp-branch (migration 3) record, with rows in them.
+  for (const from of [1, 3]) {
+    it(`upgrades a migration-${from} record to provenance and pending, keeping every version and flagging bad times`, () => {
+      const db = new DatabaseSync(':memory:');
+      db.exec('PRAGMA foreign_keys = ON');
+      for (const m of MIGRATIONS.slice(0, from)) db.exec(m);
+      db.exec(`PRAGMA user_version = ${from}`);
+      db.exec(`
+        INSERT INTO sources (id, kind, label, location, added_at) VALUES (1, 'claude', 'Claude', '', '2026-05-01T00:00:00.000Z');
+        INSERT INTO threads (id, source_id, external_id, title, started_at) VALUES (1, 1, 'c1', 'Bread', '1970-01-01T00:00:00.000Z');
+        INSERT INTO entries (id, source_id, thread_id, external_id, kind, speaker, created_at, seq, version) VALUES
+          (1, 1, 1, 'm1', 'message', 'you', '2026-03-01T10:00:00.000Z', 0, 2),
+          (2, 1, 1, 'm2', 'message', 'you', '1970-01-01T00:00:00.000Z', 1, 1),
+          (3, 1, 1, 'm3', 'message', 'you', '2030-01-01T00:00:00.000Z', 2, 1);
+        INSERT INTO versions (id, entry_id, version, body, content_hash, editor, edited_at) VALUES
+          (10, 1, 1, 'one', 'h1', 'import', '2026-03-01T10:00:00.000Z'),
+          (11, 1, 2, 'one, edited', 'h2', 'you', '2026-06-01T00:00:00.000Z'),
+          (12, 2, 1, 'two', 'h3', 'import', '1970-01-01T00:00:00.000Z'),
+          (13, 3, 1, 'three', 'h4', 'import', '2030-01-01T00:00:00.000Z');
+      `);
+      migrate(db);
+      expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+      expect(db.prepare('SELECT id, version, editor, edited_at, observed_at, claimed_at, origin_sha256, run_id FROM versions ORDER BY id').all()).toEqual([
+        { id: 10, version: 1, editor: 'import', edited_at: '2026-03-01T10:00:00.000Z', observed_at: '2026-05-01T00:00:00.000Z', claimed_at: '2026-03-01T10:00:00.000Z', origin_sha256: null, run_id: null },
+        { id: 11, version: 2, editor: 'you', edited_at: '2026-06-01T00:00:00.000Z', observed_at: '2026-06-01T00:00:00.000Z', claimed_at: null, origin_sha256: null, run_id: null },
+        { id: 12, version: 1, editor: 'import', edited_at: '1970-01-01T00:00:00.000Z', observed_at: '2026-05-01T00:00:00.000Z', claimed_at: null, origin_sha256: null, run_id: null },
+        { id: 13, version: 1, editor: 'import', edited_at: '2030-01-01T00:00:00.000Z', observed_at: '2026-05-01T00:00:00.000Z', claimed_at: '2030-01-01T00:00:00.000Z', origin_sha256: null, run_id: null },
+      ]);
+      expect(db.prepare('SELECT id, created_at, claimed_at, observed_at, time_flag FROM entries ORDER BY id').all()).toEqual([
+        { id: 1, created_at: '2026-03-01T10:00:00.000Z', claimed_at: '2026-03-01T10:00:00.000Z', observed_at: '2026-05-01T00:00:00.000Z', time_flag: null },
+        { id: 2, created_at: '2026-05-01T00:00:00.000Z', claimed_at: null, observed_at: '2026-05-01T00:00:00.000Z', time_flag: 'missing' },
+        { id: 3, created_at: '2026-05-01T00:00:00.000Z', claimed_at: '2030-01-01T00:00:00.000Z', observed_at: '2026-05-01T00:00:00.000Z', time_flag: 'future' },
+      ]);
+      expect(db.prepare('SELECT thread_id, version, title, editor, observed_at FROM thread_titles').all()).toEqual([
+        { thread_id: 1, version: 1, title: 'Bread', editor: 'import', observed_at: '2026-05-01T00:00:00.000Z' },
+      ]);
+      expect(db.prepare('SELECT account FROM sources').get()).toEqual({ account: null });
+      // versions.observed_at is required from now on, and pending enforces its states.
+      expect(() => db.prepare("INSERT INTO versions (entry_id, version, body, content_hash, editor, edited_at) VALUES (1, 3, 'x', 'h', 'you', 'x')").run()).toThrow(/NOT NULL/);
+      expect(() => db.prepare("INSERT INTO pending (reason, source_kind, source_label, observed_at, batch) VALUES ('other', 'claude', 'Claude', 'x', '{}')").run()).toThrow(/CHECK/);
+      expect(() => db.prepare("INSERT INTO pending (status, reason, source_kind, source_label, observed_at, batch) VALUES ('rejected', 'account', 'claude', 'Claude', 'x', '{}')").run()).toThrow(/CHECK/);
+      db.prepare("INSERT INTO pending (reason, source_kind, source_label, origin_sha256, observed_at, batch) VALUES ('account', 'claude', 'Claude', 'abc', 'x', '{}')").run();
+      expect(() => db.prepare("INSERT INTO pending (reason, source_kind, source_label, origin_sha256, observed_at, batch) VALUES ('account', 'claude', 'Claude', 'abc', 'x', '{}')").run()).toThrow(/UNIQUE/);
+      expect(() => db.prepare('INSERT INTO versions (entry_id, version, body, content_hash, editor, edited_at, observed_at, run_id) VALUES (1, 3, ?, ?, ?, ?, ?, 99)').run('x', 'h', 'you', 'x', 'x')).toThrow(/FOREIGN KEY/);
+    });
+  }
+
   it('refuses a migration that would leave a broken reference, and changes nothing', () => {
     const db = new DatabaseSync(':memory:');
     db.exec(MIGRATIONS[0]!);
