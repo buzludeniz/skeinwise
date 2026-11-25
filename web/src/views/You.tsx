@@ -11,7 +11,7 @@ import { useApp } from '../store.ts';
 import type { Brief, YouLine } from '../types.ts';
 import { Button, Empty } from '../ui/common.tsx';
 
-type About = { words: YouLine[]; names: YouLine[]; entries: number };
+type About = { words: YouLine[]; names: YouLine[]; projects: YouLine[]; entries: number };
 type Claim = { claim: string; entries: (Brief & { snippet: string })[] };
 
 /** Where a date sits between the earliest and latest, 0..1. */
@@ -176,7 +176,7 @@ export function YouView() {
 
   const titles = useMemo(() => new Map((brain?.points ?? []).map((p) => [p[0], p[8]] as [number, string])), [brain]);
   const span = useMemo(() => {
-    const all = [...(about?.words ?? []), ...(about?.names ?? [])];
+    const all = [...(about?.words ?? []), ...(about?.projects ?? []), ...(about?.names ?? [])];
     if (!all.length) return { from: 0, to: 0 };
     return {
       from: Math.min(...all.map((l) => new Date(l.first).getTime())),
@@ -208,12 +208,15 @@ export function YouView() {
               </div>
             )}
             <Group icon={Tags} title="Topics you return to" lines={about.words} from={span.from} to={span.to} titles={titles} empty="No word comes up in more than one entry yet." />
-            <section class="card you-group" aria-label="Projects">
-              <h2>
-                <FolderKanban size={16} aria-hidden="true" /> Projects
-              </h2>
-              <p class="soft">Projects come from the organiser, which files entries into them. It hasn’t run on this record yet.</p>
-            </section>
+            <Group
+              icon={FolderKanban}
+              title="Projects"
+              lines={about.projects}
+              from={span.from}
+              to={span.to}
+              titles={titles}
+              empty="No projects yet. The organiser files entries into them when it runs."
+            />
             <Group icon={Users} title="People you mention" lines={about.names} from={span.from} to={span.to} titles={titles} empty="No name comes up in more than one entry yet." />
           </>
         )}
