@@ -23,6 +23,60 @@ export function linkTargets(text: string): string[] {
   return [...new Set([...text.matchAll(/\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g)].map((m) => m[1]!.trim()))];
 }
 
+/** The fields a note is linked by. */
+export interface NoteName {
+  id: number;
+  kind: string;
+  title: string | null;
+  externalId: string;
+}
+
+/** A path as [[links]] write it: `/` between folders, no extension, lowercase. A table's `[[Note\|alias]]` leaves a `\`. */
+function linkPath(text: string): string {
+  return text
+    .trim()
+    .replace(/\\+$/, '')
+    .replaceAll('\\', '/')
+    .replace(/^\.?\//, '')
+    .replace(/\.(md|markdown|txt)$/i, '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Which note a [[link]] names, read the way Obsidian writes links (LS-19). The alias and heading are gone already
+ * (`linkTargets`). In order: the note at that path in the vault (`[[Garden/Plan]]`, and `[[Plan]]` for one at the
+ * root); a note whose path ends in it, by whole folders (`[[Plotline/Plan]]` for Projects/Plotline/Plan.md); then a
+ * note by file name or title. Where two share a name, the first in the record wins. A path that names no note names
+ * none, even when its file name matches one: Obsidian would make a new note there.
+ */
+export class NoteNames<T extends NoteName> {
+  private readonly byPath = new Map<string, T>();
+  private readonly byBase = new Map<string, T[]>();
+  private readonly byName = new Map<string, T>();
+
+  constructor(entries: Iterable<T>) {
+    for (const e of entries) {
+      if (e.kind !== 'note') continue;
+      const path = linkPath(e.externalId);
+      const base = path.split('/').pop()!;
+      if (!this.byPath.has(path)) this.byPath.set(path, e);
+      this.byBase.set(base, [...(this.byBase.get(base) ?? []), e]);
+      for (const name of [base, (e.title ?? '').trim().toLowerCase()]) if (name && !this.byName.has(name)) this.byName.set(name, e);
+    }
+  }
+
+  resolve(target: string): T | undefined {
+    const path = linkPath(target);
+    if (!path) return undefined;
+    const exact = this.byPath.get(path);
+    if (exact) return exact;
+    if (!path.includes('/')) return this.byName.get(path);
+    const base = path.split('/').pop()!;
+    return this.byBase.get(base)?.find((e) => linkPath(e.externalId).endsWith(`/${path}`)) ?? this.byName.get(path);
+  }
+}
+
 export function entryText(e: Entry): string {
   return unlink(`${e.title ?? ''}\n${e.body}`);
 }
@@ -55,7 +109,7 @@ export class RecordView {
   private eIndex?: TermIndex;
   private eVectors?: Map<number, Vec>;
   private uDf?: Float64Array;
-  private notesByName?: Map<string, Entry>;
+  private noteNames?: NoteNames<Entry>;
 
   constructor(store: Store) {
     this.store = store;
@@ -151,20 +205,10 @@ export class RecordView {
       .map(([i]) => i);
   }
 
-  /** The note a [[link]] points at: by title, or by file name without its folder and extension. */
+  /** The note a [[link]] points at (`NoteNames`). */
   resolveLink(target: string): Entry | undefined {
-    if (!this.notesByName) {
-      this.notesByName = new Map();
-      for (const e of this.entries) {
-        if (e.kind !== 'note') continue;
-        const base = e.externalId.split('/').pop()!.replace(/\.(md|markdown|txt)$/i, '');
-        for (const name of [base, e.title ?? '']) {
-          const key = name.trim().toLowerCase();
-          if (key && !this.notesByName.has(key)) this.notesByName.set(key, e);
-        }
-      }
-    }
-    return this.notesByName.get(target.trim().toLowerCase());
+    this.noteNames ??= new NoteNames(this.entries);
+    return this.noteNames.resolve(target);
   }
 
   shown(term: number): string {

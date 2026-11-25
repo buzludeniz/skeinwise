@@ -9,7 +9,7 @@ import { cleaned } from '../src/organiser/layers.ts';
 import { createModel } from '../src/organiser/model.ts';
 import { text } from '../src/organiser/plan.ts';
 import { type RunOptions, runSteps, runTask, steps } from '../src/organiser/organise.ts';
-import { RecordView } from '../src/organiser/record.ts';
+import { linkTargets, RecordView } from '../src/organiser/record.ts';
 import { withUpdates } from '../src/organiser/review.ts';
 import { getRun, listRuns, undoRun } from '../src/organiser/runs.ts';
 import { entryLayers, findSchema, hubEntryIds, liveFolders, liveHubs, liveLinks, liveTags, openReviewItems } from '../src/organiser/views.ts';
@@ -165,16 +165,43 @@ describe('scope new', () => {
     expect(folders.reduce((n, f) => n + f.entryIds.length, 0)).toBe(14);
   });
 
-  it('adds only links that are not there yet', async () => {
-    add('index.md', 'See [[Bread 1]] and [[River 2]] and [[Nowhere]].', 'Index');
+  it('adds only cross links that are not there yet', async () => {
     const first = await run('link', 'all');
-    expect(first.counts).toMatchObject({ note: 2, unresolved: 1 });
     expect(first.engine).toBe('none');
+    expect(first.counts.cross).toBeGreaterThan(0);
+    clock = '2026-02-01T00:00:00.000Z';
+    add('bread9.md', 'Notes on the rye crumb. The rye crumb and the oven matter for the loaf, and the dough too.', 'Bread 9');
+    const second = await run('link', 'new');
+    expect(second.counts.cross).toBeGreaterThan(0);
+    expect(second.counts.cross).toBeLessThan(first.counts.cross!);
+    // A run over everything replaces both, so it makes every link afresh.
+    expect((await run('link', 'all')).counts.cross).toBe(liveLinks(store.db).filter((l) => l.kind === 'cross').length);
+  });
+
+  it('reads the [[links]] you wrote from your notes as they stand, so undo leaves them (LS-14)', async () => {
+    add('index.md', 'See [[Bread 1]] and [[River 2]] and [[Nowhere]].', 'Index');
+    const yours = () =>
+      liveLinks(store.db)
+        .filter((l) => l.kind === 'note')
+        .map((l) => `${store.getEntry(l.from)!.title} > ${store.getEntry(l.to)!.title}`);
+    expect(yours()).toEqual(['Index > Bread 1', 'Index > River 2']);
+    const first = await run('link', 'all');
+    expect(first.counts).toEqual({ cross: expect.any(Number), unresolved: 1 });
+    expect(first.message).toMatch(/The 2 \[\[links\]\] you wrote are read from your notes as they stand/);
     clock = '2026-02-01T00:00:00.000Z';
     add('more.md', 'Also [[Bread 1]].', 'More');
-    expect((await run('link', 'new')).counts).toMatchObject({ note: 1, unresolved: 0 });
-    // A run over everything replaces both, so it makes every link afresh.
-    expect((await run('link', 'all')).counts).toMatchObject({ note: 3, unresolved: 1 });
+    expect((await run('link', 'new')).counts).toMatchObject({ unresolved: 0 });
+    expect(yours()).toEqual(['Index > Bread 1', 'Index > River 2', 'More > Bread 1']);
+
+    // Undoing every link run takes away the cross links it made and none of yours.
+    expect(liveLinks(store.db).some((l) => l.kind === 'cross')).toBe(true);
+    for (const r of listRuns(store.db)) undoRun(store.db, r.id);
+    expect(liveLinks(store.db).some((l) => l.kind === 'cross')).toBe(false);
+    expect(yours()).toEqual(['Index > Bread 1', 'Index > River 2', 'More > Bread 1']);
+    // They follow your text: edit a note and its links change with it.
+    const index = store.allEntries().find((e) => e.title === 'Index')!;
+    store.editEntry(index.id, 'Only [[River 2]] now.', 'you');
+    expect(yours()).toEqual(['Index > River 2', 'More > Bread 1']);
   });
 
   it('review needs hubs first', async () => {
@@ -248,6 +275,62 @@ describe('a quieter review (LS-14)', () => {
     expect(run.message).toMatch(/1 more note may be out of date/);
     // The changes of course come first; the decision about the rye loaf waits.
     expect(titles()).toEqual(['Flour order', 'Oven schedule', 'Sourdough starter']);
+  });
+});
+
+describe('[[links]] the way Obsidian writes them (LS-19)', () => {
+  let store: Store;
+  let record: RecordView;
+  const note = (externalId: string, title: string, i: number, body = `About ${title}.`): EntryInput => ({
+    externalId,
+    kind: 'note',
+    speaker: 'you',
+    title,
+    createdAt: `2025-01-0${i}T00:00:00.000Z`,
+    body,
+  });
+
+  beforeEach(() => {
+    store = new Store(openDb(':memory:'), () => '2026-01-01T00:00:00.000Z');
+    store.ingest({
+      source: { kind: 'notes', label: 'vault', location: '/v' },
+      threads: [],
+      entries: [
+        note('Projects/Plotline/Plan.md', 'Plan', 1),
+        note('Garden/Plan.md', 'Plan', 2),
+        note('Plan.md', 'Plan', 3),
+        note('Recipes\\Rye loaf.md', 'Rye loaf', 4),
+        note('Inbox/Meeting notes.markdown', 'Standup 3 March', 5),
+        note('Index.md', 'Index', 6, 'See [[Garden/Plan|the garden plan]], [[Plotline/Plan#Week 2]] and | [[Rye loaf\\|rye]] |, and [[Nowhere/Plan]].'),
+      ],
+    });
+    record = new RecordView(store);
+  });
+  const at = (target: string) => record.resolveLink(target)?.externalId;
+
+  it('finds a note by its path in the vault, or by the end of it', () => {
+    expect(at('Garden/Plan')).toBe('Garden/Plan.md');
+    expect(at('Projects/Plotline/Plan')).toBe('Projects/Plotline/Plan.md');
+    expect(at('Plotline/Plan')).toBe('Projects/Plotline/Plan.md');
+    expect(at('garden/plan.md')).toBe('Garden/Plan.md');
+    expect(at('Recipes/Rye loaf')).toBe('Recipes\\Rye loaf.md');
+    // The end of a path is whole folders, and a path that names no note names none, even when its file name does.
+    expect(at('lotline/Plan')).toBeUndefined();
+    expect(at('Nowhere/Plan')).toBeUndefined();
+  });
+
+  it('finds a note by file name or title, the vault root first when names are shared', () => {
+    expect(at('Plan')).toBe('Plan.md');
+    expect(at('Meeting notes')).toBe('Inbox/Meeting notes.markdown');
+    expect(at('Standup 3 March')).toBe('Inbox/Meeting notes.markdown');
+    expect(at('Rye loaf.md')).toBe('Recipes\\Rye loaf.md');
+  });
+
+  it('reads aliases, headings and the escaped pipe a table needs, and links the notes they name', () => {
+    const index = record.entries.find((e) => e.title === 'Index')!;
+    expect(linkTargets(index.body).map(at)).toEqual(['Garden/Plan.md', 'Projects/Plotline/Plan.md', 'Recipes\\Rye loaf.md', undefined]);
+    const to = liveLinks(store.db, index.id).map((l) => store.getEntry(l.to)!.externalId);
+    expect(to).toEqual(['Garden/Plan.md', 'Projects/Plotline/Plan.md', 'Recipes\\Rye loaf.md']);
   });
 });
 
