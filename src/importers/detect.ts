@@ -1,12 +1,13 @@
+import { createHash } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { openZipSafe, readSafe, UnsafeFileError, type UnsafeReason } from '../fsafe.ts';
-import type { EntryInput, ImportBatch, ThreadInput } from '../store/store.ts';
+import type { EntryInput, ImportBatch, Origin, ThreadInput } from '../store/store.ts';
 import { parseChatGPT, parseClaude, parseClaudeCodeSession, parseCodexSession, parseGemini } from './chats.ts';
 import { noteEntry, parseNote } from './notes.ts';
-import { asArray, isObj, parseJsonl } from './util.ts';
+import { asArray, FileReport, isObj, parseJsonl, str } from './util.ts';
 
 export interface ImportOptions {
   /** Whose words a notes folder holds: 'you' (default) or a person's name. */
@@ -20,11 +21,42 @@ export interface ImportOptions {
   onWarning?: (message: string) => void;
 }
 
-/** A file's contents, from disk or from inside a zip. Reading it may throw; collect() skips that file alone. */
+/** The names exports come under: one that won't parse is named, unlike any other JSON file that won't. */
+const EXPORT_NAME = /^(conversations|MyActivity)\.json$/i;
+
+/**
+ * A file's contents, from disk or from inside a zip. Reading it may throw; collect() skips that file alone. A file on
+ * disk also gives the SHA-256 of its bytes, its origin; a file inside a zip has the zip's.
+ */
 interface RawFile {
   path: string;
-  text: () => string;
+  read: () => { text: string; sha256?: string };
   modifiedAt: Date;
+}
+
+/**
+ * The account an export claims, as a fingerprint: the SHA-256 of its kind and user id, never the id itself. The store
+ * holds back an export whose fingerprint differs from the one its source was first imported with.
+ */
+export function accountFingerprint(kind: string, id: string): string {
+  return createHash('sha256').update(`${kind}\0${id}`).digest('hex').slice(0, 32);
+}
+
+/** The user id in a Claude export (each conversation's account.uuid, or users.json) or ChatGPT's user.json. */
+function accountId(kind: 'chatgpt' | 'claude' | 'gemini' | 'users', data: unknown): string | null {
+  if (kind === 'claude') {
+    for (const conv of asArray(data)) {
+      const id = isObj(conv) && isObj(conv.account) ? str(conv.account.uuid) : undefined;
+      if (id) return id;
+    }
+    return null;
+  }
+  if (kind === 'users') {
+    // Claude's users.json is a list of one; ChatGPT's user.json is one object.
+    const user = Array.isArray(data) ? data[0] : data;
+    return isObj(user) ? (str(user.uuid) ?? str(user.id) ?? null) : null;
+  }
+  return null;
 }
 
 function warner(options: ImportOptions): (message: string) => void {
@@ -60,7 +92,14 @@ export function sniffSession(text: string): 'claude-code' | 'codex' | null {
 
 /** A file found in a folder: read through fsafe, never through a link, and only inside the folder. */
 function fileUnder(root: string, full: string, modifiedAt: Date): RawFile {
-  return { path: full, text: () => readSafe(full, { root }).bytes.toString('utf8'), modifiedAt };
+  return {
+    path: full,
+    read: () => {
+      const file = readSafe(full, { root });
+      return { text: file.bytes.toString('utf8'), sha256: file.sha256 };
+    },
+    modifiedAt,
+  };
 }
 
 function walk(root: string, warn: (message: string) => void): RawFile[] {
@@ -94,14 +133,14 @@ function wantedName(name: string): boolean {
 }
 
 /** The zip's entries, inflated one at a time when collect() reads them. Close the zip afterwards. */
-function unzip(file: string): { files: RawFile[]; close: () => void } {
+function unzip(file: string): { files: RawFile[]; origin: Origin; close: () => void } {
   const zip = openZipSafe(file, { followLink: true, filter: wantedName });
   const files = zip.entries.map((entry) => ({
     path: entry.name,
-    text: () => Buffer.from(zip.read(entry)).toString('utf8'),
+    read: () => ({ text: Buffer.from(zip.read(entry)).toString('utf8') }),
     modifiedAt: zip.mtime,
   }));
-  return { files, close: zip.close };
+  return { files, origin: { path: zip.path, sha256: zip.sha256 }, close: zip.close };
 }
 
 /**
@@ -116,19 +155,19 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
   const isZip = stat.isFile() && extname(abs).toLowerCase() === '.zip';
   let batches: ImportBatch[];
   if (stat.isDirectory()) {
-    batches = collect(walk(abs, warn), abs, (p) => relative(abs, p), options, warn);
+    batches = collect(walk(abs, warn), abs, (p) => relative(abs, p), options, warn, null);
   } else if (isZip) {
     const zip = unzip(abs);
     try {
-      batches = collect(zip.files, abs, (p) => p, options, warn);
+      batches = collect(zip.files, abs, (p) => p, options, warn, zip.origin);
     } finally {
       zip.close();
     }
   } else {
     // A single named file: refused outright (a FIFO, a device, too big) rather than skipped, so the person hears why.
     const file = readSafe(abs, { followLink: true });
-    const raw = { path: abs, text: () => file.bytes.toString('utf8'), modifiedAt: file.mtime };
-    batches = collect([raw], dirname(abs), (p) => relative(dirname(abs), p), options, warn);
+    const raw = { path: abs, read: () => ({ text: file.bytes.toString('utf8') }), modifiedAt: file.mtime };
+    batches = collect([raw], dirname(abs), (p) => relative(dirname(abs), p), options, warn, { path: file.path, sha256: file.sha256 });
   }
   if (!batches.length && !options.emptyOk) throw new Error(`Nothing to import in ${path}`);
   return batches;
@@ -198,27 +237,37 @@ export function readFilesUnder(root: string, paths: string[], options: ImportOpt
     // A link, a folder or a FIFO is refused by the read itself, with a warning, and skipped alone.
     files.push(fileUnder(abs, full, mtime));
   }
-  return collect(files, abs, (p) => relative(abs, p), options, warn);
+  return collect(files, abs, (p) => relative(abs, p), options, warn, null);
 }
 
+/**
+ * Parses the files into one batch per source. `container` is the zip or single file they came from: it is every
+ * batch's origin. Files from a folder have none, so each export batch, session thread and note carries its own file.
+ */
 function collect(
   files: RawFile[],
   root: string,
   rel: (p: string) => string,
   options: ImportOptions,
   warn: (message: string) => void,
+  container: Origin | null,
 ): ImportBatch[] {
   const batches: ImportBatch[] = [];
   const sessions: Record<'claude-code' | 'codex', ThreadInput[]> = { 'claude-code': [], codex: [] };
   const notes: EntryInput[] = [];
+  // users.json / user.json next to an export names its account; matched to the export after the loop.
+  const users = new Map<string, string>();
 
   for (const f of files) {
     const ext = extname(f.path).toLowerCase();
     if (ext !== '.json' && ext !== '.jsonl' && !NOTE_EXT.has(ext)) continue;
     const name = basename(f.path);
     let text: string;
+    let origin: Origin | null;
     try {
-      text = f.text();
+      const read = f.read();
+      text = read.text;
+      origin = container ?? (read.sha256 ? { path: f.path, sha256: read.sha256 } : null);
     } catch (error) {
       // One file that can't or mustn't be read never stops the others.
       if (error instanceof UnsafeFileError || (error as NodeJS.ErrnoException).code) {
@@ -227,38 +276,62 @@ function collect(
       }
       throw error;
     }
-    if (ext === '.json') {
-      let data: unknown;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        continue;
+    // Each entry in the file is parsed on its own and a bad one named in the report; this try is for the file as a whole.
+    const report = new FileReport(rel(f.path), warn);
+    try {
+      if (ext === '.json') {
+        let data: unknown;
+        try {
+          data = JSON.parse(text);
+        } catch (error) {
+          // Any JSON file is looked at, so only an export's own name is worth a word.
+          if (EXPORT_NAME.test(name)) report.skip('', `it is not valid JSON (${(error as Error).message})`, 'file');
+          continue;
+        }
+        const kind = sniffExport(data);
+        const parse = kind === 'chatgpt' ? parseChatGPT : kind === 'claude' ? parseClaude : kind === 'gemini' ? parseGemini : null;
+        if (parse && kind) {
+          const id = accountId(kind, data);
+          batches.push({ ...parse(data, report), origin, account: id ? accountFingerprint(kind, id) : null });
+        } else if (/^users?\.json$/i.test(name)) {
+          const id = accountId('users', data);
+          if (id) users.set(dirname(f.path), id);
+        }
+      } else if (ext === '.jsonl') {
+        const kind = sniffSession(text);
+        const id = name.replace(/\.jsonl$/i, '');
+        const own = container ? {} : { origin };
+        if (kind === 'claude-code') sessions['claude-code'].push({ ...parseClaudeCodeSession(text, id, report), ...own });
+        else if (kind === 'codex') sessions.codex.push({ ...parseCodexSession(text, id, report), ...own });
+      } else {
+        const note = report.each('', () => noteEntry(rel(f.path), parseNote(name, text, f.modifiedAt)));
+        if (note) notes.push({ ...note, ...(container ? {} : { origin }) });
       }
-      const kind = sniffExport(data);
-      if (kind === 'chatgpt') batches.push(parseChatGPT(data));
-      else if (kind === 'claude') batches.push(parseClaude(data));
-      else if (kind === 'gemini') batches.push(parseGemini(data));
-    } else if (ext === '.jsonl') {
-      const kind = sniffSession(text);
-      const id = name.replace(/\.jsonl$/i, '');
-      if (kind === 'claude-code') sessions['claude-code'].push(parseClaudeCodeSession(text, id));
-      else if (kind === 'codex') sessions.codex.push(parseCodexSession(text, id));
-    } else {
-      notes.push(noteEntry(rel(f.path), parseNote(name, text, f.modifiedAt)));
+    } catch (error) {
+      report.skip('', error instanceof Error ? error.message : String(error), 'file');
+    } finally {
+      report.done();
     }
+  }
+  // An export without an account of its own takes the one its users.json names, from the same folder.
+  for (const batch of batches) {
+    const dir = batch.origin && !container ? dirname(batch.origin.path) : null;
+    const id = users.get(dir ?? '') ?? (container && users.size === 1 ? [...users.values()][0] : undefined);
+    if (!batch.account && id) batch.account = accountFingerprint(batch.source.kind, id);
   }
 
   if (sessions['claude-code'].length) {
-    batches.push({ source: { kind: 'claude-code', label: 'Claude Code', location: root }, threads: sessions['claude-code'] });
+    batches.push({ source: { kind: 'claude-code', label: 'Claude Code', location: root }, threads: sessions['claude-code'], origin: container });
   }
   if (sessions.codex.length) {
-    batches.push({ source: { kind: 'codex', label: 'Codex', location: root }, threads: sessions.codex });
+    batches.push({ source: { kind: 'codex', label: 'Codex', location: root }, threads: sessions.codex, origin: container });
   }
   if (notes.length) {
     batches.push({
       source: { kind: 'notes', label: basename(root), location: root, owner: options.owner ?? 'you' },
       threads: [],
       entries: notes,
+      origin: container,
     });
   }
   return batches;
