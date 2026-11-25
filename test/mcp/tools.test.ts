@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { notesDir } from '../../src/notes.ts';
 import { ACCESS_FILE, allowAgent, denyAgent, type Scope, setLocked } from '../../src/mcp/access.ts';
 import { memoryServer } from '../../src/mcp/commands.ts';
+import { FRAME_CLOSE, FRAME_OPEN, MAX_CALL_BYTES, MAX_SESSION_BYTES } from '../../src/mcp/frame.ts';
 import type { McpServer } from '../../src/mcp/protocol.ts';
 import type { Caller } from '../../src/mcp/session.ts';
 import { AGENT_SCHEMA } from '../../src/mcp/tags.ts';
@@ -13,6 +14,7 @@ import { RecordView } from '../../src/organiser/record.ts';
 import { getRun, listRuns } from '../../src/organiser/runs.ts';
 import { findSchema, liveHubs, liveTags } from '../../src/organiser/views.ts';
 import type { Store } from '../../src/store/store.ts';
+import { keyShaped } from '../samples.ts';
 import { call, context, demoRecord, initialize, MODERN_VERSION, rpc } from './helpers.ts';
 
 // The memory server's twelve tools, called as an agent would, against a record holding the demo. The agent is the one
@@ -52,8 +54,8 @@ afterEach(() => {
 async function firstHit(query: string): Promise<{ id: number; thread: { id: number } | null }> {
   const res = await call(server, 'search', { query });
   expect(res.isError).toBe(false);
-  expect(res.json.hits.length).toBeGreaterThan(0);
-  return res.json.hits[0];
+  expect(res.json.entries.length).toBeGreaterThan(0);
+  return res.json.entries[0];
 }
 
 describe('who may use the tools', () => {
@@ -182,11 +184,13 @@ describe('reading the record', () => {
   it('search finds entries with a snippet, and checks its arguments', async () => {
     const res = await call(server, 'search', { query: 'sourdough starter', limit: 3 });
     expect(res.isError).toBe(false);
-    expect(res.json.hits.length).toBeLessThanOrEqual(3);
-    expect(res.json.hits[0]).toMatchObject({ id: expect.any(Number), date: expect.any(String), speaker: expect.any(String), snippet: expect.any(String) });
+    expect(res.json).toMatchObject({ untrusted: true, source: 'skeinwise/search', query: 'sourdough starter', truncated: false });
+    expect(res.json.entries.length).toBeLessThanOrEqual(3);
+    expect(res.json.entries[0]).toMatchObject({ id: expect.any(Number), date: expect.any(String), speaker: expect.any(String), snippet: expect.any(String) });
     const mine = await call(server, 'search', { query: 'starter', speaker: 'you' });
-    expect(mine.json.hits.every((h: { speaker: string }) => h.speaker === 'you')).toBe(true);
-    expect((await call(server, 'search', { query: 'starter', limit: 0 })).text).toBe('limit must be a whole number from 1 to 50.');
+    expect(mine.json.entries.every((h: { speaker: string }) => h.speaker === 'you')).toBe(true);
+    expect((await call(server, 'search', { query: 'starter', limit: 0 })).text).toBe('limit must be a whole number from 1 to 20.');
+    expect((await call(server, 'search', { query: 'starter', limit: 21 })).text).toBe('limit must be a whole number from 1 to 20.');
     expect((await call(server, 'search', {})).text).toBe('Give query.');
     expect((await call(server, 'search', { query: 'starter', from: 'last tuesday' })).text).toMatch(/^from must be a date/);
   });
@@ -195,19 +199,23 @@ describe('reading the record', () => {
     const res = await call(server, 'ask', { question: 'When did I first mention my sourdough starter?' });
     expect(res.isError).toBe(false);
     expect(res.json.question).toBe('When did I first mention my sourdough starter?');
-    expect(res.json.hits.length).toBeGreaterThan(0);
-    expect(res.json.hits[0]).toMatchObject({ entryId: expect.any(Number), date: expect.any(String), quote: expect.any(String) });
+    expect(res.json.entries.length).toBeGreaterThan(0);
+    expect(res.json.entries[0]).toMatchObject({ id: expect.any(Number), date: expect.any(String), quote: expect.any(String) });
   });
 
   it("read_entry gives the whole text with each version's editor; read_thread pages through the conversation", async () => {
     const hit = await firstHit('starter');
     const entry = await call(server, 'read_entry', { entry_id: hit.id });
-    expect(entry.json).toMatchObject({ id: hit.id, body: store.getEntry(hit.id)!.body, versions: [{ version: 1, editor: expect.any(String) }] });
+    const body = store.getEntry(hit.id)!.body;
+    expect(entry.json.entries).toEqual([
+      expect.objectContaining({ id: hit.id, body, body_length: body.length, body_offset: 0, versions: [{ version: 1, editor: expect.any(String), date: expect.any(String) }] }),
+    ]);
+    expect((await call(server, 'read_entry', { entry_id: hit.id, body_offset: 5 })).json.entries[0].body).toBe(body.slice(5));
     const threadId = (await firstHit('starter')).thread?.id ?? store.allEntries().find((e) => e.threadId !== null)!.threadId!;
     const total = store.threadEntries(threadId).length;
     const first = await call(server, 'read_thread', { thread_id: threadId, limit: 1 });
     expect(first.json).toMatchObject({ thread: { id: threadId, messages: total }, offset: 0 });
-    expect(first.json.messages).toHaveLength(1);
+    expect(first.json.entries).toHaveLength(1);
     expect(first.json.next_offset).toBe(total > 1 ? 1 : null);
     expect((await call(server, 'read_entry', { entry_id: 999_999 })).text).toBe('There is no entry 999999 in the record.');
     expect((await call(server, 'read_entry', { entry_id: 'one' })).text).toBe('Give entry_id as a whole number.');
@@ -216,8 +224,8 @@ describe('reading the record', () => {
   it('timeline lists entries by date, a bare day reaching to its end', async () => {
     const all = store.allEntries().map((e) => e.createdAt).sort();
     const day = all[0]!.slice(0, 10);
-    const res = await call(server, 'timeline', { from: day, to: day, limit: 100 });
-    const expected = all.filter((d) => d.slice(0, 10) === day);
+    const res = await call(server, 'timeline', { from: day, to: day, limit: 20 });
+    const expected = all.filter((d) => d.slice(0, 10) === day).slice(0, 20);
     expect(res.json.entries.map((e: { date: string }) => e.date)).toEqual(expected);
     const newest = await call(server, 'timeline', { newest_first: true, limit: 2 });
     expect(newest.json.entries.map((e: { date: string }) => e.date)).toEqual([...all].reverse().slice(0, 2));
@@ -225,15 +233,23 @@ describe('reading the record', () => {
   });
 
   it("list_hubs and read_hub show the organiser's hubs, each point citing an entry", async () => {
-    expect((await call(server, 'list_hubs')).json).toEqual({ hubs: [] });
+    expect((await call(server, 'list_hubs')).json).toEqual({
+      untrusted: true,
+      source: 'skeinwise/list_hubs',
+      hubs: 0,
+      offset: 0,
+      next_offset: null,
+      truncated: false,
+      entries: [],
+    });
     await runSteps(store, new RecordView(store), steps(store, 'all'), NONE);
     const hubs = liveHubs(store.db);
     expect(hubs.length).toBeGreaterThan(0);
     const listed = await call(server, 'list_hubs');
-    expect(listed.json.hubs.map((h: { id: number }) => h.id)).toEqual(hubs.map((h) => h.id));
+    expect(listed.json.entries.map((h: { id: number }) => h.id)).toEqual(hubs.slice(0, 20).map((h) => h.id));
     const hub = await call(server, 'read_hub', { hub_id: hubs[0]!.id });
-    expect(hub.json).toMatchObject({ id: hubs[0]!.id, name: hubs[0]!.name, sections: { in_short: expect.any(Array) } });
-    expect(hub.json.entry_ids.length).toBeGreaterThan(0);
+    expect(hub.json.entries[0]).toMatchObject({ id: hubs[0]!.id, name: hubs[0]!.name, sections: { in_short: expect.any(Array) } });
+    expect(hub.json.entries[0].entry_ids.length).toBeGreaterThan(0);
     expect((await call(server, 'read_hub', { hub_id: 999_999 })).text).toBe('There is no hub 999999. list_hubs names them.');
   });
 });
@@ -245,10 +261,10 @@ describe('writing to the record', () => {
     expect(readFileSync(join(home, 'notes', 'rye-plan.md'), 'utf8')).toContain('agent: claude-code');
     const again = await call(server, 'write_note', { title: 'Rye plan', body: 'Try 78% hydration.' });
     expect(again.json).toMatchObject({ entry_id: made.json.entry_id, created: false, version: 2 });
-    const read = await call(server, 'read_entry', { entry_id: made.json.entry_id });
-    expect(read.json).toMatchObject({ speaker: 'claude-code', body: '# Rye plan\n\nTry 78% hydration.' });
-    expect(read.json.versions.map((v: { editor: string }) => v.editor)).toEqual(['claude-code', 'claude-code']);
-    expect((await call(server, 'search', { query: 'hydration' })).json.hits.map((h: { id: number }) => h.id)).toContain(made.json.entry_id);
+    const read = (await call(server, 'read_entry', { entry_id: made.json.entry_id })).json.entries[0];
+    expect(read).toMatchObject({ speaker: 'claude-code', body: '# Rye plan\n\nTry 78% hydration.' });
+    expect(read.versions.map((v: { editor: string }) => v.editor)).toEqual(['claude-code', 'claude-code']);
+    expect((await call(server, 'search', { query: 'hydration' })).json.entries.map((h: { id: number }) => h.id)).toContain(made.json.entry_id);
   });
 
   it("write_note can't change a note of yours", async () => {
@@ -316,5 +332,67 @@ describe('writing to the record', () => {
     expect((await call(server, 'read_entry', { entry_id: entryId })).isError).toBe(true);
     expect((await call(server, 'read_thread', { thread_id: threadId })).text).toBe(`There is no thread ${threadId} in the record.`);
     expect((await call(server, 'not_mine', { thread_id: threadId })).isError).toBe(true);
+  });
+});
+
+describe('what a session gets back', () => {
+  it('frames every tool result as untrusted data from the record', async () => {
+    const hit = await firstHit('starter');
+    for (const [name, args] of [
+      ['search', { query: 'starter' }],
+      ['ask', { question: 'When did I first mention my sourdough starter?' }],
+      ['read_entry', { entry_id: hit.id }],
+      ['timeline', { limit: 2 }],
+      ['list_hubs', {}],
+      ['write_note', { title: 'Framed', body: 'Yes.' }],
+    ] as const) {
+      const res = await call(server, name, args);
+      expect(res.isError).toBe(false);
+      expect(res.text.split('\n')).toEqual([FRAME_OPEN, expect.any(String), FRAME_CLOSE]);
+      expect(res.json).toMatchObject({ untrusted: true, source: `skeinwise/${name}`, truncated: false, entries: expect.any(Array) });
+    }
+  });
+
+  it('redacts a key planted in an entry', async () => {
+    const key = keyShaped('gh', 'p_', 'Zq4mW8rT2xK9bN3vL6pY1sD5fH7jC0aE3gU8');
+    const made = await call(server, 'write_note', { title: 'Deploy notes', body: `The deploy token is ${key}, keep it safe.` });
+    const read = await call(server, 'read_entry', { entry_id: made.json.entry_id });
+    expect(read.text).not.toContain(key);
+    expect(read.json.entries[0].body).toMatch(/The deploy token is \[SECRET_\d+\], keep it safe\./);
+    const found = await call(server, 'search', { query: 'deploy token' });
+    expect(found.text).not.toContain(key);
+  });
+
+  it('cuts a 33 KB entry to 32 KB with truncated: true, and reads on from body_offset', async () => {
+    const body = 'Rye starter log. '.repeat(Math.ceil((33 * 1024) / 17));
+    const made = await call(server, 'write_note', { title: 'Long log', body });
+    const read = await call(server, 'read_entry', { entry_id: made.json.entry_id });
+    expect(Buffer.byteLength(read.text)).toBeLessThanOrEqual(MAX_CALL_BYTES);
+    expect(read.json.truncated).toBe(true);
+    const got = read.json.entries[0].body.slice(0, -1) as string;
+    const rest = await call(server, 'read_entry', { entry_id: made.json.entry_id, body_offset: got.length });
+    expect(rest.json.truncated).toBe(false);
+    expect(got + rest.json.entries[0].body).toBe(store.getEntry(made.json.entry_id)!.body);
+  });
+
+  it('refuses a session its 501st KB', async () => {
+    const made = await call(server, 'write_note', { title: 'Big', body: 'B'.repeat(40_000) });
+    const reader = await open('reader');
+    let total = 0;
+    let calls = 0;
+    for (;;) {
+      const res = await call(reader, 'read_entry', { entry_id: made.json.entry_id });
+      if (res.isError) {
+        expect(res.text).toMatch(/^This session has had 500 KB of the record/);
+        break;
+      }
+      total += Buffer.byteLength(res.text);
+      calls += 1;
+      expect(calls).toBeLessThan(40);
+    }
+    expect(total).toBeLessThanOrEqual(MAX_SESSION_BYTES);
+    expect(total).toBeGreaterThan(MAX_SESSION_BYTES - 1024);
+    expect((await call(reader, 'search', { query: 'starter' })).text).toMatch(/^This session has had 500 KB/);
+    expect((await call(await open('another'), 'search', { query: 'starter' })).isError).toBe(false);
   });
 });
