@@ -58,7 +58,7 @@ export function safeLine(text: string): string {
 export function safeJson(value: unknown, space?: number): string {
   const text = JSON.stringify(value, null, space) as string | undefined;
   if (text === undefined) throw new TypeError(`Can't write ${typeof value} as JSON`);
-  return text.replace(/[\u007f-\u009f‪-‮⁦-⁩]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return text.replace(/[\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 /** The two ways a command prints. */
