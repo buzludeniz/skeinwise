@@ -70,7 +70,17 @@ export function newNote(store: Store, home: string, title: string, now: Date): N
   return { path, created: true, entryId: readBack(store, dir, path) };
 }
 
-/** Reads the notes folder into the record as your words, and returns the entry for one file in it. */
+/**
+ * Reads the record folder's notes into the record as your words, so an edit made in any editor becomes a version of
+ * the same entry. Writing a note does this, and so do a run and a question before they read the record.
+ */
+export function readNotes(store: Store, home: string): void {
+  const dir = notesDir(home);
+  if (!existsSync(dir)) return;
+  for (const batch of readImports(dir, { emptyOk: true })) if (batch.source.kind === 'notes') store.ingest(batch, 'you');
+}
+
+/** Reads the notes folder into the record, and returns the entry for one file in it. */
 function readBack(store: Store, dir: string, path: string): number {
   for (const batch of readImports(dir)) if (batch.source.kind === 'notes') store.ingest(batch, 'you');
   const row = store.db

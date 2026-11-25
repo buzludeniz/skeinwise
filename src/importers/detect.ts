@@ -9,6 +9,8 @@ import { asArray, isObj, parseJsonl } from './util.ts';
 export interface ImportOptions {
   /** Whose words a notes folder holds: 'you' (default) or a person's name. */
   owner?: string;
+  /** Return no batches, instead of failing, when there is nothing to import (the record folder's own notes). */
+  emptyOk?: boolean;
 }
 
 /** A file's contents, from disk or from inside a zip. */
@@ -116,6 +118,6 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
       entries: notes,
     });
   }
-  if (!batches.length) throw new Error(`Nothing to import in ${path}`);
+  if (!batches.length && !options.emptyOk) throw new Error(`Nothing to import in ${path}`);
   return batches;
 }
