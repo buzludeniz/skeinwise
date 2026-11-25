@@ -7,11 +7,26 @@ import { buildThreads, DEMO_NOW, writeDemo } from '../src/demo/demo.ts';
 
 let dir: string;
 
-function cli(...argv: string[]) {
+interface Call {
+  home?: string;
+  fetch?: typeof globalThis.fetch;
+  env?: Record<string, string>;
+}
+
+async function call(opts: Call, ...argv: string[]) {
   let out = '';
   let err = '';
-  const code = main(argv, { out: (t) => (out += t), err: (t) => (err += t), env: { SKEINWISE_HOME: join(dir, 'home') } });
+  const code = await main(argv, {
+    out: (t) => (out += t),
+    err: (t) => (err += t),
+    env: { SKEINWISE_HOME: opts.home ?? join(dir, 'home'), ...opts.env },
+    ...(opts.fetch ? { fetch: opts.fetch } : {}),
+  });
   return { code, out, err };
+}
+
+function cli(...argv: string[]) {
+  return call({}, ...argv);
 }
 
 beforeEach(() => {
@@ -22,63 +37,64 @@ afterEach(() => {
 });
 
 describe('the skeinwise command', () => {
-  it('prints help and version', () => {
-    expect(cli('help').out).toContain('Usage: skeinwise');
-    expect(cli('version').out).toMatch(/^\d+\.\d+\.\d+\n$/);
+  it('prints help and version', async () => {
+    expect((await cli('help')).out).toContain('Usage: skeinwise');
+    expect((await cli('version')).out).toMatch(/^\d+\.\d+\.\d+\n$/);
+    expect(JSON.parse((await cli('version', '--json')).out)).toEqual({ version: expect.stringMatching(/^\d+\.\d+\.\d+$/) });
   });
 
-  it('creates an owner-only record folder', () => {
-    expect(cli('init')).toMatchObject({ code: 0 });
+  it('creates an owner-only record folder', async () => {
+    expect(JSON.parse((await cli('init', '--json')).out)).toEqual({ home: join(dir, 'home') });
     expect(statSync(join(dir, 'home')).mode & 0o777).toBe(0o700);
     expect(statSync(join(dir, 'home', 'record.db')).isFile()).toBe(true);
   });
 
-  it('imports, searches, shows and re-imports without duplicates', () => {
+  it('imports, searches, shows and re-imports without duplicates', async () => {
     const notes = join(dir, 'vault');
     mkdirSync(notes);
     writeFileSync(join(notes, 'bread.md'), '---\ntitle: Bread\ncreated: 2025-01-02\n---\nThe rye loaf needs a long proof. #baking');
     writeFileSync(join(notes, '2025-01-03.md'), 'Baked the rye loaf for the market.');
 
-    const first = cli('import', notes, '--json');
+    const first = await cli('import', notes, '--json');
     expect(first.code).toBe(0);
     expect(JSON.parse(first.out)).toEqual([expect.objectContaining({ kind: 'notes', added: 2 })]);
-    expect(cli('import', notes).out).toContain('0 new, 0 changed, 2 already in');
+    expect((await cli('import', notes)).out).toContain('0 new, 0 changed, 2 already in');
 
-    const search = cli('search', 'rye', 'loaf');
+    const search = await cli('search', 'rye', 'loaf');
     expect(search.out).toMatch(/#\d+ {2}2025-01-0\d {2}you · vault/);
     expect(search.out).toContain('[rye] [loaf]');
 
-    const hits = JSON.parse(cli('search', 'rye', '--json', '--limit', '1').out) as { id: number }[];
+    const hits = JSON.parse((await cli('search', 'rye', '--json', '--limit', '1')).out) as { id: number }[];
     expect(hits).toHaveLength(1);
-    const show = cli('show', String(hits[0]!.id));
+    const show = await cli('show', String(hits[0]!.id));
     expect(show.out).toMatch(/rye loaf/);
-    expect(cli('history', String(hits[0]!.id)).out).toMatch(/^v1 .* by import/);
+    expect((await cli('history', String(hits[0]!.id))).out).toMatch(/^v1 .* by import/);
 
-    expect(cli('stats').out).toContain('Woven from 2 entries');
-    expect(cli('sources').out).toMatch(/1 {2}in {4}vault \(notes\): 2 entries/);
-    expect(cli('exclude', '1').code).toBe(0);
-    expect(cli('search', 'rye').out).toContain('Nothing found');
-    expect(cli('include', '1').code).toBe(0);
-    expect(cli('search', 'rye').out).toContain('[rye]');
+    expect((await cli('stats')).out).toContain('Woven from 2 entries');
+    expect((await cli('sources')).out).toMatch(/1 {2}in {4}vault \(notes\): 2 entries/);
+    expect(JSON.parse((await cli('exclude', '1', '--json')).out)).toEqual({ source: 1, status: 'out' });
+    expect((await cli('search', 'rye')).out).toContain('Nothing found');
+    expect((await cli('include', '1')).code).toBe(0);
+    expect((await cli('search', 'rye')).out).toContain('[rye]');
   });
 
-  it('keeps someone else’s notes under their name', () => {
+  it('keeps someone else’s notes under their name', async () => {
     const notes = join(dir, 'mara');
     mkdirSync(notes);
     writeFileSync(join(notes, 'route.md'), 'Split the ride at the reservoir.');
-    cli('import', notes, '--owner', 'Mara');
-    expect(cli('search', 'reservoir', '--speaker', 'Mara').out).toContain('Mara · mara');
-    expect(cli('search', 'reservoir', '--speaker', 'you').out).toContain('Nothing found');
+    await cli('import', notes, '--owner', 'Mara');
+    expect((await cli('search', 'reservoir', '--speaker', 'Mara')).out).toContain('Mara · mara');
+    expect((await cli('search', 'reservoir', '--speaker', 'you')).out).toContain('Nothing found');
   });
 
-  it('fails loudly with usage errors', () => {
-    expect(cli('nope')).toMatchObject({ code: 2, err: expect.stringContaining('Unknown command: nope') });
-    expect(cli('show')).toMatchObject({ code: 2, err: expect.stringContaining('entry number') });
-    expect(cli('show', '99')).toMatchObject({ code: 2, err: expect.stringContaining('No entry 99') });
-    expect(cli('import')).toMatchObject({ code: 2 });
-    expect(cli('search')).toMatchObject({ code: 2 });
-    expect(cli('import', join(dir, 'missing'))).toMatchObject({ code: 1, err: expect.stringContaining('ENOENT') });
-    expect(cli('search', 'x', '--bogus').code).toBe(1);
+  it('fails loudly with usage errors', async () => {
+    expect(await cli('nope')).toMatchObject({ code: 2, err: expect.stringContaining('Unknown command: nope') });
+    expect(await cli('show')).toMatchObject({ code: 2, err: expect.stringContaining('entry number') });
+    expect(await cli('show', '99')).toMatchObject({ code: 2, err: expect.stringContaining('No entry 99') });
+    expect(await cli('import')).toMatchObject({ code: 2 });
+    expect(await cli('search')).toMatchObject({ code: 2 });
+    expect(await cli('import', join(dir, 'missing'))).toMatchObject({ code: 1, err: expect.stringContaining('ENOENT') });
+    expect((await cli('search', 'x', '--bogus')).code).toBe(1);
   });
 });
 
@@ -97,18 +113,18 @@ describe('the demo record', () => {
     expect(claude.length).toBeGreaterThan(10);
   });
 
-  it('builds a searchable record and refuses to mix with a real one', () => {
-    const run = cli('demo', '--json');
+  it('builds a searchable record and refuses to mix with a real one', async () => {
+    const run = await cli('demo', '--json');
     expect(run.code).toBe(0);
     const result = JSON.parse(run.out) as { threads: number; results: { source: string; added: number }[] };
     expect(result.results.map((r) => r.source)).toEqual(['ChatGPT', 'Claude', 'Claude Code', 'notes']);
     expect(result.results.every((r) => r.added > 0)).toBe(true);
 
-    const decisions = cli('search', 'what did I decide about sqlite', '--limit', '3').out;
+    const decisions = (await cli('search', 'what did I decide about sqlite', '--limit', '3')).out;
     expect(decisions).toContain('Plotline runs on [SQLite]');
     expect(decisions).toContain('Changing my mind on [SQLite]');
 
-    expect(cli('demo')).toMatchObject({ code: 2, err: expect.stringContaining('is not empty') });
-    expect(cli('demo', '--force').code).toBe(0);
+    expect(await cli('demo')).toMatchObject({ code: 2, err: expect.stringContaining('is not empty') });
+    expect((await cli('demo', '--force')).code).toBe(0);
   });
 });

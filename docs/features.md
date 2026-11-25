@@ -1,5 +1,8 @@
 # Skeinwise: features
 
+This is the whole design. Parts not built yet are marked *(planned)* with the release that brings them; the
+README's roadmap has the order, and [organiser.md](organiser.md) says exactly what the organiser does today.
+
 ## The record
 
 The record is one SQLite file, `~/.skeinwise/record.db`, plus Markdown notes in `~/.skeinwise/notes`.
@@ -35,15 +38,15 @@ an import.
 
 - Full-text search with stemming over titles and bodies (SQLite FTS5), ranked by relevance, with your own words ranked
   above an assistant's.
-- Filters: source, speaker, date range, folder and tag.
-- **Similar entries:** by term vectors (TF-IDF cosine), so related entries turn up even without shared words.
-- Results can be lit up as points in the brain.
+- Filters: source, speaker and date range. Folder and tag filters are *(planned, v0.4)*.
+- **Similar entries:** by term vectors (TF-IDF cosine): entries that share rare words rank closest.
+- Results can be lit up as points in the brain *(planned, v0.4)*.
 
 ## Ask
 
-A question in plain words becomes a view. Search gathers the candidate entries, the engine picks the ones that answer
-the question, and they are listed by date with your own quotes first. Patterns include "when did I first …", "what
-did I decide about …" and "what changed in my thinking on …".
+A question in plain words becomes a view. Search and a few rules gather the entries that answer it. Three patterns
+list them in date order: "when did I first …", "what did I decide about …" and "what changed in my thinking on …".
+Any other question lists the best matches with your own words first.
 
 - **With the local model (the default) or an outside model,** a short answer sits on top and cites the entry ids it
   rests on. Ids that aren't among the candidates are refused, so an answer can't cite an entry that doesn't exist.
@@ -62,16 +65,17 @@ did I decide about …" and "what changed in my thinking on …".
 
 - **Each pass is a run,** with its task, engine, model, scope, status, counts, token use, and start and end times.
 - Everything a run makes records the run's id, and **Undo run** deletes all of it.
-- **Scope:** everything, a source, a folder, a date range, or `new` (entries added since that task's last successful
+- **Scope:** everything, a source, a date range, a folder *(planned)*, or `new` (entries added since that task's last successful
   run, which is what background organising uses).
-- A run over a large scope shows a size estimate first and waits for approval.
+- `--preview` shows every request a run would send, without sending it. A model run over more than 500 entries
+  stops at its size estimate until you add `--yes`.
 
 ## Engines
 
 Skeinwise has its own built-in AI: a small model that runs on your computer. It is the default, and it does the work
 that needs judgement: hub summaries, folder proposals and names, the staleness review with its reasons and proposed
-updates, answers to questions, and the derived layers. Tagging, linking and similarity lean on statistics first and
-ask the model only where the statistics are unsure.
+updates, answers to questions, and the derived layers. Tagging leans on statistics first and asks the model only
+about entries that match a tag by one word. Linking and similarity are statistics only.
 
 | Engine | Setting | What runs |
 |---|---|---|
@@ -79,13 +83,15 @@ ask the model only where the statistics are unsure.
 | **Outside model** | `remote` | Any OpenAI-compatible endpoint, with the key read from an environment variable you name. Redaction and the usage cap apply |
 | **No AI** | `none` | Keyword statistics (TF-IDF), k-means clustering of term vectors for hubs and folders, similarity for links, and extractive summaries |
 
-- Every task works with every engine. A model's output is asked for as JSON and checked before anything is saved.
+- Every task runs with every engine; only the Expanded layer needs a model. A model's output is asked for as JSON and checked before anything is saved.
 - **No silent fallback.** If the local model isn't running, a task stops and says how to start it, and that
   `--engine none` works without one. It never switches engines on its own.
 - **Thinking off.** Small reasoning models answer with their thinking switched off, which keeps background passes
   fast.
 
 ## The local model
+
+The server address and model are set with `skeinwise config` today. The `model` commands are *(planned, v0.3)*.
 
 - **Suggested model:** Qwen3-4B, quantised to Q4_K_M (about 2.5 GB), in GGUF form. Any instruction-tuned model that
   the server can run works; smaller ones are faster and rougher.
@@ -95,7 +101,7 @@ ask the model only where the statistics are unsure.
   the size and the source and asking first. `skeinwise model serve` prints (or runs) the `llama-server` command for it.
 - **Weights never go in the repository,** and nothing is downloaded without that command.
 
-## The update stream
+## The update stream *(planned, v0.3)*
 
 The record keeps itself current without you running anything.
 
@@ -116,44 +122,49 @@ cap and only if you allow background runs in Settings. With No AI it uses the No
 
 A schema is a named list of tags with descriptions. Topics, Projects and Moods are built in, and you can add your own.
 
-- **Before a run:** a sample test on 20 entries, then the full size and cost estimate.
-- **After a run:** coverage (the share of entries tagged), and a comparison with an earlier run of the same schema:
-  tags added, removed and unchanged.
+- **Before a run** *(planned)*: a sample test on 20 entries, then the full size and cost estimate.
+- **After a run:** coverage (the share of entries tagged). A comparison with an earlier run of the same schema (tags
+  added, removed and unchanged) is *(planned)*.
 
 ## Corrections
 
-- **Edit an entry.** The original stays in history.
+- **Edit an entry** *(planned, v0.4)*. The original stays in history.
 - **Merge folders.** The old name stays as an alias; one step undoes it.
 - **Rename or delete a hub.**
 - **Mark a thread "not mine".**
 - **Exclude a source.** Its entries leave the brain and search; you can include it again later.
 
-Every correction can itself be undone.
+Undo covers runs, folder merges and hub changes today. Undoing an exclusion, a "not mine", a review answer or a
+schema edit is *(planned)*; until then each has its own reverse command, such as `include`.
 
 ## Notes
 
 - Notes are Markdown files under `~/.skeinwise/notes`, edited in the app or in any editor.
 - `[[links]]` become note links.
 - There is one daily note per day.
-- A note written by an agent is marked with the agent's name.
+- A note written by an agent is marked with the agent's name *(planned, v0.5)*.
 - Each save adds a version.
 
 ## Review
 
-The organiser compares each note with newer entries on the same topic. When the newer entries disagree with the note
-or add a lot to it, the note goes into the Review queue with the reasons. You choose: update (shown as a diff first),
+The organiser compares each note with your newer entries in the same hubs. With a model, it reads them and says
+whether the note is out of date, why, and how it would read updated. With No AI, it flags a note when a newer entry
+close to it says something like "decided", "no longer" or "switch to", which also catches decisions that don't
+overturn the note. Flagged notes go into the Review queue with the reasons. You choose: update (shown as a diff first),
 still holds, or skip. A skipped note comes back after the next review run.
 
 ## Privacy
 
 - With the local model or No AI, nothing leaves the computer.
-- **Redaction:** before any text goes to an outside model, names, emails, phone numbers, street addresses and health
-  terms are replaced with placeholders. A preview shows exactly what will be sent.
-- **Usage cap:** a monthly token cap for an outside model pauses runs until the month resets.
+- **Redaction:** before any text goes to an outside model, the names you list, emails, phone numbers, street
+  addresses and health words are replaced with placeholders. The patterns catch the common shapes, not every one.
+  `--preview` shows exactly what will be sent.
+- **Usage cap:** a monthly token cap for an outside model. A run that would pass it is refused until the month
+  resets.
 - **The record folder** is created with owner-only permissions.
-- **The server** listens on 127.0.0.1 only and needs a per-install token.
+- **The app's server** *(planned, v0.4)* listens on 127.0.0.1 only and needs a per-install token.
 
-## Agent memory (MCP)
+## Agent memory (MCP) *(planned, v0.5)*
 
 Two local MCP servers over stdio, so an agent can be given memory without the window, or both.
 
@@ -165,14 +176,14 @@ Two local MCP servers over stdio, so an agent can be given memory without the wi
 - Every agent write is a version under the agent's name.
 - Before an agent's first read, the app asks you to allow it. Lock stops all tools.
 
-## Ledger and proof of date
+## Ledger and proof of date *(planned, v0.5)*
 
 - Every import, edit and run appends a line to `ledger.jsonl`, with a hash chained to the line before. Any later
   change to the ledger breaks the chain and shows.
 - Optionally, the latest ledger hash is stamped with OpenTimestamps to prove the record existed at that date. The
   proof is collected a few hours later and stored next to the ledger.
 
-## Encrypted sync
+## Encrypted sync *(planned, v0.5)*
 
 - Sync writes an encrypted bundle of the record to any folder you pick, such as a cloud drive folder.
 - A random key encrypts the bundle (AES-256-GCM). That key is stored twice: once wrapped by a key from your
@@ -192,10 +203,10 @@ Two local MCP servers over stdio, so an agent can be given memory without the wi
 | `skeinwise run <task> [--scope new]` | Runs an organiser task |
 | `skeinwise runs`, `skeinwise undo <run>` | Lists runs; undoes one |
 | `skeinwise note <text>` | Appends to today's daily note |
-| `skeinwise live` | Turns on the update stream: live capture and background organising |
-| `skeinwise model check`, `fetch`, `serve` | Tests, downloads (after asking) or starts the local model |
-| `skeinwise serve` | Starts the app |
-| `skeinwise mcp [--window]` | Starts the memory server, or the window server |
+| `skeinwise live` | Turns on the update stream: live capture and background organising *(planned, v0.3)* |
+| `skeinwise model check`, `fetch`, `serve` | Tests, downloads (after asking) or starts the local model *(planned, v0.3)* |
+| `skeinwise serve` | Starts the app *(planned, v0.4)* |
+| `skeinwise mcp [--window]` | Starts the memory server, or the window server *(planned, v0.5)* |
 | `skeinwise demo` | Builds a demo record from invented data |
-| `skeinwise export` | Writes a zip of the record |
+| `skeinwise export` | Writes a zip of the record *(planned, v0.5)* |
 

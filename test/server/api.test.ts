@@ -38,7 +38,7 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'skeinwise-api-'));
   home = join(dir, 'home');
   let err = '';
-  expect(main(['demo'], { out: () => undefined, err: (t) => (err += t), env: { SKEINWISE_HOME: home } })).toBe(0);
+  expect(await main(['demo'], { out: () => undefined, err: (t) => (err += t), env: { SKEINWISE_HOME: home } })).toBe(0);
   expect(err).toBe('');
   // A pretend home directory for "Bring in", so the test never looks at the real one.
   const scan = join(dir, 'scan');
@@ -99,7 +99,7 @@ describe('the API guards', () => {
 describe('reading the record', () => {
   it('gives status and numbers', async () => {
     const status = (await api('status')).body;
-    expect(status).toMatchObject({ locked: false, organiser: false });
+    expect(status).toMatchObject({ locked: false, organiser: true });
     expect(status.entries).toBeGreaterThan(300);
     const stats = (await api('stats')).body;
     expect(stats.entries).toBe(status.entries);
@@ -110,7 +110,7 @@ describe('reading the record', () => {
   it('gives one point per visible entry for the brain', async () => {
     const b = (await api('brain')).body;
     expect(b.points).toHaveLength((await api('status')).body.entries);
-    expect(b.organiser).toBe(false);
+    expect(b.organiser).toBe(true);
     expect(b.sources.length).toBe(4);
     const [first] = b.points;
     expect(first).toHaveLength(9);
@@ -149,8 +149,8 @@ describe('reading the record', () => {
     expect((await api('tides?by=speaker')).body.lines.length).toBe(2);
   });
 
-  it('reports the organiser as not run', async () => {
-    expect((await api('organiser')).body).toEqual({ ready: false, hubs: [], folders: [], runs: [], review: [] });
+  it('reports the organiser ready once its tables exist', async () => {
+    expect((await api('organiser')).body).toEqual({ ready: true, hubs: [], folders: [], runs: [], review: [] });
   });
 
   it('finds sources only under the scan root', async () => {
