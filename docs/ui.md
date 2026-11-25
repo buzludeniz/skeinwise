@@ -114,10 +114,10 @@ A side panel titled "Reading your brain", in short plain paragraphs:
 - **Clusters:** points close together share words and links.
 - **The index:** what search reads, and how it ranks your own words first.
 - **Colour and labels:** what the legend's grouping does, and when labels show.
-- **The lines:** a *thread* joins messages in one conversation; a *bridge* joins two entries about the same thing
-  from different places; a *note link* is a `[[link]]` you wrote; a *hub link* joins an entry to its hub; a *time
-  chain* joins entries in date order; a *label spark* flashes from a label to its points on hover; a *label leader*
-  holds a label to its point.
+- **The lines:** a *thread line* joins messages in one conversation; a *cross link* joins two entries in different
+  threads that read alike; a *note link* is a `[[link]]` you wrote; a *hub spoke* joins a hub to each entry it holds;
+  a *time chain* joins entries in date order; a *label spark* flashes from a label to its points on hover; a *label
+  leader* holds a label to its point.
 
 ## Concept hub panel
 

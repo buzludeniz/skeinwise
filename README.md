@@ -6,7 +6,8 @@ and a small AI model running on your machine tags, files, links and summarises t
 changing a word you wrote. You can explore the result as a 3D brain, ask it questions in plain words, or lend it to
 your AI tools as long-term memory.
 
-> **Status:** v0.1.0, the record and the command line. Each milestone below ships as a tagged release.
+> **Status:** v0.2.0, the record and the organiser, on the command line. Each milestone below ships as a tagged
+> release.
 
 ## Why
 
@@ -55,6 +56,17 @@ node dist/src/cli.js search "what did I decide about sqlite"
 node dist/src/cli.js stats
 ```
 
+Organise it. With no model server running, `--engine none` uses keyword statistics; with the local model running (see
+[the organiser](docs/organiser.md)), leave it off.
+
+```bash
+node dist/src/cli.js run all --engine none
+node dist/src/cli.js hubs
+node dist/src/cli.js ask "what did I decide about sqlite" --engine none
+node dist/src/cli.js review
+node dist/src/cli.js runs
+```
+
 Then bring in your own data. The record lives in `~/.skeinwise` unless `SKEINWISE_HOME` says otherwise.
 
 ```bash
@@ -80,6 +92,7 @@ Importing again is safe: entries already in the record are skipped, and changed 
 ## Docs
 
 - [Plan](docs/plan.md): stack, architecture, scope and milestones
+- [The organiser](docs/organiser.md): engines, the local model, runs, undo, hubs, asking and review
 - [Research](docs/research.md): the export formats and the landscape
 - [UI](docs/ui.md) and [features](docs/features.md): the detailed design
 
