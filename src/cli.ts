@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import { writeDemo } from './demo/demo.ts';
 import { homeDir, openHome } from './home.ts';
 import { readImports } from './importers/detect.ts';
+import { serveFromArgs } from './server/serve.ts';
 import type { Entry, Store } from './store/store.ts';
 
 /** package.json sits one level up from src/ and two from dist/src/. */
@@ -45,6 +46,9 @@ Commands:
   demo                      Build a demo record from invented data
       --out <dir>           Where to write the demo export files
       --force               Import even if the record is not empty
+  serve                     Open the app in your browser, on this computer only
+      --port <n>            Port to listen on (default 7319)
+      --open                Open the browser too
   help                      Show this help
   version                   Print the version
 
@@ -102,6 +106,7 @@ function withStore<T>(io: Io, fn: (store: Store) => T): T {
 
 function run(argv: string[], io: Io): number {
   const [command = 'help', ...rest] = argv;
+  if (command === 'serve') return serveFromArgs(rest, io);
   const { values, positionals } = parseArgs({
     args: rest,
     allowPositionals: true,
