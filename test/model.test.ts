@@ -393,13 +393,9 @@ describe('organising with a model', () => {
       expect(again.message).not.toContain(KEY);
     });
 
-    // LS-15: negative or missing usage, and timeouts, let a run spend without counting it.
-    it('counts usage that is negative, missing or cut off by a timeout', async () => {
-      const negative = fakeServer((u) => hubAnswer(u), { usage: { prompt_tokens: -5000, completion_tokens: -5000 } });
-      const run = await runTask(store, new RecordView(store), options('hub', createModel(remote(), 'remote', { fetch: negative.fetch, env })));
-      expect(run.tokensIn).toBeGreaterThanOrEqual(0);
-      expect(run.tokensOut).toBeGreaterThanOrEqual(0);
-
+    // LS-15: negative or missing usage, and timeouts, let a run spend without counting it. E2 (Deniz, Nov 25): so did a
+    // report of 0. A report of 0 or less counts exactly what a missing one does: our own estimate.
+    it('counts usage that is zero, negative, missing or cut off by a timeout', async () => {
       const silent = (async (_url: string | URL | Request, init?: RequestInit) => {
         const body = JSON.parse(String(init!.body)) as { messages: { content: string }[] };
         return Response.json({ choices: [{ message: { content: hubAnswer(body.messages[1]!.content) }, finish_reason: 'stop' }] });
@@ -407,6 +403,12 @@ describe('organising with a model', () => {
       const counted = await runTask(store, new RecordView(store), options('hub', createModel(remote(), 'remote', { fetch: silent, env })));
       expect(counted.tokensIn).toBeGreaterThan(0);
       expect(counted.tokensOut).toBeGreaterThan(0);
+
+      for (const figure of [0, -5000]) {
+        const lying = fakeServer((u) => hubAnswer(u), { usage: { prompt_tokens: figure, completion_tokens: figure } });
+        const run = await runTask(store, new RecordView(store), options('hub', createModel(remote(), 'remote', { fetch: lying.fetch, env })));
+        expect({ figure, tokensIn: run.tokensIn, tokensOut: run.tokensOut }).toEqual({ figure, tokensIn: counted.tokensIn, tokensOut: counted.tokensOut });
+      }
 
       let maxTokens = 0;
       const slow = (async (_url: string | URL | Request, init?: RequestInit) => {

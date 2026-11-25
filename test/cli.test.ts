@@ -154,21 +154,16 @@ describe('export and sync from the command line', () => {
   });
 });
 
-describe('connectors from the command line', () => {
-  it('lists them in help and says when nothing is connected', async () => {
+describe('connectors, which are off in v1.0', () => {
+  it('leaves them out of help and refuses their commands', async () => {
     const help = (await cli('help')).out;
-    expect(help).toContain('connect <service>');
-    expect(help).toContain('disconnect <service>');
-    expect((await cli('demo', '--out', join(dir, 'demo'))).code).toBe(0);
-    const listed = await cli('connections');
-    expect(listed.code).toBe(0);
-    expect(listed.out).toMatch(/Nothing is connected/);
-  });
-
-  it('asks which service to connect', async () => {
-    const asked = await cli('connect');
-    expect(asked.code).toBe(2);
-    expect(asked.err).toMatch(/gmail, calendar, todoist, slack/);
+    expect(help).not.toMatch(/connect <service>|disconnect <service>|Connectors/);
+    for (const command of ['connect', 'connections', 'disconnect']) {
+      const run = await cli(command, 'gmail');
+      expect(run.code).toBe(2);
+      expect(run.err).toMatch(new RegExp(`Unknown command: ${command}\\.`));
+    }
+    expect((await cli('connect', '--client-id', 'x')).err).toMatch(/Unknown option '--client-id'/);
   });
 });
 
