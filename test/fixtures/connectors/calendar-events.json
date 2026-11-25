@@ -1,0 +1,127 @@
+{
+  "calendar": {
+    "id": "sam@example.com",
+    "summary": "Sam Example"
+  },
+  "page1": {
+    "items": [
+      {
+        "id": "ev-dentist",
+        "status": "confirmed",
+        "summary": "Dentist",
+        "created": "2026-10-01T09:00:00Z",
+        "start": {
+          "dateTime": "2026-11-26T09:00:00-07:00",
+          "timeZone": "America/Edmonton"
+        },
+        "end": {
+          "dateTime": "2026-11-26T09:30:00-07:00"
+        },
+        "organizer": {
+          "email": "sam@example.com",
+          "self": true
+        }
+      },
+      {
+        "id": "ev-lunch",
+        "status": "confirmed",
+        "summary": "Team lunch",
+        "created": "2026-10-05T09:00:00Z",
+        "location": "Corner Cafe",
+        "description": "<p>Bring the <b>garden plan</b>.</p>",
+        "start": {
+          "dateTime": "2026-11-27T12:00:00-07:00"
+        },
+        "end": {
+          "dateTime": "2026-11-27T13:00:00-07:00"
+        },
+        "organizer": {
+          "email": "ada@example.org",
+          "displayName": "Ada Example"
+        },
+        "attendees": [
+          {
+            "email": "ada@example.org",
+            "displayName": "Ada Example"
+          },
+          {
+            "email": "sam@example.com",
+            "self": true
+          },
+          {
+            "email": "room-2@resource.example",
+            "resource": true
+          }
+        ]
+      }
+    ],
+    "nextPageToken": "page-2"
+  },
+  "page2": {
+    "items": [
+      {
+        "id": "ev-holiday",
+        "status": "confirmed",
+        "summary": "Long weekend",
+        "created": "2026-09-15T09:00:00Z",
+        "start": {
+          "date": "2026-12-24"
+        },
+        "end": {
+          "date": "2026-12-27"
+        },
+        "organizer": {
+          "email": "sam@example.com",
+          "self": true
+        }
+      }
+    ],
+    "nextSyncToken": "cal-sync-1"
+  },
+  "changes": {
+    "items": [
+      {
+        "id": "ev-lunch",
+        "status": "confirmed",
+        "summary": "Team lunch",
+        "created": "2026-10-05T09:00:00Z",
+        "location": "Corner Cafe",
+        "description": "<p>Bring the <b>garden plan</b>.</p>",
+        "start": {
+          "dateTime": "2026-11-27T12:30:00-07:00"
+        },
+        "end": {
+          "dateTime": "2026-11-27T13:30:00-07:00"
+        },
+        "organizer": {
+          "email": "ada@example.org",
+          "displayName": "Ada Example"
+        }
+      },
+      {
+        "id": "ev-holiday",
+        "status": "cancelled"
+      },
+      {
+        "id": "ev-choir",
+        "status": "confirmed",
+        "summary": "Choir practice",
+        "created": "2026-11-25T10:00:00Z",
+        "recurrence": [
+          "RRULE:FREQ=WEEKLY;BYDAY=TH"
+        ],
+        "start": {
+          "dateTime": "2026-11-27T19:00:00-07:00"
+        },
+        "end": {
+          "dateTime": "2026-11-27T20:30:00-07:00"
+        },
+        "organizer": {
+          "email": "sam@example.com",
+          "self": true
+        }
+      }
+    ],
+    "nextSyncToken": "cal-sync-2"
+  }
+}

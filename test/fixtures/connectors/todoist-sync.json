@@ -1,0 +1,112 @@
+{
+  "user": {
+    "user": {
+      "email": "sam@example.com",
+      "full_name": "Sam Example"
+    },
+    "sync_token": "td-user",
+    "full_sync": true
+  },
+  "full": {
+    "sync_token": "td-1",
+    "full_sync": true,
+    "projects": [
+      {
+        "id": "prj-inbox",
+        "name": "Inbox"
+      },
+      {
+        "id": "prj-garden",
+        "name": "Garden"
+      }
+    ],
+    "items": [
+      {
+        "id": "task-seeds",
+        "project_id": "prj-garden",
+        "content": "Buy tomato seeds",
+        "description": "The striped kind",
+        "due": {
+          "date": "2026-11-28",
+          "string": "Nov 28",
+          "is_recurring": false
+        },
+        "priority": 4,
+        "labels": [
+          "errands"
+        ],
+        "checked": false,
+        "is_deleted": false,
+        "added_at": "2026-11-10T09:00:00Z"
+      },
+      {
+        "id": "task-water",
+        "project_id": "prj-garden",
+        "content": "Water the beds",
+        "due": {
+          "date": "2026-11-26",
+          "string": "every day",
+          "is_recurring": true
+        },
+        "priority": 1,
+        "labels": [],
+        "checked": false,
+        "is_deleted": false,
+        "added_at": "2026-11-01T09:00:00Z"
+      },
+      {
+        "id": "task-plumber",
+        "project_id": "prj-inbox",
+        "content": "Call the plumber",
+        "priority": 2,
+        "labels": [],
+        "checked": false,
+        "is_deleted": false,
+        "added_at": "2026-11-20T09:00:00Z"
+      }
+    ]
+  },
+  "changes": {
+    "sync_token": "td-2",
+    "full_sync": false,
+    "projects": [],
+    "items": [
+      {
+        "id": "task-seeds",
+        "project_id": "prj-garden",
+        "content": "Buy tomato seeds",
+        "description": "The striped kind",
+        "due": {
+          "date": "2026-11-28",
+          "string": "Nov 28",
+          "is_recurring": false
+        },
+        "priority": 4,
+        "labels": [
+          "errands"
+        ],
+        "checked": true,
+        "completed_at": "2026-11-25T10:00:00Z",
+        "is_deleted": false,
+        "added_at": "2026-11-10T09:00:00Z"
+      },
+      {
+        "id": "task-plumber",
+        "project_id": "prj-inbox",
+        "content": "Call the plumber",
+        "is_deleted": true,
+        "added_at": "2026-11-20T09:00:00Z"
+      },
+      {
+        "id": "task-compost",
+        "project_id": "prj-garden",
+        "content": "Turn the compost",
+        "priority": 1,
+        "labels": [],
+        "checked": false,
+        "is_deleted": false,
+        "added_at": "2026-11-25T09:00:00Z"
+      }
+    ]
+  }
+}

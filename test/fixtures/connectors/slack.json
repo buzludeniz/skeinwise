@@ -1,0 +1,120 @@
+{
+  "authTest": {
+    "ok": true,
+    "url": "https://garden-club.slack.example/",
+    "team": "Garden Club",
+    "user": "sam",
+    "team_id": "T0TEST",
+    "user_id": "U0SAM"
+  },
+  "channels": {
+    "ok": true,
+    "channels": [
+      {
+        "id": "C0GENERAL",
+        "name": "general"
+      },
+      {
+        "id": "C0PLANTS",
+        "name": "plants"
+      },
+      {
+        "id": "G0COMMITTEE",
+        "name": "committee"
+      }
+    ],
+    "response_metadata": {
+      "next_cursor": ""
+    }
+  },
+  "users": {
+    "U0ADA": {
+      "ok": true,
+      "user": {
+        "id": "U0ADA",
+        "name": "ada",
+        "real_name": "Ada Example",
+        "profile": {
+          "display_name": "Ada"
+        }
+      }
+    },
+    "U0SAM": {
+      "ok": true,
+      "user": {
+        "id": "U0SAM",
+        "name": "sam",
+        "real_name": "Sam Example",
+        "profile": {
+          "display_name": "Sam"
+        }
+      }
+    }
+  },
+  "plantsPage1": {
+    "ok": true,
+    "has_more": true,
+    "messages": [
+      {
+        "type": "message",
+        "ts": "1795518000.000300",
+        "user": "U0SAM",
+        "text": "Lovely. I will bring stakes &amp; twine."
+      },
+      {
+        "type": "message",
+        "ts": "1795516200.000250",
+        "user": "U0ADA",
+        "text": "Side note",
+        "thread_ts": "1795514400.000200",
+        "parent_user_id": "U0ADA"
+      }
+    ],
+    "response_metadata": {
+      "next_cursor": "plants-2"
+    }
+  },
+  "plantsPage2": {
+    "ok": true,
+    "has_more": false,
+    "messages": [
+      {
+        "type": "message",
+        "ts": "1795514400.000200",
+        "user": "U0ADA",
+        "text": "<@U0SAM> the tomatoes are in! Photos: <https://photos.example/tomatoes|the album>, see <#C0GENERAL|general>",
+        "thread_ts": "1795514400.000200",
+        "reply_count": 1
+      },
+      {
+        "type": "message",
+        "subtype": "channel_join",
+        "ts": "1795510800.000100",
+        "user": "U0ADA",
+        "text": "<@U0ADA> has joined the channel"
+      }
+    ],
+    "response_metadata": {
+      "next_cursor": ""
+    }
+  },
+  "plantsNew": {
+    "ok": true,
+    "has_more": false,
+    "messages": [
+      {
+        "type": "message",
+        "ts": "1795607400.000100",
+        "bot_id": "B0WEATHER",
+        "bot_profile": {
+          "name": "Weather"
+        },
+        "subtype": "bot_message",
+        "text": "Frost tonight: cover the beds."
+      }
+    ],
+    "response_metadata": {
+      "next_cursor": ""
+    }
+  }
+}
