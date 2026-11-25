@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo-mark-dark.svg">
+  <img src="brand/logo-mark.svg" alt="" width="40" height="40">
+</picture>
+
 # Skeinwise: the interface
 
 The app is a local web page served by `skeinwise serve` on 127.0.0.1. Every screen works by keyboard, and every

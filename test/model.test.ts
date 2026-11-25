@@ -48,11 +48,11 @@ function fakeServer(answer: (user: string) => string, opts: { models?: string[];
 }
 
 /** A hub answer that cites the first sentences it was shown and names the subject after a word in them. */
-function hubAnswer(user: string, extra: { inShort?: string } = {}): string {
+function hubAnswer(user: string, extra: { inShort?: string; cites?: string[] } = {}): string {
   const name = /rye|sourdough|loaf/.test(user) ? 'Rye baking' : 'River samples';
   return JSON.stringify({
     name,
-    in_short: [{ text: extra.inShort ?? `Notes on ${name.toLowerCase()}.`, cites: ['S1', 'S2'] }],
+    in_short: [{ text: extra.inShort ?? `Notes on ${name.toLowerCase()}.`, cites: extra.cites ?? ['S1', 'S2'] }],
     found: ['S2'],
     open_ends: [],
   });
@@ -155,7 +155,9 @@ describe('organising with a model', () => {
     add('call.md', 'Called Sam about the rye loaf, write to sam@example.com or +44 20 7946 0958. The sourdough starter needs Sam.', 'Bread call');
     const server = fakeServer((u) => {
       const name = /\[NAME_\d+\]/.exec(u)?.[0] ?? 'nobody';
-      return hubAnswer(u, { inShort: /rye/.test(u) ? `Baking with ${name}.` : 'River notes.' });
+      // Cites the sentence that names the person, since a hub line must stand on what it cites.
+      const naming = /^(S\d+) .*\[NAME_\d+\]/m.exec(u)?.[1];
+      return hubAnswer(u, naming ? { inShort: `Baking with ${name}.`, cites: [naming] } : { inShort: 'River notes.' });
     });
     const client = createModel(config({ remoteUrl: 'https://models.example.net/v1', remoteModel: 'big-1', apiKeyEnv: 'SKEINWISE_TEST_KEY', remoteHosts: ['models.example.net'], names: ['Sam'] }), 'remote', {
       fetch: server.fetch,

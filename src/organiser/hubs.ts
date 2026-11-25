@@ -7,8 +7,8 @@ import type { Entry } from '../store/store.ts';
 import { FINDING_CUES, isQuestion } from './cues.ts';
 import { type Existing, type Group, groupName, groupUnits } from './groups.ts';
 import { cited, day, invalid, isRecord, list, type ModelRequest, type Plan, round, type TaskContext, text } from './plan.ts';
-import { isDailyNote, type RecordView, unlink } from './record.ts';
-import { cosine, pickDiverse, sentences, type Vec } from './text.ts';
+import { isDailyNote, type RecordView, unlink, vouched } from './record.ts';
+import { cosine, pickDiverse, sentences, tokenize, type Vec } from './text.ts';
 import { hubEntryIds, type HubItem, type HubSections, liveHubs } from './views.ts';
 
 export interface Sentence {
@@ -138,15 +138,49 @@ const SYSTEM =
 
 type HubAnswer = { name: string; inShort: { text: string; cites: number[] }[]; openEnds: { text: string; cites: number[] }[]; found: number[] };
 
-function modelSections(answer: HubAnswer, shown: Sentence[]): HubSections {
-  const point = (p: { text: string; cites: number[] }): HubItem => {
-    const first = shown[p.cites[0]!]!;
-    return { text: p.text, entryId: first.entryId, date: first.date, cites: [...new Set(p.cites.map((i) => shown[i]!.entryId))] };
-  };
+/** The share of a model's sentence that the sentences it cites must hold, for it to stand under their entries. */
+const MIN_SUPPORT = 0.5;
+/** Web and mail addresses, and bare domains ("pension-help.example"). */
+const ADDRESS = /https?:\/\/[^\s)>\]]+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+|[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}/gi;
+
+/**
+ * Whether the sentences a model cites hold what it wrote: at least half of its words, and every address in it. A line
+ * that borrows from sentences it doesn't cite would credit the cited entries with words they never held (H1).
+ */
+export function supported(text: string, cited: readonly string[]): boolean {
+  const have = cited.join('\n').toLowerCase();
+  for (const m of text.toLowerCase().matchAll(ADDRESS)) if (!have.includes(m[0])) return false;
+  const words = new Set(tokenize(text));
+  if (!words.size) return false;
+  const known = new Set(tokenize(have));
+  let held = 0;
+  for (const w of words) if (known.has(w)) held++;
+  return held / words.size >= MIN_SUPPORT;
+}
+
+/**
+ * The model's sections, keeping only the lines its cited sentences support. If none of In short survives, the No-AI
+ * picks stand in, so a hub is never left without it.
+ */
+function modelSections(answer: HubAnswer, shown: Sentence[], fallback: () => HubItem[]): { sections: HubSections; dropped: number } {
+  let dropped = 0;
+  const points = (list: { text: string; cites: number[] }[]): HubItem[] =>
+    list.flatMap((p) => {
+      if (!supported(p.text, p.cites.map((i) => shown[i]!.text))) {
+        dropped++;
+        return [];
+      }
+      const first = shown[p.cites[0]!]!;
+      return [{ text: p.text, entryId: first.entryId, date: first.date, cites: [...new Set(p.cites.map((i) => shown[i]!.entryId))] }];
+    });
+  const inShort = points(answer.inShort);
   return {
-    in_short: answer.inShort.map(point),
-    what_you_found: answer.found.map((i) => item(shown[i]!)).sort(byDate),
-    open_ends: answer.openEnds.map(point).sort(byDate),
+    sections: {
+      in_short: inShort.length ? inShort : fallback(),
+      what_you_found: answer.found.map((i) => item(shown[i]!)).sort(byDate),
+      open_ends: points(answer.openEnds).sort(byDate),
+    },
+    dropped,
   };
 }
 
@@ -157,10 +191,17 @@ export function planHubs(ctx: TaskContext): Plan {
   const { groups, loose } = groupUnits(record, ctx.entries, existing);
   const drafts: HubDraft[] = [];
   let skipped = 0;
+  const future = new Set<number>();
   for (const group of groups) {
     const ids = new Set([...(group.existing?.entryIds ?? []), ...group.entries.map((e) => e.id)]);
     const entries = [...ids].map((id) => record.byId.get(id)).filter((e): e is Entry => !!e);
-    const list = yourSentences(record, entries, group.centroid);
+    // A dated-ahead entry stays in the hub's list of entries, but nothing in its sections quotes or cites it.
+    const quotable = entries.filter((e) => {
+      if (vouched(e, ctx.now)) return true;
+      future.add(e.id);
+      return false;
+    });
+    const list = yourSentences(record, quotable, group.centroid);
     if (!list.length) {
       skipped++;
       continue;
@@ -173,12 +214,21 @@ export function planHubs(ctx: TaskContext): Plan {
   return {
     requests: asks.map((a) => a.request),
     finish: (answers) => {
+      let unsupported = 0;
       const hubs = drafts.map((d, i) => {
-        if (!ctx.model) return { draft: d, name: d.name, sections: extractSections(d.sentences, d.group.centroid) };
+        const extracted = () => extractSections(d.sentences, d.group.centroid);
+        if (!ctx.model) return { draft: d, name: d.name, sections: extracted() };
         const answer = answers[i] as HubAnswer;
-        return { draft: d, name: d.group.existing ? d.name : answer.name, sections: modelSections(answer, asks[i]!.shown) };
+        const made = modelSections(answer, asks[i]!.shown, () => extracted().in_short);
+        unsupported += made.dropped;
+        return { draft: d, name: d.group.existing ? d.name : answer.name, sections: made.sections };
       });
       const updated = hubs.filter((h) => h.draft.group.existing).length;
+      const notes = [
+        skipped ? `${skipped} group(s) held none of your own sentences, so they got no hub.` : '',
+        future.size ? `${future.size} entr${future.size > 1 ? 'ies claim dates' : 'y claims a date'} after today, so no hub summary quotes ${future.size > 1 ? 'them' : 'it'}.` : '',
+        unsupported ? `${unsupported} model line(s) said more than the sentences they cited, so they were left out.` : '',
+      ].filter(Boolean);
       return {
         counts: {
           hubs: hubs.length - updated,
@@ -186,8 +236,10 @@ export function planHubs(ctx: TaskContext): Plan {
           entries: hubs.reduce((n, h) => n + h.draft.entryIds.length, 0),
           loose: loose.length,
           skipped,
+          ...(future.size ? { future: future.size } : {}),
+          ...(unsupported ? { unsupported } : {}),
         },
-        ...(skipped ? { message: `${skipped} group(s) held none of your own sentences, so they got no hub.` } : {}),
+        ...(notes.length ? { message: notes.join(' ') } : {}),
         save: (db, runId) => {
           for (const h of hubs) saveHub(db, runId, record, h.name, h.sections, h.draft);
         },

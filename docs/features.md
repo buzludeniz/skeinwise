@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo-mark-dark.svg">
+  <img src="brand/logo-mark.svg" alt="" width="40" height="40">
+</picture>
+
 # Skeinwise: features
 
 This is the whole design. Parts not built yet are marked *(planned)* with the release that brings them; the
