@@ -2,8 +2,8 @@
 // in the X-Skeinwise-Token header; requests must name this server's own host, so pages from other sites can't reach it.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { extname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { gzipSync } from 'node:zlib';
 import { UsageError } from '../errors.ts';
@@ -148,6 +148,21 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
   let locked = false;
   const uploads = resolve(home, 'imports');
   const deps = (): ModelDeps => ({ fetch: ctx.fetch ?? fetch, env: ctx.env ?? process.env });
+  /**
+   * A path the page sent, when its real path lies under the scan root (M2). Anything else, missing, unreadable or
+   * elsewhere (a symlink out included), gets the same 403, so the answer says nothing about the rest of the computer.
+   * Files from elsewhere come in through an upload. The path goes on as sent, since /api/found matches sources by it.
+   */
+  const scanned = (path: string): string => {
+    try {
+      const root = realpathSync(ctx.scanRoot);
+      const real = isAbsolute(path) ? realpathSync(path) : '';
+      if (real === root || real.startsWith(root + sep)) return resolve(path);
+    } catch {
+      // Missing or unreadable: the same answer as outside.
+    }
+    throw new HttpError(403, OUTSIDE_SCAN);
+  };
   /** The run the page started last; the page follows it until it finishes. */
   let job: OrganiseJob | null = null;
 
@@ -282,17 +297,16 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     }],
     ['POST', /^\/api\/found\/preview$/, async (req) => {
       const { path } = await req.json();
+      const where = scanned(text(path, 'path', 4096));
       try {
-        return preview(text(path, 'path', 4096));
+        return preview(where);
       } catch (error) {
         throw new HttpError(422, error instanceof Error ? error.message : String(error));
       }
     }],
     ['POST', /^\/api\/import$/, async (req) => {
       const { path, owner } = await req.json();
-      const where = text(path, 'path', 4096);
-      if (!existsSync(where)) throw new HttpError(404, `Nothing at ${where}`);
-      return importPath(store, where, owner);
+      return importPath(store, scanned(text(path, 'path', 4096)), owner);
     }],
     ['POST', /^\/api\/upload$/, async (req) => {
       const batch = req.url.searchParams.get('batch') ?? '';
@@ -439,57 +453,92 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       .end(readFileSync(file));
   };
 
-  return (raw, res) => {
-    void (async () => {
-      const host = raw.headers.host ?? '';
-      if (!allowedHosts().has(host)) {
-        res.writeHead(421, { 'Content-Type': 'text/plain' }).end('Skeinwise only answers on 127.0.0.1');
+  const handle = async (raw: IncomingMessage, res: ServerResponse) => {
+    const host = raw.headers.host ?? '';
+    if (!allowedHosts().has(host)) {
+      res.writeHead(421, { 'Content-Type': 'text/plain' }).end('Skeinwise only answers on 127.0.0.1');
+      return;
+    }
+    // A request line Node accepts can still be no URL at all ("GET http://[", M3): that is the client's mistake.
+    let url: URL;
+    try {
+      url = new URL(raw.url ?? '/', `http://${host}`);
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'text/plain' }).end('Bad request');
+      return;
+    }
+    if (!url.pathname.startsWith('/api/')) {
+      if (raw.method !== 'GET' && raw.method !== 'HEAD') {
+        res.writeHead(405).end();
         return;
       }
-      const url = new URL(raw.url ?? '/', `http://${host}`);
-      if (!url.pathname.startsWith('/api/')) {
-        if (raw.method !== 'GET' && raw.method !== 'HEAD') {
-          res.writeHead(405).end();
-          return;
-        }
-        serveStatic(url, res);
+      serveStatic(url, res);
+      return;
+    }
+    try {
+      const origin = raw.headers.origin;
+      if (origin && !allowedHosts().has(origin.replace(/^https?:\/\//, ''))) throw new HttpError(403, 'Wrong origin');
+      const given = raw.headers['x-skeinwise-token'];
+      if (!sameToken(Array.isArray(given) ? given[0] : given, ctx.token)) throw new HttpError(401, 'Missing or wrong token');
+      const method = raw.method ?? 'GET';
+      let pathMatched = false;
+      for (const [m, re, handler] of routes) {
+        const match = re.exec(url.pathname);
+        if (!match) continue;
+        pathMatched = true;
+        if (m !== method) continue;
+        if (locked && !/^\/api\/(status|unlock|quit)$/.test(url.pathname)) throw new HttpError(423, 'Skeinwise is locked');
+        let body: Promise<Record<string, unknown>> | undefined;
+        const req: Req = { method, url, params: match.slice(1), raw, json: () => (body ??= readJson(raw)) };
+        send(raw, res, 200, await handler(req));
         return;
       }
-      try {
-        const origin = raw.headers.origin;
-        if (origin && !allowedHosts().has(origin.replace(/^https?:\/\//, ''))) throw new HttpError(403, 'Wrong origin');
-        const given = raw.headers['x-skeinwise-token'];
-        if (!sameToken(Array.isArray(given) ? given[0] : given, ctx.token)) throw new HttpError(401, 'Missing or wrong token');
-        const method = raw.method ?? 'GET';
-        let pathMatched = false;
-        for (const [m, re, handler] of routes) {
-          const match = re.exec(url.pathname);
-          if (!match) continue;
-          pathMatched = true;
-          if (m !== method) continue;
-          if (locked && !/^\/api\/(status|unlock|quit)$/.test(url.pathname)) throw new HttpError(423, 'Skeinwise is locked');
-          let body: Promise<Record<string, unknown>> | undefined;
-          const req: Req = { method, url, params: match.slice(1), raw, json: () => (body ??= readJson(raw)) };
-          send(raw, res, 200, await handler(req));
-          return;
-        }
-        throw new HttpError(pathMatched ? 405 : 404, pathMatched ? 'Method not allowed' : 'No such API');
-      } catch (error) {
-        const status =
-          error instanceof HttpError
-            ? error.status
-            : error instanceof ConfigError || error instanceof NoteError || error instanceof UsageError
-              ? 400
-              : /^No (entry|source|thread) \d+/.test(error instanceof Error ? error.message : '')
-                ? 404
-                : 500;
-        const message = error instanceof Error ? error.message : String(error);
-        if (status === 500) process.stderr.write(`skeinwise serve: ${error instanceof Error ? (error.stack ?? message) : message}\n`);
-        if (!res.headersSent) send(raw, res, status, { error: message });
-        else res.end();
-      }
-    })();
+      throw new HttpError(pathMatched ? 405 : 404, pathMatched ? 'Method not allowed' : 'No such API');
+    } catch (error) {
+      const status =
+        error instanceof HttpError
+          ? error.status
+          : error instanceof ConfigError || error instanceof NoteError || error instanceof UsageError
+            ? 400
+            : /^No (entry|source|thread) \d+/.test(error instanceof Error ? error.message : '')
+              ? 404
+              : 500;
+      const message = error instanceof Error ? error.message : String(error);
+      if (status === 500) process.stderr.write(`skeinwise serve: ${error instanceof Error ? (error.stack ?? message) : message}\n`);
+      // The page gets no paths outside the record folder (M2, L10); the terminal keeps the whole message.
+      if (!res.headersSent) send(raw, res, status, { error: publicMessage(message, home) });
+      else res.end();
+    }
   };
+
+  return (raw, res) => {
+    handle(raw, res).catch((error: unknown) => {
+      // Nothing a request does may stop the server: the last word is a bare 500.
+      process.stderr.write(`skeinwise serve: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' }).end('Internal error');
+      else res.destroy();
+    });
+  };
+}
+
+const OUTSIDE_SCAN = 'Skeinwise brings in only what it found for you. To add something else, upload it.';
+
+/** Absolute paths in a message: POSIX ones and Windows drive paths, each starting a word or a quoted part. */
+const ABSOLUTE_PATH = /(?<=^|[\s'"`(=])(?:\/|[A-Za-z]:\\)[^\s'"`),;]*/g;
+
+/**
+ * A message as the page may see it: any absolute path outside the record folder becomes its last part, so an error
+ * can't tell a token holder what exists elsewhere on this computer.
+ */
+export function publicMessage(message: string, home: string): string {
+  const root = resolve(home);
+  return message.replace(ABSOLUTE_PATH, (path) => {
+    const clean = path.replace(/[.:]+$/, '');
+    const rest = path.slice(clean.length);
+    if (clean === root || clean.startsWith(root + sep)) return path;
+    const name = clean.split(/[\\/]/).filter(Boolean).at(-1);
+    return `${name ? `…/${name}` : '…'}${rest}`;
+  });
 }
 
 function importPath(store: Store, path: string, owner: unknown): { source: string; kind: string; added: number; versioned: number; unchanged: number; threads: number }[] {
