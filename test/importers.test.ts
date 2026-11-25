@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { parseChatGPT, parseClaude, parseClaudeCodeSession, parseCodexSession, parseGemini } from '../src/importers/chats.ts';
-import { readImports, sniffExport, sniffSession } from '../src/importers/detect.ts';
+import { readFilesUnder, readImports, readImportsInWorker, sniffExport, sniffSession } from '../src/importers/detect.ts';
+import { UnsafeFileError } from '../src/fsafe.ts';
 import { parseFrontMatter, parseNote } from '../src/importers/notes.ts';
 import { toIso } from '../src/importers/util.ts';
 
@@ -218,6 +220,71 @@ describe('readImports', () => {
       expect(readImports(join(dir, 'one.json')).map((b) => b.source.kind)).toEqual(['chatgpt']);
       mkdirSync(join(dir, 'empty'));
       expect(() => readImports(join(dir, 'empty'))).toThrow(/Nothing to import/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips links, FIFOs and unreadable files in a folder by name, and imports the rest (PoC 12, 13)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-unsafe-'));
+    const outside = mkdtempSync(join(tmpdir(), 'skeinwise-outside-'));
+    try {
+      writeFileSync(join(outside, 'secret.md'), 'FAKE-SECRET');
+      symlinkSync(join(outside, 'secret.md'), join(dir, 'planted.md'));
+      symlinkSync(outside, join(dir, 'linked-folder'));
+      execFileSync('mkfifo', [join(dir, 'conversations.json')]);
+      writeFileSync(join(dir, 'claude.json'), JSON.stringify(claude));
+      writeFileSync(join(dir, 'note.md'), '# Mine');
+      const warnings: string[] = [];
+      const started = performance.now();
+      const batches = readImports(dir, { onWarning: (m) => warnings.push(m) });
+      expect(performance.now() - started).toBeLessThan(1000);
+      expect(batches.map((b) => b.source.kind).sort()).toEqual(['claude', 'notes']);
+      expect(JSON.stringify(batches)).not.toContain('FAKE-SECRET');
+      expect(warnings).toEqual([
+        expect.stringMatching(/conversations\.json: skipped, it is not a regular file/),
+        expect.stringMatching(/planted\.md: skipped, it is a symbolic link/),
+      ]);
+      // The live path reads named files the same way: the link is refused, the FIFO doesn't block.
+      const live: string[] = [];
+      const some = readFilesUnder(dir, ['planted.md', 'conversations.json', 'linked-folder/secret.md', 'note.md'], { onWarning: (m) => live.push(m) });
+      expect(JSON.stringify(some)).not.toContain('FAKE-SECRET');
+      expect(some.flatMap((b) => b.entries ?? []).map((e) => e.externalId)).toEqual(['note.md']);
+      expect(live).toHaveLength(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a zip bomb by name before inflating it (PoC 09), in a worker too', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-bomb-'));
+    try {
+      // 64 MiB of spaces per entry packs to about 64 KiB: 1000:1, past the 200:1 limit.
+      const spaces = new Uint8Array(64 * 1024 * 1024).fill(32);
+      const bomb = join(dir, '09_bomb.zip');
+      writeFileSync(bomb, zipSync({ 'export/part-0.json': spaces, 'export/part-1.json': spaces }, { level: 9 }));
+      expect(() => readImports(bomb)).toThrow(/09_bomb\.zip: refused, .*200:1 limit/);
+      const error = await readImportsInWorker(bomb).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(UnsafeFileError);
+      expect((error as UnsafeFileError).reason).toBe('zip');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads in a worker thread with the same batches and warnings', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-worker-'));
+    try {
+      writeFileSync(join(dir, 'export.zip'), zipSync({ 'conversations.json': strToU8(JSON.stringify(claude)) }));
+      expect(await readImportsInWorker(join(dir, 'export.zip'))).toEqual(readImports(join(dir, 'export.zip')));
+      symlinkSync(join(dir, 'export.zip'), join(dir, 'link.md'));
+      writeFileSync(join(dir, 'note.md'), 'mine');
+      const warnings: string[] = [];
+      const batches = await readImportsInWorker(dir, { owner: 'Mara', onWarning: (m) => warnings.push(m) });
+      expect(batches.map((b) => [b.source.kind, b.source.owner])).toEqual([['notes', 'Mara']]);
+      expect(warnings).toEqual([expect.stringContaining('link.md: skipped, it is a symbolic link')]);
+      await expect(readImportsInWorker(join(dir, 'missing'))).rejects.toThrow(/ENOENT/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
