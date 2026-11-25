@@ -7,7 +7,7 @@ import { openZipSafe, readSafe, UnsafeFileError, type UnsafeReason } from '../fs
 import type { EntryInput, ImportBatch, Origin, ThreadInput } from '../store/store.ts';
 import { parseChatGPT, parseClaude, parseClaudeCodeSession, parseCodexSession, parseGemini } from './chats.ts';
 import { noteEntry, parseNote } from './notes.ts';
-import { asArray, isObj, parseJsonl, str } from './util.ts';
+import { asArray, FileReport, isObj, parseJsonl, str } from './util.ts';
 
 export interface ImportOptions {
   /** Whose words a notes folder holds: 'you' (default) or a person's name. */
@@ -20,6 +20,9 @@ export interface ImportOptions {
    */
   onWarning?: (message: string) => void;
 }
+
+/** The names exports come under: one that won't parse is named, unlike any other JSON file that won't. */
+const EXPORT_NAME = /^(conversations|MyActivity)\.json$/i;
 
 /**
  * A file's contents, from disk or from inside a zip. Reading it may throw; collect() skips that file alone. A file on
@@ -273,30 +276,41 @@ function collect(
       }
       throw error;
     }
-    if (ext === '.json') {
-      let data: unknown;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        continue;
+    // Each entry in the file is parsed on its own and a bad one named in the report; this try is for the file as a whole.
+    const report = new FileReport(rel(f.path), warn);
+    try {
+      if (ext === '.json') {
+        let data: unknown;
+        try {
+          data = JSON.parse(text);
+        } catch (error) {
+          // Any JSON file is looked at, so only an export's own name is worth a word.
+          if (EXPORT_NAME.test(name)) report.skip('', `it is not valid JSON (${(error as Error).message})`, 'file');
+          continue;
+        }
+        const kind = sniffExport(data);
+        const parse = kind === 'chatgpt' ? parseChatGPT : kind === 'claude' ? parseClaude : kind === 'gemini' ? parseGemini : null;
+        if (parse && kind) {
+          const id = accountId(kind, data);
+          batches.push({ ...parse(data, report), origin, account: id ? accountFingerprint(kind, id) : null });
+        } else if (/^users?\.json$/i.test(name)) {
+          const id = accountId('users', data);
+          if (id) users.set(dirname(f.path), id);
+        }
+      } else if (ext === '.jsonl') {
+        const kind = sniffSession(text);
+        const id = name.replace(/\.jsonl$/i, '');
+        const own = container ? {} : { origin };
+        if (kind === 'claude-code') sessions['claude-code'].push({ ...parseClaudeCodeSession(text, id, report), ...own });
+        else if (kind === 'codex') sessions.codex.push({ ...parseCodexSession(text, id, report), ...own });
+      } else {
+        const note = report.each('', () => noteEntry(rel(f.path), parseNote(name, text, f.modifiedAt)));
+        if (note) notes.push({ ...note, ...(container ? {} : { origin }) });
       }
-      const kind = sniffExport(data);
-      const parse = kind === 'chatgpt' ? parseChatGPT : kind === 'claude' ? parseClaude : kind === 'gemini' ? parseGemini : null;
-      if (parse && kind) {
-        const id = accountId(kind, data);
-        batches.push({ ...parse(data), origin, account: id ? accountFingerprint(kind, id) : null });
-      } else if (/^users?\.json$/i.test(name)) {
-        const id = accountId('users', data);
-        if (id) users.set(dirname(f.path), id);
-      }
-    } else if (ext === '.jsonl') {
-      const kind = sniffSession(text);
-      const id = name.replace(/\.jsonl$/i, '');
-      const own = container ? {} : { origin };
-      if (kind === 'claude-code') sessions['claude-code'].push({ ...parseClaudeCodeSession(text, id), ...own });
-      else if (kind === 'codex') sessions.codex.push({ ...parseCodexSession(text, id), ...own });
-    } else {
-      notes.push({ ...noteEntry(rel(f.path), parseNote(name, text, f.modifiedAt)), ...(container ? {} : { origin }) });
+    } catch (error) {
+      report.skip('', error instanceof Error ? error.message : String(error), 'file');
+    } finally {
+      report.done();
     }
   }
   // An export without an account of its own takes the one its users.json names, from the same folder.

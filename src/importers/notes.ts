@@ -1,5 +1,5 @@
 import type { EntryInput } from '../store/store.ts';
-import { firstLine } from './util.ts';
+import { firstLine, toIso } from './util.ts';
 
 export interface ParsedNote {
   title: string;
@@ -58,13 +58,10 @@ export function parseNote(fileName: string, text: string, modifiedAt: Date): Par
   const metaTitle = typeof meta.title === 'string' ? meta.title : undefined;
   const title = metaTitle || heading || baseName || firstLine(body);
 
-  const metaDate = [meta.created, meta.date].find((v): v is string => typeof v === 'string' && !Number.isNaN(Date.parse(v)));
+  // The front matter's date, else a real date in the name ("Meeting 2023-14-02" has none), else the file's.
+  const metaDate = [meta.created, meta.date].map(toIso).find(Boolean);
   const nameDate = DATE_IN_NAME.exec(baseName);
-  const createdAt = metaDate
-    ? new Date(metaDate).toISOString()
-    : nameDate
-      ? new Date(`${nameDate[1]}-${nameDate[2]}-${nameDate[3]}T09:00:00Z`).toISOString()
-      : modifiedAt.toISOString();
+  const createdAt = metaDate ?? (nameDate && toIso(`${nameDate[1]}-${nameDate[2]}-${nameDate[3]}T09:00:00Z`)) ?? modifiedAt.toISOString();
 
   const metaTags = meta.tags;
   const tags = new Set<string>(

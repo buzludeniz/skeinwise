@@ -1,4 +1,5 @@
 /** Small, forgiving readers for loosely typed export JSON. */
+import { safeLine } from '../safe-text.ts';
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Obj = { [key: string]: unknown };
@@ -15,17 +16,90 @@ export function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
 
-/** Accepts Unix seconds, Unix milliseconds or a date string. Returns ISO 8601 UTC, or undefined. */
+/** The furthest a Date reaches either side of 1970, in milliseconds. */
+const MAX_DATE_MS = 8.64e15;
+
+/**
+ * Accepts Unix seconds, Unix milliseconds or a date string. Returns ISO 8601 UTC, or undefined for anything that
+ * isn't a time, including a number too big for one (nanoseconds): it never throws.
+ */
 export function toIso(v: unknown): string | undefined {
-  if (typeof v === 'number' && Number.isFinite(v)) {
-    const ms = v > 1e12 ? v : v * 1000;
-    return new Date(ms).toISOString();
+  let ms: number;
+  if (typeof v === 'number') ms = v > 1e12 ? v : v * 1000;
+  else if (typeof v === 'string' && v) ms = Date.parse(v);
+  else return undefined;
+  return Number.isFinite(ms) && Math.abs(ms) <= MAX_DATE_MS ? new Date(ms).toISOString() : undefined;
+}
+
+/** A time an export claims: '' when it gives none, undefined when it gives one that isn't a time. */
+export function claimedTime(v: unknown): string | undefined {
+  return v === undefined || v === null || v === '' ? '' : toIso(v);
+}
+
+/** How many problems one file names before it only counts them. */
+const NAMED = 20;
+
+/**
+ * What a parser skipped in one file, or kept without its time. The first few are named with their position, then they
+ * are counted, so an export with thousands of odd values still says something short. Everything it quotes comes from
+ * the file, so it goes through safeLine.
+ */
+export class FileReport {
+  /** The path as the person would know it: relative to the folder or zip they named. */
+  readonly file: string;
+  skipped = 0;
+  untimed = 0;
+  private named = 0;
+  private readonly warn: (message: string) => void;
+
+  constructor(file: string, warn: (message: string) => void = () => {}) {
+    this.file = file;
+    this.warn = warn;
   }
-  if (typeof v === 'string' && v) {
-    const d = new Date(v);
-    return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+
+  /** Parses one entry (or one conversation). If it throws, that one is skipped and named, and the file goes on. */
+  each<T>(at: string, parse: () => T, what = 'entry'): T | undefined {
+    try {
+      return parse();
+    } catch (error) {
+      this.skip(at, error instanceof Error ? error.message : String(error), what);
+      return undefined;
+    }
   }
-  return undefined;
+
+  skip(at: string, reason: string, what = 'entry'): void {
+    this.skipped++;
+    this.tell(`skipped 1 ${what} in ${this.where(at)}: ${safeLine(reason)}`);
+  }
+
+  /** A time that can't be read: the entry is kept, with `fallback` or, failing that, sorted by when it was first seen. */
+  time(at: string, value: unknown, fallback: string): void {
+    this.untimed++;
+    this.tell(`${this.where(at)}: ${quote(value)} is not a time; kept the entry with ${fallback || 'no time'}`);
+  }
+
+  /** Once the file is done: how many there were past the ones named. */
+  done(): void {
+    const more = this.skipped + this.untimed - this.named;
+    if (more > 0) {
+      this.warn(`${safeLine(this.file)}: ${more} more like that (${this.skipped} skipped, ${this.untimed} kept without their time)`);
+    }
+  }
+
+  private where(at: string): string {
+    return at ? `${safeLine(this.file)}:${at}` : safeLine(this.file);
+  }
+
+  private tell(message: string): void {
+    if (this.named >= NAMED) return;
+    this.named++;
+    this.warn(message);
+  }
+}
+
+function quote(value: unknown): string {
+  const text = typeof value === 'string' ? JSON.stringify(value) : String(value);
+  return safeLine(text.length > 40 ? `${text.slice(0, 39)}…` : text);
 }
 
 export function firstLine(text: string, max = 80): string {
@@ -42,14 +116,17 @@ export function stripHtml(html: string): string {
     .replace(/<\/(p|div|li|h\d|pre|tr)>/gi, '\n')
     .replace(/<li[^>]*>/gi, '- ')
     .replace(/<[^>]+>/g, '')
-    .replace(/&(#?\w+);/g, (m, name: string) => {
-      if (ENTITIES[name]) return ENTITIES[name];
-      if (name.startsWith('#x')) return String.fromCodePoint(parseInt(name.slice(2), 16));
-      if (name.startsWith('#')) return String.fromCodePoint(parseInt(name.slice(1), 10));
-      return m;
-    })
+    .replace(/&(#?\w+);/g, (m, name: string) => entity(name) ?? m)
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** The character an entity name stands for, or undefined when it stands for none (`&#x;`, `&#99999999;`). */
+export function entity(name: string): string | undefined {
+  if (ENTITIES[name]) return ENTITIES[name];
+  const code = /^#x[0-9a-f]{1,6}$/i.test(name) ? parseInt(name.slice(2), 16) : /^#\d{1,7}$/.test(name) ? parseInt(name.slice(1), 10) : NaN;
+  // Not NUL, not past Unicode, not half a surrogate pair.
+  return code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff) ? String.fromCodePoint(code) : undefined;
 }
 
 /** Text out of a content field that is a string or a list of { type, text } blocks. */
@@ -64,15 +141,20 @@ export function blockText(content: unknown, types: readonly string[] = ['text'])
 
 /** Parses JSON Lines, skipping lines that don't parse. */
 export function parseJsonl(text: string): Obj[] {
-  const out: Obj[] = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
+  return parseJsonlLines(text).map((l) => l.value);
+}
+
+/** As parseJsonl, with each object's line number (from 1) for warnings. */
+export function parseJsonlLines(text: string): { line: number; value: Obj }[] {
+  const out: { line: number; value: Obj }[] = [];
+  text.split('\n').forEach((line, i) => {
+    if (!line.trim()) return;
     try {
       const v = JSON.parse(line) as unknown;
-      if (isObj(v)) out.push(v);
+      if (isObj(v)) out.push({ line: i + 1, value: v });
     } catch {
       // A torn last line in a live history file is normal; skip it.
     }
-  }
+  });
   return out;
 }
