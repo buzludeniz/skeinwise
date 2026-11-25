@@ -926,6 +926,15 @@ code {
   inset: 0;
 }
 
+/* With a side panel open, the brain draws in the space left of it, so the panel never hides part of the cloud. */
+.app.panel-open:not(.compact) .brain-host {
+  right: calc(var(--side) + var(--gap));
+}
+
+.app.panel-open:not(.compact):has(.side-panel.wide) .brain-host {
+  right: calc(var(--side-wide) + var(--gap));
+}
+
 .brain-canvas {
   display: block;
   width: 100%;
@@ -3219,8 +3228,16 @@ svg .mark:hover {
   left: 10px;
   right: 10px;
   bottom: 10px;
-  flex-wrap: wrap;
   gap: 4px 8px;
+}
+
+/* An open legend grows upward over the layout switch, so the switch steps aside until it closes. */
+.compact .legend.open {
+  flex-wrap: wrap;
+}
+
+.compact .brain-view:has(.legend.open) .brain-layouts {
+  visibility: hidden;
 }
 
 .compact .legend-items {

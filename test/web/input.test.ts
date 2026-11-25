@@ -73,4 +73,26 @@ describe('brain input', () => {
     expect([...litValues(m, null, 1)!]).toEqual([0, 0, 0, 1, 1, 1]);
     expect([...litValues(m, new Set([2, 5]), 1)!]).toEqual([0, 0, 0, 0, 2, 0]);
   });
+
+  it('adds one large labelled point per hub, with a spoke to each entry it holds', () => {
+    const withHubs: BrainData = {
+      ...sample,
+      hubs: [
+        { id: 11, name: 'Sowing depth', entries: [1, 2, 99] },
+        { id: 12, name: 'Gone', entries: [98] },
+      ],
+    };
+    const m = buildModel(withHubs, 'source', ember, dusk);
+    // The hub with no entries left is skipped; the other comes after every entry.
+    expect(m.hubs).toEqual([{ index: 6, id: 11, name: 'Sowing depth', count: 2 }]);
+    expect(m.input.points[6]).toMatchObject({ id: -11, kind: 1, time: t('2025-03-02T10:01:00Z'), group: 0 });
+    expect([...m.input.spokes]).toEqual([6, 0, 6, 1]);
+    expect(m.input.sizes[6]!).toBeGreaterThan(Math.max(...m.input.sizes.slice(0, 6)));
+    expect(m.input.labels.map((l) => l.text)).toEqual(['Sowing depth', 'Seeds', 'Garden plan']);
+    // The legend counts entries only.
+    expect(m.legend.map((g) => g.count)).toEqual([3, 3]);
+    // A hub lights with any of its entries, and isolates with its group.
+    expect([...litValues(m, new Set([2]), null)!]).toEqual([0, 2, 0, 0, 0, 0, 2]);
+    expect([...litValues(m, null, 1)!]).toEqual([0, 0, 0, 1, 1, 1, 0]);
+  });
 });

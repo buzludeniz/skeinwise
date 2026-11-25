@@ -83,6 +83,12 @@ async function applySeed(): Promise<void> {
     case 'command':
       openCommand(query ?? '');
       break;
+    case 'hub': {
+      const hubs = getState().brain?.hubs ?? [];
+      const biggest = hubs.reduce<(typeof hubs)[number] | null>((a, h) => (!a || h.entries.length > a.entries.length ? h : a), null);
+      if (biggest) openPanel({ kind: 'hub', id: biggest.id });
+      break;
+    }
     case 'review':
     case 'runs':
     case 'hubs':

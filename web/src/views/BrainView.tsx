@@ -45,6 +45,7 @@ export function BrainView() {
 
   const empty = brain && brain.points.length === 0;
   const point = hover && brain && model ? brain.points[hover.index] : null;
+  const hub = hover && model && !point ? model.hubs.find((h) => h.index === hover.index) : null;
 
   return (
     <section class="view brain-view" aria-label="Brain">
@@ -112,6 +113,13 @@ export function BrainView() {
           <p class="hover-meta">
             {KIND_NAMES[point[1]]} · {speakerName(brain!.speakers[point[2]] ?? '')}
           </p>
+          <p class="hover-hint">Double-click to open</p>
+        </div>
+      )}
+      {hub && hover && !clip && (
+        <div class="hover-card" style={{ transform: `translate(${Math.round(hover.x + 14)}px, ${Math.round(hover.y - 12)}px)` }} role="tooltip">
+          <p class="hover-title">{hub.name}</p>
+          <p class="hover-meta">Concept hub · {plural(hub.count, 'entry', 'entries')}</p>
           <p class="hover-hint">Double-click to open</p>
         </div>
       )}

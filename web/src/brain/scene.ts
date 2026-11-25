@@ -96,13 +96,14 @@ attribute vec3 color;
 attribute float lit;
 uniform float uMix;
 uniform float uAnyLit;
+uniform float uLitGain;
 varying vec3 vColor;
 varying float vLit;
 void main() {
   vec3 p = mix(position, target, uMix);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   vColor = color;
-  vLit = uAnyLit > 0.5 ? (lit > 1.5 ? 2.2 : 0.18) : (lit < 0.5 ? 0.2 : 1.0);
+  vLit = uAnyLit > 0.5 ? (lit > 1.5 ? uLitGain : 0.18) : (lit < 0.5 ? 0.2 : 1.0);
 }`;
 
 const LINE_FRAG = /* glsl */ `
@@ -182,11 +183,15 @@ export class BrainScene {
   private readonly pointMat: ShaderMaterial;
   private readonly threadMat: ShaderMaterial;
   private readonly linkMat: ShaderMaterial;
+  private readonly crossMat: ShaderMaterial;
+  private readonly spokeMat: ShaderMaterial;
   private readonly shellMat: ShaderMaterial;
   private readonly ringMat: ShaderMaterial;
   private points: Points | null = null;
   private threadLines: LineSegments | null = null;
   private linkLines: LineSegments | null = null;
+  private crossLines: LineSegments | null = null;
+  private spokeLines: LineSegments | null = null;
   private shell: Points | null = null;
   private rings: LineSegments | null = null;
 
@@ -222,7 +227,7 @@ export class BrainScene {
   private last = 0;
   private dirty = true;
   private resizer: ResizeObserver | null = null;
-  private labelEls: { index: number; el: HTMLDivElement }[] = [];
+  private labelEls: { index: number; el: HTMLDivElement; w: number }[] = [];
 
   private pointers = new Map<number, { x: number; y: number }>();
   private dragMoved = 0;
@@ -277,17 +282,20 @@ export class BrainScene {
       depthWrite: false,
       blending: AdditiveBlending,
     });
-    const lineMat = (alpha: number) =>
+    // A faint line kind gains more when lit, so a lit hub's spokes or a lit entry's cross links stand out.
+    const lineMat = (alpha: number, litGain = 2.2) =>
       new ShaderMaterial({
         vertexShader: LINE_VERT,
         fragmentShader: LINE_FRAG,
-        uniforms: { uMix: { value: 1 }, uAnyLit: { value: 0 }, uAlpha: { value: alpha } },
+        uniforms: { uMix: { value: 1 }, uAnyLit: { value: 0 }, uAlpha: { value: alpha }, uLitGain: { value: litGain } },
         transparent: true,
         depthWrite: false,
         blending: AdditiveBlending,
       });
     this.threadMat = lineMat(0.12);
     this.linkMat = lineMat(0.34);
+    this.crossMat = lineMat(0.08, 4);
+    this.spokeMat = lineMat(0.05, 7);
     this.ringMat = lineMat(0.16);
     this.shellMat = new ShaderMaterial({
       vertexShader: SHELL_VERT,
@@ -362,7 +370,7 @@ export class BrainScene {
     this.backMat.uniforms.uGround!.value.set(...ground);
     this.backMat.uniforms.uLift!.value.set(...lift);
     const blend = theme.light ? NormalBlending : AdditiveBlending;
-    for (const m of [this.pointMat, this.threadMat, this.linkMat, this.shellMat, this.ringMat]) {
+    for (const m of [this.pointMat, this.threadMat, this.linkMat, this.crossMat, this.spokeMat, this.shellMat, this.ringMat]) {
       m.blending = blend;
       m.needsUpdate = true;
     }
@@ -371,6 +379,8 @@ export class BrainScene {
     this.shellMat.uniforms.uAlpha!.value = theme.light ? 0.2 : 0.3;
     this.threadMat.uniforms.uAlpha!.value = theme.light ? 0.16 : 0.12;
     this.linkMat.uniforms.uAlpha!.value = theme.light ? 0.4 : 0.34;
+    this.crossMat.uniforms.uAlpha!.value = theme.light ? 0.12 : 0.08;
+    this.spokeMat.uniforms.uAlpha!.value = theme.light ? 0.08 : 0.05;
     this.ringMat.uniforms.uAlpha!.value = theme.light ? 0.25 : 0.16;
     if (this.input) this.buildRings();
     this.dirty = true;
@@ -464,7 +474,7 @@ export class BrainScene {
     const attr = new BufferAttribute(this.lit, 1);
     this.points.geometry.setAttribute('lit', attr);
     this.pointMat.uniforms.uAnyLit!.value = this.anyLit ? 1 : 0;
-    for (const m of [this.threadMat, this.linkMat]) m.uniforms.uAnyLit!.value = this.anyLit ? 1 : 0;
+    for (const m of [this.threadMat, this.linkMat, this.crossMat, this.spokeMat]) m.uniforms.uAnyLit!.value = this.anyLit ? 1 : 0;
     this.buildLineLit();
     this.syncLabels();
     this.dirty = true;
@@ -528,7 +538,12 @@ export class BrainScene {
     const g = this.points.geometry;
     g.setAttribute('position', new BufferAttribute(this.from, 3));
     g.setAttribute('target', new BufferAttribute(this.current, 3));
-    const fromLines = { threads: this.threadLines?.geometry.getAttribute('position'), links: this.linkLines?.geometry.getAttribute('position') };
+    const fromLines = {
+      threads: this.threadLines?.geometry.getAttribute('position'),
+      links: this.linkLines?.geometry.getAttribute('position'),
+      cross: this.crossLines?.geometry.getAttribute('position'),
+      spokes: this.spokeLines?.geometry.getAttribute('position'),
+    };
     this.buildLines(fromLines);
     if (animate && !this.reducedMotion) {
       this.mix = 0;
@@ -541,7 +556,7 @@ export class BrainScene {
 
   private applyMix(): void {
     const t = easeInOut(this.mix);
-    for (const m of [this.pointMat, this.threadMat, this.linkMat]) m.uniforms.uMix!.value = t;
+    for (const m of [this.pointMat, this.threadMat, this.linkMat, this.crossMat, this.spokeMat]) m.uniforms.uMix!.value = t;
     this.shellShow = this.layout === 'brain' ? Math.max(this.shellShow, t) : Math.min(this.shellShow, 1 - t);
     this.shellMat.uniforms.uShow!.value = this.shellShow;
     if (this.rings) this.ringMat.uniforms.uMix!.value = 1;
@@ -549,7 +564,8 @@ export class BrainScene {
 
   // Lines.
 
-  private lineVertices(pos: Float32Array, pairs: Uint32Array, curved: boolean): Float32Array {
+  /** Line vertices: one segment per pair, or with a bow, a curve of LINK_STEPS segments arcing outward by bow × length. */
+  private lineVertices(pos: Float32Array, pairs: Uint32Array, curved: boolean, bow = 0.35): Float32Array {
     if (!curved) {
       const out = new Float32Array(pairs.length * 3);
       for (let k = 0; k < pairs.length; k++) out.set(pos.subarray(pairs[k]! * 3, pairs[k]! * 3 + 3), k * 3);
@@ -566,7 +582,7 @@ export class BrainScene {
       const len = Math.hypot(a[0]! - b[0]!, a[1]! - b[1]!, a[2]! - b[2]!);
       const out0 = [m[0]!, m[1]! - 0.5, m[2]!];
       const ol = Math.hypot(out0[0]!, out0[1]!, out0[2]!) || 1;
-      const c = [m[0]! + (out0[0]! / ol) * len * 0.35, m[1]! + (out0[1]! / ol) * len * 0.35, m[2]! + (out0[2]! / ol) * len * 0.35];
+      const c = [m[0]! + (out0[0]! / ol) * len * bow, m[1]! + (out0[1]! / ol) * len * bow, m[2]! + (out0[2]! / ol) * len * bow];
       let prev = [a[0]!, a[1]!, a[2]!];
       for (let k = 1; k <= LINK_STEPS; k++) {
         const t = k / LINK_STEPS;
@@ -603,10 +619,10 @@ export class BrainScene {
   /** Thread pairs in a fixed shuffled order, so drawing the first part of them shows an even sample. */
   private threadOrder: Uint32Array = new Uint32Array(0);
 
-  private buildLines(from?: { threads?: unknown; links?: unknown }): void {
+  private buildLines(from?: { threads?: unknown; links?: unknown; cross?: unknown; spokes?: unknown }): void {
     if (!this.input) return;
     const pos = this.layoutOf(this.layout);
-    const { threads, links } = this.input;
+    const { threads, links, cross, spokes } = this.input;
     if (!from) {
       const segs = threads.length / 2;
       const idx = [...Array(segs).keys()].sort((a, b) => hash01(a, 11) - hash01(b, 11));
@@ -616,8 +632,8 @@ export class BrainScene {
         this.threadOrder[k * 2 + 1] = threads[s * 2 + 1]!;
       });
     }
-    const make = (pairs: Uint32Array, curved: boolean, mat: ShaderMaterial, old: LineSegments | null, oldPos: unknown) => {
-      const target = this.lineVertices(pos, pairs, curved);
+    const make = (pairs: Uint32Array, curved: boolean, mat: ShaderMaterial, old: LineSegments | null, oldPos: unknown, bow?: number) => {
+      const target = this.lineVertices(pos, pairs, curved, bow);
       const start = oldPos instanceof BufferAttribute && oldPos.array.length === target.length ? this.mixedLine(old!) : target.slice();
       const g = new BufferGeometry();
       g.setAttribute('position', new BufferAttribute(start, 3));
@@ -636,6 +652,9 @@ export class BrainScene {
     };
     this.threadLines = make(this.threadOrder, false, this.threadMat, this.threadLines, from?.threads);
     this.linkLines = make(links, true, this.linkMat, this.linkLines, from?.links);
+    // Cross links bow only a little: most join points in the stem, and a full arc would loop far outside the brain.
+    this.crossLines = make(cross, true, this.crossMat, this.crossLines, from?.cross, 0.08);
+    this.spokeLines = make(spokes, false, this.spokeMat, this.spokeLines, from?.spokes);
     this.applyDensity();
     this.buildLineLit();
   }
@@ -658,6 +677,8 @@ export class BrainScene {
       this.threadLines.visible = d > 0;
     }
     if (this.linkLines) this.linkLines.visible = d > 0;
+    if (this.crossLines) this.crossLines.visible = d > 0;
+    if (this.spokeLines) this.spokeLines.visible = d > 0;
     this.dirty = true;
   }
 
@@ -674,6 +695,8 @@ export class BrainScene {
     };
     set(this.threadLines, this.threadOrder, 2);
     if (this.input) set(this.linkLines, this.input.links, LINK_STEPS * 2);
+    if (this.input) set(this.crossLines, this.input.cross, LINK_STEPS * 2);
+    if (this.input) set(this.spokeLines, this.input.spokes, 2);
   }
 
   /** Year rings: a faint circle per year, with month spokes, only in the rings layout. */
@@ -737,7 +760,7 @@ export class BrainScene {
       el.className = 'brain-label';
       el.textContent = text.length > 34 ? `${text.slice(0, 32)}…` : text;
       this.labelLayer.append(el);
-      this.labelEls.push({ index, el });
+      this.labelEls.push({ index, el, w: 0 });
     }
     this.syncLabels();
   }
@@ -750,18 +773,27 @@ export class BrainScene {
   private placeLabels(): void {
     if (this.labelLayer.classList.contains('hidden')) return;
     const centre = this.orbit.target.clone().project(this.camera).z;
-    const placed: { x: number; y: number }[] = [];
-    for (const { index, el } of this.labelEls) {
+    const placed: { x: number; y: number; w: number }[] = [];
+    for (const label of this.labelEls) {
+      const { index, el } = label;
       const s = this.screenOf(index);
       const p = this.pointAt(index);
       const depth = new Vector3(p[0], p[1], p[2]).project(this.camera).z;
       const dimmed = this.anyLit ? this.lit[index]! < 1.5 : this.lit[index]! < 0.5;
-      // Hide labels on the far side of the cloud, under a dim point, or crowding a label already placed.
-      const visible = !!s && depth < centre + 0.002 && !dimmed && this.grow >= 1 && !placed.some((q) => Math.abs(q.x - s.x) < 120 && Math.abs(q.y - s.y) < 22);
+      // To the right of its point, or to the left when that would run off the canvas. Measured once.
+      label.w ||= el.offsetWidth;
+      const box = s ? { x: s.x + 9 + label.w > this.width - 8 ? Math.max(8, s.x - 9 - label.w) : s.x + 9, y: s.y - 22, w: label.w } : null;
+      // Hide labels on the far side of the cloud, under a dim point, or overlapping a label already placed.
+      const visible =
+        !!box &&
+        depth < centre + 0.002 &&
+        !dimmed &&
+        this.grow >= 1 &&
+        !placed.some((q) => Math.abs(q.y - box.y) < 24 && box.x < q.x + q.w + 6 && q.x < box.x + box.w + 6);
       el.classList.toggle('on', visible);
-      if (s && visible) {
-        placed.push(s);
-        el.style.transform = `translate(${Math.round(s.x + 9)}px, ${Math.round(s.y - 22)}px)`;
+      if (box && visible) {
+        placed.push(box);
+        el.style.transform = `translate(${Math.round(box.x)}px, ${Math.round(box.y)}px)`;
       }
     }
     for (const { el, at } of this.ringLabels) {

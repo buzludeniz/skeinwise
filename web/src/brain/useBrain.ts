@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from 'preact/hooks';
 import type { RefObject } from 'preact';
-import { openEntry } from '../actions.ts';
+import { openEntry, openPanel } from '../actions.ts';
 import { useApp } from '../store.ts';
 import { mix, palette, theme } from '../themes.ts';
 import { type BrainModel, buildModel, litValues } from './input.ts';
@@ -86,7 +86,8 @@ export function useBrainScene(host: RefObject<HTMLDivElement | null>, mode: Scen
     scene.onHover = setHover;
     scene.onOpen = (i) => {
       const id = model?.input.points[i]?.id;
-      if (id !== undefined) openEntry(id);
+      // A hub's point carries its hub id negated.
+      if (id !== undefined) id < 0 ? openPanel({ kind: 'hub', id: -id }) : openEntry(id);
     };
   }, [model]);
 

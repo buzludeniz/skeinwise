@@ -102,11 +102,12 @@ export function threadPairs(data: BrainData): Uint32Array {
   return Uint32Array.from(pairs);
 }
 
-/** Index pairs for note links. */
-export function linkPairs(data: BrainData): Uint32Array {
+/** Index pairs for the lines between entries: note links (kind 0), cross links (kind 1), or both when no kind is given. */
+export function linkPairs(data: BrainData, kind?: number): Uint32Array {
   const at = new Map(data.points.map((p, i) => [p[0], i]));
   const pairs: number[] = [];
-  for (const [a, b] of data.links) {
+  for (const [a, b, k] of data.links) {
+    if (kind !== undefined && k !== kind) continue;
     const i = at.get(a);
     const j = at.get(b);
     if (i !== undefined && j !== undefined && i !== j) pairs.push(i, j);

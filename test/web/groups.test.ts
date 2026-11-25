@@ -34,6 +34,7 @@ const sample = data(
   [
     [4, 5, 0],
     [5, 99, 0],
+    [1, 4, 1],
   ],
 );
 
@@ -68,8 +69,10 @@ describe('groups', () => {
 
   it('joins thread entries in time order and skips links to missing points', () => {
     expect([...threadPairs(sample)]).toEqual([2, 0, 0, 1]);
-    expect([...linkPairs(sample)]).toEqual([3, 4]);
-    expect([...linkDegree(sample)]).toEqual([0, 0, 0, 1, 2]);
+    expect([...linkPairs(sample)]).toEqual([3, 4, 0, 3]);
+    expect([...linkPairs(sample, 0)]).toEqual([3, 4]);
+    expect([...linkPairs(sample, 1)]).toEqual([0, 3]);
+    expect([...linkDegree(sample)]).toEqual([1, 0, 0, 2, 2]);
   });
 });
 
