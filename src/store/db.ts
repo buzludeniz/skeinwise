@@ -3,10 +3,16 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { MIGRATIONS } from './schema.ts';
 
+/** How long a write waits for another process (live capture, serve, the CLI) to finish its own, in ms. */
+export const BUSY_TIMEOUT_MS = 5000;
+
 /** Opens (or creates) a record database and brings its schema up to date. */
-export function openDb(file: string): DatabaseSync {
+export function openDb(file: string, { busyTimeoutMs = BUSY_TIMEOUT_MS }: { busyTimeoutMs?: number } = {}): DatabaseSync {
   if (file !== ':memory:') mkdirSync(dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
+  // Before anything else touches the file: several processes share one record, and without a timeout a write that
+  // meets another fails at once with "database is locked".
+  db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(busyTimeoutMs))}`);
   db.exec('PRAGMA foreign_keys = ON');
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
   migrate(db);
@@ -46,15 +52,36 @@ export function migrate(db: DatabaseSync): void {
   }
 }
 
-/** Runs fn inside one transaction; rolls back and rethrows on error. */
+/** SQLITE_BUSY, or one of its extended codes: another connection holds the write lock past the busy timeout. */
+export function isBusy(error: unknown): boolean {
+  const code = (error as { errcode?: unknown }).errcode;
+  return typeof code === 'number' && (code & 0xff) === 5;
+}
+
+/**
+ * Runs fn inside one write transaction; rolls back and rethrows on error. BEGIN IMMEDIATE takes the write lock up
+ * front, so a busy record fails at the start (after the busy timeout), before fn has done anything. When another
+ * process still holds the lock, the whole transaction runs once more; a second busy is thrown, never swallowed.
+ * fn may run twice, so it must touch nothing outside this database.
+ */
 export function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
-  db.exec('BEGIN');
+  try {
+    return runTransaction(db, fn);
+  } catch (error) {
+    if (!isBusy(error)) throw error;
+    return runTransaction(db, fn);
+  }
+}
+
+function runTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  db.exec('BEGIN IMMEDIATE');
   try {
     const result = fn();
     db.exec('COMMIT');
     return result;
   } catch (err) {
-    db.exec('ROLLBACK');
+    // A failed COMMIT may already have ended the transaction.
+    if (db.isTransaction) db.exec('ROLLBACK');
     throw err;
   }
 }
