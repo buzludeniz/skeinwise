@@ -259,6 +259,9 @@ describe('settings from the command line', () => {
     expect((await sw('config', 'engine')).out).toBe('none\n');
     expect((await sw('config', 'budget', 'lots')).code).toBe(2);
     expect((await sw('config', 'engine', '--unset')).out).toBe('engine is back to its default: local\n');
+    expect((await sw('config', 'liveFolders', '[{"path": "/notes/mara", "owner": "Mara"}, {"path": "/notes/mine"}]')).out).toBe(
+      'liveFolders = /notes/mara (Mara), /notes/mine\n',
+    );
     const unknown = await sw('config', 'colour', 'blue');
     expect(unknown.code).toBe(2);
     expect(unknown.err).toContain('Unknown setting "colour"');

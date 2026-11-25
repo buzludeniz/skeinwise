@@ -2,7 +2,7 @@
 // here, only the name of the environment variable that holds it.
 
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { UsageError } from './errors.ts';
 
 export type EngineName = 'local' | 'remote' | 'none';
@@ -26,6 +26,18 @@ export interface Config {
   names: string[];
   /** Extra fields merged into every chat request, e.g. {"temperature": 0}. */
   modelOptions: Record<string, unknown>;
+  /** Note folders and vaults that `skeinwise live` follows, besides agent histories and Downloads. */
+  liveFolders: LiveFolder[];
+  /** Whether `skeinwise live` organises what it captures. */
+  liveOrganise: boolean;
+  /** Whether background organising may use the outside model (it always may use the local one). */
+  liveRemote: boolean;
+}
+
+export interface LiveFolder {
+  path: string;
+  /** Whose words the folder holds; you when not given. */
+  owner?: string;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -39,6 +51,9 @@ export const DEFAULT_CONFIG: Config = {
   redaction: true,
   names: [],
   modelOptions: {},
+  liveFolders: [],
+  liveOrganise: true,
+  liveRemote: false,
 };
 
 const KEYS = Object.keys(DEFAULT_CONFIG) as (keyof Config)[];
@@ -84,7 +99,23 @@ function checkValue<K extends keyof Config>(key: K, value: unknown, where: strin
       if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) throw bad('a whole number of tokens');
       break;
     case 'redaction':
+    case 'liveOrganise':
+    case 'liveRemote':
       if (typeof value !== 'boolean') throw bad('true or false');
+      break;
+    case 'liveFolders':
+      if (
+        !Array.isArray(value) ||
+        !value.every(
+          (f) =>
+            f &&
+            typeof f === 'object' &&
+            typeof (f as LiveFolder).path === 'string' &&
+            (f as LiveFolder).path.trim() &&
+            ((f as LiveFolder).owner === undefined || typeof (f as LiveFolder).owner === 'string'),
+        )
+      )
+        throw bad('a list of folders, like [{"path": "/Users/me/Notes"}, {"path": "/Users/me/Mara", "owner": "Mara"}]');
       break;
     case 'names':
       if (!Array.isArray(value) || !value.every((v) => typeof v === 'string' && v.trim())) throw bad('a list of names');
@@ -111,7 +142,7 @@ export function parseConfigValue(key: string, text: string): { key: keyof Config
   if (!isKey(key)) throw new UsageError(`Unknown setting "${key}". Known: ${KEYS.join(', ')}.`);
   let value: unknown = text;
   if (key === 'budget') value = /^\d+$/.test(text) ? Number(text) : text;
-  if (key === 'redaction') {
+  if (key === 'redaction' || key === 'liveOrganise' || key === 'liveRemote') {
     if (/^(on|true|yes)$/i.test(text)) value = true;
     else if (/^(off|false|no)$/i.test(text)) value = false;
   }
@@ -124,14 +155,27 @@ export function parseConfigValue(key: string, text: string): { key: keyof Config
           .filter(Boolean);
   }
   if (key === 'modelOptions') value = parseJson(key, text);
-  return { key, value: checkValue(key, value, 'config') };
+  // Folder paths separated by commas, or JSON for folders that hold someone else's words.
+  if (key === 'liveFolders') {
+    value = text.trim().startsWith('[')
+      ? parseJson(key, text)
+      : text
+          .split(',')
+          .map((p) => p.trim())
+          .filter(Boolean)
+          .map((path) => ({ path: resolve(path) }));
+  }
+  const checked = checkValue(key, value, 'config');
+  if (key === 'liveFolders') return { key, value: (checked as LiveFolder[]).map((f) => ({ ...f, path: resolve(f.path) })) };
+  return { key, value: checked };
 }
 
 function parseJson(key: string, text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    throw new UsageError(`"${key}" must be JSON, for example: ${key === 'names' ? '["Alex", "Sam"]' : '{"temperature": 0}'}`);
+    const example = { names: '["Alex", "Sam"]', liveFolders: '[{"path": "/Users/me/Mara", "owner": "Mara"}]' }[key] ?? '{"temperature": 0}';
+    throw new UsageError(`"${key}" must be JSON, for example: ${example}`);
   }
 }
 

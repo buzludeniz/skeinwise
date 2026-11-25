@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { ORGANISER_COMMANDS } from './cli-organiser.ts';
 import { writeDemo } from './demo/demo.ts';
@@ -8,6 +10,8 @@ import { needId, UsageError } from './errors.ts';
 import { day, entryHeader, indent, minute, speakerLabel } from './format.ts';
 import { homeDir, openHome } from './home.ts';
 import { readImports } from './importers/detect.ts';
+import { readStatus } from './live/capture.ts';
+import { describeStatus, startLive } from './live/run.ts';
 import type { Store } from './store/store.ts';
 
 /** package.json sits one level up from src/ and two from dist/src/. */
@@ -45,6 +49,9 @@ Your record:
   exclude <source>          Leave a source out of search and the map
   include <source>          Bring an excluded source back
   not-mine <thread>         Mark a thread as someone else's (--undo to reverse)
+  live                      Record live: import new chats and notes as they appear, and
+                            organise what is new in the background
+      --once                Catch up and organise once, then stop
   demo                      Build a demo record from invented data
       --out <dir>           Where to write the demo export files
       --force               Import even if the record is not empty
@@ -84,6 +91,15 @@ Corrections (each is a run you can undo):
   rename-hub <hub> <name>...   Give a hub a new name
   delete-hub <hub>             Delete a hub
 
+The local model:
+  model check               Ask the model server for its model and run one short test prompt
+      --engine remote       Check the outside model instead (one short request)
+  model fetch               Download the suggested model (Qwen3-4B, about 2.5 GB) into the
+                            record folder's models/, after showing the size and source
+      --yes                 Download without asking
+  model serve [<file>]      Print the llama-server command for it (or for a .gguf of yours)
+      --run                 Run it here instead
+
 Settings:
   config [<key> [<value>...]]  Show or change a setting (--unset to go back to the default)
   define-tag <schema> <tag> [<words>...]
@@ -104,12 +120,23 @@ export interface Io {
   fetch?: typeof fetch;
   /** The clock, as an ISO time; the real one when not given. */
   now?: () => string;
+  /** Asks a yes-or-no question and returns the answer, or null when nobody can answer (no terminal). */
+  ask?: (question: string) => Promise<string | null>;
 }
 
 const defaultIo: Io = {
   out: (t) => process.stdout.write(t),
   err: (t) => process.stderr.write(t),
   env: process.env,
+  ask: async (question) => {
+    if (!process.stdin.isTTY) return null;
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    try {
+      return await rl.question(question);
+    } finally {
+      rl.close();
+    }
+  },
 };
 
 async function withStore<T>(io: Io, fn: (store: Store) => T | Promise<T>): Promise<T> {
@@ -136,6 +163,7 @@ async function run(argv: string[], io: Io): Promise<number> {
       out: { type: 'string' },
       force: { type: 'boolean' },
       undo: { type: 'boolean' },
+      once: { type: 'boolean' },
       json: { type: 'boolean' },
       engine: { type: 'string' },
       scope: { type: 'string' },
@@ -146,6 +174,7 @@ async function run(argv: string[], io: Io): Promise<number> {
       resolve: { type: 'string' },
       unset: { type: 'boolean' },
       remove: { type: 'boolean' },
+      run: { type: 'boolean' },
     },
   });
   const json = (v: unknown) => io.out(`${JSON.stringify(v, null, 2)}\n`);
@@ -250,6 +279,40 @@ async function run(argv: string[], io: Io): Promise<number> {
           }
         return 0;
       });
+    }
+
+    case 'live': {
+      const home = homeDir(io.env);
+      const store = openHome(home, io.now);
+      let started = false; // the catch-up pass is printed below, so only later passes print here
+      const live = startLive(store, home, {
+        once: values.once === true,
+        userHome: io.env.HOME || homedir(),
+        fetch: io.fetch ?? fetch,
+        env: io.env,
+        onSaved: (status) => started && io.out(describeStatus(status)),
+        onOrganised: (status) => started && !values.json && io.out(describeStatus(status)),
+        progress: (line) => io.err(`${line}\n`),
+      });
+      if (values.once) {
+        // Wait for the organiser, then report capture and organising together.
+        await live.background?.idle();
+        const status = readStatus(join(home, 'live.json'));
+        store.db.close();
+        if (values.json) json(status);
+        else io.out(describeStatus(status));
+        return status.errors.length || status.organised?.error ? 1 : 0;
+      }
+      started = true;
+      if (values.json) json(live.first);
+      else io.out(describeStatus(live.first));
+      io.out('Recording live. Press Ctrl+C to stop.\n');
+      process.once('SIGINT', () => {
+        live.stop();
+        store.db.close();
+        process.exit(0);
+      });
+      return 0;
     }
 
     case 'stats':
