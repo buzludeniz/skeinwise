@@ -9,6 +9,8 @@ import { asArray, isObj, parseJsonl } from './util.ts';
 export interface ImportOptions {
   /** Whose words a notes folder holds: 'you' (default) or a person's name. */
   owner?: string;
+  /** Return no batches, instead of failing, when there is nothing to import (the record folder's own notes). */
+  emptyOk?: boolean;
 }
 
 /** A file's contents, from disk or from inside a zip. */
@@ -73,7 +75,7 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
   const files = stat.isDirectory() ? walk(abs) : isZip ? unzip(abs) : [{ path: abs, text: () => readFileSync(abs, 'utf8'), modifiedAt: stat.mtime }];
   const root = stat.isDirectory() ? abs : isZip ? abs : dirname(abs);
   const batches = collect(files, root, (p) => (isZip ? p : relative(root, p)), options);
-  if (!batches.length) throw new Error(`Nothing to import in ${path}`);
+  if (!batches.length && !options.emptyOk) throw new Error(`Nothing to import in ${path}`);
   return batches;
 }
 

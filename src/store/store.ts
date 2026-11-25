@@ -81,6 +81,8 @@ export interface SearchOptions {
   sourceKind?: string;
   from?: string;
   to?: string;
+  /** Only entries holding every word; no fill-up with entries holding some of them. */
+  strict?: boolean;
 }
 
 export interface Source {
@@ -141,7 +143,8 @@ export function toMatchQuery(query: string, mode: 'all' | 'any' = 'all'): string
 
 export class Store {
   readonly db: DatabaseSync;
-  private readonly now: () => string;
+  /** The clock, so tests and runs agree on what "now" is. */
+  readonly now: () => string;
 
   constructor(db: DatabaseSync, now: () => string = () => new Date().toISOString()) {
     this.db = db;
@@ -311,7 +314,7 @@ export class Store {
     const limit = options.limit ?? 20;
     const hits = this.runSearch(strict, { ...options, limit });
     const loose = toMatchQuery(query, 'any');
-    if (hits.length >= limit || !loose || loose === strict) return hits;
+    if (options.strict || hits.length >= limit || !loose || loose === strict) return hits;
     const seen = new Set(hits.map((h) => h.id));
     for (const hit of this.runSearch(loose, { ...options, limit: limit + hits.length })) {
       if (hits.length >= limit) break;
