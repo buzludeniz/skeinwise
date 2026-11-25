@@ -5,7 +5,7 @@ choose into one dated record on your own computer. Local agents then tag, file, 
 changing a word you wrote. You can explore the result as a 3D map, ask it questions in plain words, or lend it to your
 AI tools as long-term memory.
 
-> **Status:** early and moving fast. Each milestone below ships as a tagged release.
+> **Status:** v0.1.0, the record and the command line. Each milestone below ships as a tagged release.
 
 ## Why
 
@@ -40,8 +40,39 @@ You need Node 24 or later and pnpm.
 git clone https://github.com/buzludeniz/skeinwise
 cd skeinwise
 pnpm install
-pnpm dev --help
+pnpm build
 ```
+
+Try it on the invented demo record first, kept in its own folder:
+
+```bash
+export SKEINWISE_HOME=~/skeinwise-demo
+node dist/src/cli.js demo
+node dist/src/cli.js search "what did I decide about sqlite"
+node dist/src/cli.js stats
+```
+
+Then bring in your own data. The record lives in `~/.skeinwise` unless `SKEINWISE_HOME` says otherwise.
+
+```bash
+unset SKEINWISE_HOME
+node dist/src/cli.js import ~/Downloads/chatgpt-export.zip ~/Downloads/claude-export.zip
+node dist/src/cli.js import ~/.claude/projects ~/.codex/sessions
+node dist/src/cli.js import ~/Notes
+node dist/src/cli.js search sourdough starter
+```
+
+| Source | Where to get it |
+|---|---|
+| ChatGPT | Settings → Data controls → Export data; import the zip |
+| Claude | Settings → Privacy → Export data; import the zip |
+| Gemini | Google Takeout → My Activity → Gemini Apps (JSON); import the zip |
+| Claude Code | `~/.claude/projects` |
+| Codex | `~/.codex/sessions` |
+| Markdown, Obsidian, plain text | The folder itself; `--owner <name>` when the words are someone else's |
+
+Importing again is safe: entries already in the record are skipped, and changed text becomes a new version. Run
+`node dist/src/cli.js help` for every command.
 
 ## Docs
 
