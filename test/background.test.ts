@@ -8,7 +8,7 @@ import { DEMO_NOW, writeDemo } from '../src/demo/demo.ts';
 import { openHome } from '../src/home.ts';
 import { readImports } from '../src/importers/detect.ts';
 import { readStatus, statusLines } from '../src/live/capture.ts';
-import { Background, type BackgroundOptions, parsePmset } from '../src/live/organise.ts';
+import { Background, type BackgroundOptions, type Exec, parsePmset, PMSET, readBattery } from '../src/live/organise.ts';
 import { startLive } from '../src/live/run.ts';
 import type { PollReport } from '../src/connectors/poll.ts';
 import { type RunOptions, runSteps, steps } from '../src/organiser/organise.ts';
@@ -169,6 +169,22 @@ describe('the battery reading', () => {
       discharging: false,
     });
     expect(parsePmset("Now drawing from 'AC Power'")).toBeNull();
+  });
+
+  it('runs pmset by its absolute path with an empty environment, never one found on PATH (L15)', () => {
+    const calls: { file: string; env: Record<string, string> }[] = [];
+    const exec: Exec = (file, _args, options) => {
+      calls.push({ file, env: options.env });
+      return " -InternalBattery-0 (id=1)\t45%; discharging; 3:10 remaining present: true";
+    };
+    expect(readBattery('darwin', exec)).toEqual({ percent: 45, discharging: true });
+    expect(calls).toEqual([{ file: PMSET, env: {} }]);
+    expect(PMSET).toBe('/usr/bin/pmset');
+    expect(
+      readBattery('darwin', () => {
+        throw new Error('spawn /usr/bin/pmset ENOENT');
+      }),
+    ).toBeNull();
   });
 });
 

@@ -129,7 +129,8 @@ export class Background {
       }
       const client = config.engine === 'none' ? undefined : createModel(config, config.engine, { fetch: this.options.fetch, env: this.options.env });
       readNotes(store, home);
-      const record = new RecordView(store);
+      // The whole record in memory, built only once a step will use it: a record never organised needs none (L6).
+      let record: RecordView | undefined;
       const notStarted = new Set<string>();
       for (const step of steps(store, 'all').filter((s) => BACKGROUND_TASKS.includes(s.task))) {
         const schemaId = step.schema?.id ?? null;
@@ -139,6 +140,7 @@ export class Background {
           notStarted.add(step.task);
           continue;
         }
+        record ??= new RecordView(store);
         const scoped = scopeEntries(store.db, record, { kind: 'new' }, step.task, schemaId);
         if (!scoped.length) continue;
         if (this.stopped) break;
@@ -174,18 +176,27 @@ export function busyReason(): string | null {
   return null;
 }
 
+/** macOS's pmset, by its absolute path: a `pmset` placed earlier on PATH is never run (L15). */
+export const PMSET = '/usr/bin/pmset';
+
+/** Runs a program and returns what it printed (tests pass a fake). */
+export type Exec = (file: string, args: string[], options: { encoding: 'utf8'; timeout: number; env: Record<string, string> }) => string;
+
+const execProgram: Exec = (file, args, options) => execFileSync(file, args, options);
+
 /** The battery's charge and whether it is discharging, on macOS and Linux; null without a battery or elsewhere. */
-export function readBattery(): { percent: number; discharging: boolean } | null {
-  if (process.platform === 'darwin') {
+export function readBattery(platform: NodeJS.Platform = process.platform, exec: Exec = execProgram): { percent: number; discharging: boolean } | null {
+  if (platform === 'darwin') {
     let out: string;
     try {
-      out = execFileSync('pmset', ['-g', 'batt'], { encoding: 'utf8', timeout: 2000 });
+      // pmset needs nothing from the environment, so it gets none of it.
+      out = exec(PMSET, ['-g', 'batt'], { encoding: 'utf8', timeout: 2000, env: {} });
     } catch {
       return null;
     }
     return parsePmset(out);
   }
-  if (process.platform === 'linux') {
+  if (platform === 'linux') {
     for (const name of ['BAT0', 'BAT1']) {
       const dir = `/sys/class/power_supply/${name}`;
       if (!existsSync(`${dir}/capacity`)) continue;
