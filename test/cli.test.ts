@@ -159,11 +159,15 @@ describe('connectors, which are off in v1.0', () => {
   it('leaves them out of help and refuses their commands', async () => {
     const help = (await cli('help')).out;
     expect(help).not.toMatch(/connect <service>|disconnect <service>|Connectors/);
-    for (const command of ['connect', 'connections', 'disconnect']) {
+    for (const command of ['connections', 'disconnect']) {
       const run = await cli(command, 'gmail');
       expect(run.code).toBe(2);
       expect(run.err).toMatch(new RegExp(`Unknown command: ${command}\\.`));
     }
+    // `connect` is the agents' command in v1.0 (setup.ts): a service name gets the list of agents, not a connector.
+    const gmail = await cli('connect', 'gmail');
+    expect(gmail.code).toBe(2);
+    expect(gmail.err).toContain('Name the agent to connect: skeinwise connect claude-code');
     expect((await cli('connect', '--client-id', 'x')).err).toMatch(/Unknown option '--client-id'/);
   });
 });

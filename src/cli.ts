@@ -16,6 +16,7 @@ import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP } from './mcp/commands.ts';
 import { MODEL_HELP } from './model-commands.ts';
 import { safeIo, safeJson } from './safe-text.ts';
 import { serveFromArgs } from './server/serve.ts';
+import { SETUP_COMMANDS, SETUP_FLAGS, SETUP_HELP } from './setup.ts';
 import type { Store } from './store/store.ts';
 import { SYNC_COMMANDS } from './sync/commands.ts';
 
@@ -44,6 +45,8 @@ Usage: skeinwise <command> [options]
 
 The record lives in $SKEINWISE_HOME, or ~/.skeinwise when that is not set.
 
+Start here:
+${SETUP_HELP}
 Your record:
   init                      Create the record folder
   import <path>...          Import exports, history folders, note folders or zips
@@ -182,7 +185,6 @@ async function run(argv: string[], io: Io): Promise<number> {
       engine: { type: 'string' },
       scope: { type: 'string' },
       schema: { type: 'string' },
-      yes: { type: 'boolean' },
       preview: { type: 'boolean' },
       layer: { type: 'string' },
       resolve: { type: 'string' },
@@ -190,6 +192,8 @@ async function run(argv: string[], io: Io): Promise<number> {
       remove: { type: 'boolean' },
       run: { type: 'boolean' },
       ...MCP_FLAGS,
+      // --yes (and --write, also in MCP_FLAGS) come from here; every command reads them the same way.
+      ...SETUP_FLAGS,
     },
   });
   const json = (v: unknown) => io.out(`${safeJson(v, 2)}\n`);
@@ -411,6 +415,9 @@ async function run(argv: string[], io: Io): Promise<number> {
     }
 
     default: {
+      // setup, connect and doctor run before the record is opened: doctor must see a missing record as missing.
+      const setupCommand = SETUP_COMMANDS[command];
+      if (setupCommand) return setupCommand({ io, home: homeDir(io.env), values, args: positionals, json });
       // The connectors' commands (src/connectors/commands.ts) are left out: connectors are off in v1.0 and ship in v1.1
       // behind their own consent screen (Deniz, Nov 25). Of the sync module only export is wired (see EXPORT_COMMANDS).
       const organiser = ORGANISER_COMMANDS[command] ?? EXPORT_COMMANDS[command] ?? MCP_COMMANDS[command];

@@ -197,16 +197,20 @@ still holds, or skip. A skipped note comes back after the next review run.
 
 ## Agent memory (MCP)
 
-Two local MCP servers over stdio, so an agent can be given memory without the window, or both.
+A local MCP server over stdio gives an AI agent your record as its memory. `skeinwise connect <agent>` sets it up for
+Claude Code, Claude desktop, Codex or Cursor, and `skeinwise doctor` checks the setup.
 
-- **Memory server** (`skeinwise mcp`): `search`, `ask`, `read_entry`, `read_thread`, `timeline`, `list_hubs`,
-  `read_hub`, `write_note`, `append_daily_note`, `tag_entries`, `not_mine`, `undo_run`.
-- **Window server** (`skeinwise mcp --window`): `show_in_brain`, `open_entry`, `open_hub`, `set_layout`,
-  `highlight` (moves the app's view while you watch). *(The app's side of these is planned.)*
-- **Config snippets** for Claude Code, Claude desktop, Codex, Cursor and others, ready to copy.
+- **Read tools**, for every allowed agent: `search`, `ask`, `read_entry`, `read_thread`, `timeline`, `list_hubs`,
+  `read_hub`.
+- **Write tools**, only for an agent allowed with `--write`: `write_note`, `append_daily_note`, `tag_entries`,
+  `not_mine`, `undo_run`. `not_mine` and `undo_run` change nothing until you confirm them (`skeinwise mcp pending`,
+  `confirm`, `refuse`).
+- An agent is known by a token that `skeinwise mcp allow <agent>` shows once; the record keeps only its hash. Read is
+  the default scope. `skeinwise mcp lock` stops every agent tool at once.
+- Results are framed as untrusted data, with secrets replaced by placeholders, and cut to 20 entries and 32 KB a call
+  and 500 KB a session.
+- Every call is logged (`skeinwise mcp log`): the agent, the tool, the entries it was sent and how much.
 - Every agent write is a version under the agent's name. An agent never changes your notes or another agent's.
-- An agent's first call is refused until you allow it by name (`skeinwise mcp allow <agent>`). `skeinwise mcp lock`
-  stops every agent tool at once.
 
 Details: [mcp.md](mcp.md).
 
@@ -231,11 +235,11 @@ Details: [mcp.md](mcp.md).
 | `skeinwise live [--once]` | Turns on the update stream: live capture and background organising, and pulls from connected services |
 | `skeinwise model check`, `fetch`, `serve` | Tests, downloads (after asking) or starts the local model |
 | `skeinwise serve` | Starts the app *(planned, v0.4)* |
-| `skeinwise mcp [--window]` | Starts the memory server, or the window server, for an agent over stdio |
-| `skeinwise mcp allow`, `revoke`, `agents`, `lock`, `unlock` | Which agents may use the record, and the lock that stops them all |
+| `skeinwise setup [--yes]` | Finds your AI histories and notes, brings them in, and names the agents to connect |
+| `skeinwise connect <agent> [--write] [--yes]` | Gives claude-code, codex, cursor or claude-desktop your record as memory; read only unless `--write` |
+| `skeinwise doctor` | Checks Node, the record, live capture, the model server and agent configs, with one fix per problem |
+| `skeinwise mcp` | Starts the memory server for an agent over stdio |
+| `skeinwise mcp allow`, `deny`, `agents`, `lock`, `unlock`, `log`, `pending`, `confirm`, `refuse` | Which agents may use the record, what they asked for, and the lock that stops them all |
 | `skeinwise demo` | Builds a demo record from invented data |
 | `skeinwise export` | Writes a zip of the record: chats, entries and notes as Markdown; tags, folders, hubs and runs as JSON |
-| `skeinwise connect <service>` | Connects Gmail, Calendar, Todoist or Slack, read-only, after showing what it reads |
-| `skeinwise connections` | What is connected and how the last pull went |
-| `skeinwise disconnect <service>` | Revokes the access and deletes the token; keeps or leaves out what was read |
 
