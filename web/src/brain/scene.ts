@@ -80,7 +80,8 @@ void main() {
   float d = length(c) * 2.0;
   if (d > 1.0) discard;
   if (uLight > 0.5) {
-    float a = smoothstep(1.0, 0.55, d);
+    // On a light ground a point is an ink dot about as wide as the glowing core on a dark one, with a faint rim.
+    float a = smoothstep(0.6, 0.42, d) + smoothstep(1.0, 0.6, d) * 0.12;
     gl_FragColor = vec4(vColor, a * vAlpha * 0.9);
   } else {
     float core = smoothstep(0.42, 0.0, d);
