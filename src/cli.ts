@@ -2,6 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { ORGANISER_COMMANDS } from './cli-organiser.ts';
 import { writeDemo } from './demo/demo.ts';
@@ -90,6 +91,15 @@ Corrections (each is a run you can undo):
   rename-hub <hub> <name>...   Give a hub a new name
   delete-hub <hub>             Delete a hub
 
+The local model:
+  model check               Ask the model server for its model and run one short test prompt
+      --engine remote       Check the outside model instead (one short request)
+  model fetch               Download the suggested model (Qwen3-4B, about 2.5 GB) into the
+                            record folder's models/, after showing the size and source
+      --yes                 Download without asking
+  model serve [<file>]      Print the llama-server command for it (or for a .gguf of yours)
+      --run                 Run it here instead
+
 Settings:
   config [<key> [<value>...]]  Show or change a setting (--unset to go back to the default)
   define-tag <schema> <tag> [<words>...]
@@ -110,12 +120,23 @@ export interface Io {
   fetch?: typeof fetch;
   /** The clock, as an ISO time; the real one when not given. */
   now?: () => string;
+  /** Asks a yes-or-no question and returns the answer, or null when nobody can answer (no terminal). */
+  ask?: (question: string) => Promise<string | null>;
 }
 
 const defaultIo: Io = {
   out: (t) => process.stdout.write(t),
   err: (t) => process.stderr.write(t),
   env: process.env,
+  ask: async (question) => {
+    if (!process.stdin.isTTY) return null;
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    try {
+      return await rl.question(question);
+    } finally {
+      rl.close();
+    }
+  },
 };
 
 async function withStore<T>(io: Io, fn: (store: Store) => T | Promise<T>): Promise<T> {
@@ -153,6 +174,7 @@ async function run(argv: string[], io: Io): Promise<number> {
       resolve: { type: 'string' },
       unset: { type: 'boolean' },
       remove: { type: 'boolean' },
+      run: { type: 'boolean' },
     },
   });
   const json = (v: unknown) => io.out(`${JSON.stringify(v, null, 2)}\n`);

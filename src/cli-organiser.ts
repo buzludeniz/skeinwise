@@ -6,6 +6,7 @@ import type { Io } from './cli.ts';
 import { type Config, configPath, DEFAULT_CONFIG, ENGINES, type EngineName, loadConfig, setConfigValue, unsetConfigValue } from './config.ts';
 import { needId, UsageError } from './errors.ts';
 import { countsText, entryBrief, entryHeader, engineLabel, indent, minute, oneLine } from './format.ts';
+import { modelCommand } from './model-commands.ts';
 import { appendDailyNote, newNote, readNotes } from './notes.ts';
 import { type AskKind, ask, similarEntries } from './organiser/ask.ts';
 import { defineTag, deleteHub, mergeFolders, REVIEW_ACTIONS, type ReviewAction, removeTag, renameHub, resolveReview } from './organiser/corrections.ts';
@@ -46,6 +47,7 @@ export interface Values {
   resolve?: string;
   unset?: boolean;
   remove?: boolean;
+  run?: boolean;
 }
 
 export interface Ctx {
@@ -624,4 +626,5 @@ export const ORGANISER_COMMANDS: Record<string, Command> = {
   'delete-hub': deleteHubCommand,
   config,
   'define-tag': defineTagCommand,
+  model: modelCommand,
 };
