@@ -1,6 +1,7 @@
 // The export and sync commands. The CLI wires SYNC_COMMANDS into its command table and SYNC_FLAGS into its parser;
 // each command takes the same Ctx as the organiser's. A passphrase or recovery phrase comes from a hidden prompt or
 // from a file (--passphrase-file, --phrase-file), never from a flag's value, which would sit in the shell's history.
+// Sync is experimental in v1: every sync command needs --experimental, and the refusal says why (docs/sync.md).
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -12,7 +13,7 @@ import { UsageError } from '../errors.ts';
 import { day, minute } from '../format.ts';
 import { gigabytes } from '../model-commands.ts';
 import { writeExport } from './export.ts';
-import { checkPassphrase, PHRASE_WORDS } from './keys.ts';
+import { checkPassphrase, MIN_PASSPHRASE, MIN_PASSPHRASE_WORDS, PHRASE_WORDS } from './keys.ts';
 import { checkJoin, checkStart, joinSync, pushSync, startSync, syncStatus } from './sync.ts';
 
 type Command = (ctx: Ctx) => number | Promise<number>;
@@ -21,11 +22,13 @@ type Command = (ctx: Ctx) => number | Promise<number>;
 export const SYNC_FLAGS = {
   'passphrase-file': { type: 'string' },
   'phrase-file': { type: 'string' },
+  experimental: { type: 'boolean' },
 } as const;
 
 interface SyncValues {
   json?: boolean;
   force?: boolean;
+  experimental?: boolean;
   'passphrase-file'?: string;
   'phrase-file'?: string;
 }
@@ -33,6 +36,7 @@ interface SyncValues {
 export const SYNC_HELP = `Export and sync (the bundle is encrypted; nothing goes to any server):
   export [<file>]           Write a zip of the record: chats, entries and notes as Markdown, and
                             the tags, folders, hubs and runs as JSON (--force to replace the file)
+  Sync is experimental: every sync command needs --experimental. Its limits are in docs/sync.md.
   sync init <folder>        Sync through a folder, such as one in a cloud drive: asks for a
                             passphrase, shows a ${PHRASE_WORDS}-word recovery phrase once, writes the first bundle
       --passphrase-file <file>  Read the passphrase from a file instead of asking
@@ -95,7 +99,7 @@ const NO_TERMINAL = 'There is no terminal to ask on. Give the passphrase in a fi
 async function newPassphrase(ctx: Ctx): Promise<string> {
   const file = (ctx.values as SyncValues)['passphrase-file'];
   if (file) return checkPassphrase(readSecretFile(file, 'passphrase'));
-  const first = await ask(ctx)('Passphrase for the sync (at least 12 characters): ');
+  const first = await ask(ctx)(`Passphrase for the sync (${MIN_PASSPHRASE} or more characters, or ${MIN_PASSPHRASE_WORDS} or more words): `);
   if (first === null) throw new UsageError(NO_TERMINAL);
   const pass = checkPassphrase(first);
   const again = await ask(ctx)('The same passphrase again: ');
@@ -165,7 +169,7 @@ function onlyFlag(ctx: Ctx, allowed: keyof SyncValues | null, what: string): voi
   const v = ctx.values as SyncValues;
   for (const flag of ['passphrase-file', 'phrase-file'] as const) {
     if (v[flag] && flag !== allowed) {
-      const hint = flag === 'phrase-file' ? ' To open the sync with the recovery phrase: skeinwise sync restore <folder> --phrase-file <file>' : '';
+      const hint = flag === 'phrase-file' ? ' To open the sync with the recovery phrase: skeinwise sync restore <folder> --phrase-file <file> --experimental' : '';
       throw new UsageError(`${what} doesn't take --${flag}.${hint}`);
     }
   }
@@ -185,9 +189,9 @@ async function init(ctx: Ctx, folder: string): Promise<number> {
   ctx.io.out(phraseGrid(s.phrase));
   ctx.io.out(
     '\nWrite it down and keep it away from this computer. If the passphrase is ever lost, the phrase opens the sync:\n' +
-      `  skeinwise sync restore ${s.folder}\n` +
+      `  skeinwise sync restore ${s.folder} --experimental\n` +
       'Skeinwise keeps neither. Without both, the bundle can never be opened again.\n\n' +
-      `On another computer: skeinwise sync join ${s.folder}\nAfter changes here: skeinwise sync push\n`,
+      `On another computer: skeinwise sync join ${s.folder} --experimental\nAfter changes here: skeinwise sync push --experimental\n`,
   );
   return 0;
 }
@@ -216,7 +220,7 @@ async function join(ctx: Ctx, folder: string, by: 'passphrase' | 'phrase'): Prom
   if (j.wrote.length) ctx.io.out(`Brought over: ${j.wrote.join(', ')}.\n`);
   if (j.kept.length) ctx.io.out(`Kept this computer's own ${j.kept.join(' and ')}.\n`);
   if (by === 'phrase') ctx.io.out('The passphrase is unchanged: other computers still join with it, or with the recovery phrase.\n');
-  ctx.io.out('After changes here: skeinwise sync push\n');
+  ctx.io.out('After changes here: skeinwise sync push --experimental\n');
   return 0;
 }
 
@@ -224,7 +228,7 @@ function status(ctx: Ctx): number {
   onlyFlag(ctx, null, 'sync status');
   const s = syncStatus(ctx.home);
   if (ctx.values.json) ctx.json(s);
-  else if (!s.syncing) ctx.io.out('This record does not sync. Start with: skeinwise sync init <folder>\n');
+  else if (!s.syncing) ctx.io.out('This record does not sync. Start with: skeinwise sync init <folder> --experimental\n');
   else {
     ctx.io.out(`Syncing through ${s.folder}. This computer last pushed or joined push ${s.seq} (${minute(s.at!)}).\n`);
     if (s.problem) ctx.io.out(`But ${s.problem}\n`);
@@ -234,7 +238,16 @@ function status(ctx: Ctx): number {
   return 0;
 }
 
+/** Why sync runs only with --experimental: what it doesn't do yet, said before it does anything. */
+export const SYNC_EXPERIMENTAL = `Sync is experimental in this version, so it runs only with --experimental. Its limits:
+  - one sync key for good: it can't be changed, and a lost computer can't be shut out;
+  - the key file sits in the folder beside the bundle, so anyone who can read the folder can guess
+    passphrases offline (a quarter of a second each), and only a long passphrase holds out;
+  - every push is the whole record, built in memory.
+Details: docs/sync.md. To go ahead: skeinwise sync <command> --experimental`;
+
 const syncCommand: Command = async (ctx) => {
+  if (!(ctx.values as SyncValues).experimental) throw new UsageError(SYNC_EXPERIMENTAL);
   const [what, ...rest] = ctx.args;
   switch (what) {
     case 'init':
@@ -250,7 +263,7 @@ const syncCommand: Command = async (ctx) => {
       noWords(rest, 'sync status');
       return status(ctx);
     default:
-      throw new UsageError('Give one of: skeinwise sync init <folder>, sync push, sync join <folder>, sync restore <folder>, sync status');
+      throw new UsageError('Give one of, each with --experimental: skeinwise sync init <folder>, sync push, sync join <folder>, sync restore <folder>, sync status');
   }
 };
 

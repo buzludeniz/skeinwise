@@ -141,14 +141,14 @@ describe('export and sync from the command line', () => {
 
     const pass = join(dir, 'pass.txt');
     writeFileSync(pass, 'a long invented test passphrase\n');
-    const started = await cli('sync', 'init', join(dir, 'cloud'), '--passphrase-file', pass);
+    const started = await cli('sync', 'init', join(dir, 'cloud'), '--passphrase-file', pass, '--experimental');
     expect(started.code).toBe(0);
     expect(statSync(join(dir, 'cloud')).isDirectory()).toBe(true);
-    expect((await cli('sync', 'status')).code).toBe(0);
+    expect((await cli('sync', 'status', '--experimental')).code).toBe(0);
   });
 
   it('says what to do when sync was never started', async () => {
-    const pushed = await cli('sync', 'push');
+    const pushed = await cli('sync', 'push', '--experimental');
     expect(pushed.code).toBe(2);
     expect(pushed.err).toMatch(/sync init/);
   });

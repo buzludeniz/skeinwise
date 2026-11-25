@@ -33,12 +33,26 @@ the bytes.
 
 ## Sync
 
+**Sync is experimental in v1.** Every sync command runs only with `--experimental`; without it, the command stops,
+writes nothing and says why. Know its limits before you rely on it:
+
+- **One sync key, for good.** The key can't be changed, and a lost or stolen computer that synced can't be shut out:
+  it keeps the key in its `sync.json` and can read every later bundle.
+- **The key file sits beside the bundle.** Whoever can read the folder (the cloud provider, anyone with a shared
+  link, a laptop that syncs the folder) gets the key file and can guess your passphrase offline, about a quarter of
+  a second of a laptop's time per guess, for as long as they like. Only a long passphrase holds out.
+- **Every push is the whole record, built in memory**, then encrypted and written. A very large record needs that
+  much free memory, on the computer that pushes and on the one that joins.
+- **No merging.** A join or a restore goes into an empty record only, and a push replaces the bundle.
+
+The redesign that lifts these (key rotation, shutting out a device, streaming bundles) is planned for v1.2.
+
 ```
-skeinwise sync init <folder> [--passphrase-file <file>]
-skeinwise sync push [--force]
-skeinwise sync join <folder> [--passphrase-file <file>]
-skeinwise sync restore <folder> [--phrase-file <file>]
-skeinwise sync status
+skeinwise sync init <folder> --experimental [--passphrase-file <file>]
+skeinwise sync push --experimental [--force]
+skeinwise sync join <folder> --experimental [--passphrase-file <file>]
+skeinwise sync restore <folder> --experimental [--phrase-file <file>]
+skeinwise sync status --experimental
 ```
 
 1. **init** on the computer that has your record. It asks for a passphrase twice (typing is hidden), makes a sync
@@ -87,8 +101,9 @@ Not in it: downloaded models (`models/`), the app's backups (`backups/`) and `sy
   The scrypt settings are N = 2^17, r = 8, p = 1 (128 MB and about a quarter of a second on a laptop, for each try).
   Each copy's associated data names the sync's id and which secret it is for, so a copy can't be moved into another
   key file or the other slot.
-- **The passphrase** has at least 12 characters. It is Unicode-normalised (NFC), so the same letters typed on
-  another computer give the same key.
+- **The passphrase** has at least 14 characters, or 5 or more words (for a passphrase of short words, in Japanese,
+  say). It is Unicode-normalised (NFC), so the same letters typed on another computer give the same key. The floor
+  applies when a sync starts; a sync started before it keeps its passphrase.
 - **The recovery phrase** is 24 words picked at random from a fixed list of 256 (`src/sync/words.ts`): 192 random
   bits. No two words share their first four letters. When typed back, case, numbering and line breaks don't matter.
 - **Neither secret is stored anywhere.** Skeinwise can't tell you either one, and nobody can open the bundle without
@@ -113,7 +128,7 @@ isn't empty**, before it asks for anything, and writes nothing. Empty means:
 `config.json` and `app.json` don't count: a join keeps this computer's own and brings over only those it lacks.
 
 To join from a computer that already has a record, use a new record folder
-(`SKEINWISE_HOME=~/skeinwise-joined skeinwise sync join <folder>`), or move the old one aside first.
+(`SKEINWISE_HOME=~/skeinwise-joined skeinwise sync join <folder> --experimental`), or move the old one aside first.
 
 ### Before anything is written
 
@@ -138,7 +153,7 @@ working there.
 
 - **A computer that still syncs** has the key in its `sync.json`. Its record is whole and its pushes still work.
   To get a new passphrase and phrase, start a new sync from it: move `sync.json` aside, then
-  `skeinwise sync init <new folder>`. Other computers join the new folder.
+  `skeinwise sync init <new folder> --experimental`. Other computers join the new folder.
 - **No computer that still syncs:** the bundle can't be opened, by you or by anyone. There is no back door and no
   reset. Your record is still wherever its record folder is; `skeinwise export` gives a plain-text copy of it any time.
 
@@ -146,5 +161,6 @@ working there.
 
 - Merging two records, so join could go into a record that isn't empty and push wouldn't have to replace.
 - Changing the passphrase or the phrase without starting a new sync.
+- Changing the sync key, or shutting out a computer that synced.
 - Streaming large records: a bundle is built in memory, the whole record at once.
 - Old bundles: a cloud drive's version history may keep earlier bundles, and they open with the same key.
