@@ -135,7 +135,7 @@ function remoteModel(config: Config, deps: ModelDeps): ModelClient {
   if (!API_KEY_ENV.test(config.apiKeyEnv)) {
     throw new UsageError(
       `Skeinwise reads a key only from a variable whose name starts with SKEINWISE_ or ends with _API_KEY, not ${config.apiKeyEnv}. ` +
-        'Set one with: skeinwise config apiKeyEnv OPENAI_API_KEY',
+        'Set one with: skeinwise config apiKeyEnv SKEINWISE_REMOTE_API_KEY',
     );
   }
   const url = config.remoteUrl.replace(/\/+$/, '');

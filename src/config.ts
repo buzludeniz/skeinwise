@@ -158,10 +158,10 @@ function checkValue<K extends keyof Config>(key: K, value: unknown, where: strin
       break;
     case 'apiKeyEnv':
       if (typeof value !== 'string' || (value && !API_KEY_ENV.test(value)))
-        throw bad('the name of an environment variable that starts with SKEINWISE_ or ends with _API_KEY, like OPENAI_API_KEY (never the key itself)');
+        throw bad('the name of an environment variable that starts with SKEINWISE_ or ends with _API_KEY, like SKEINWISE_REMOTE_API_KEY (never the key itself)');
       break;
     case 'remoteHosts':
-      if (!Array.isArray(value) || !value.every((h) => typeof h === 'string' && HOST.test(h))) throw bad('a list of hosts, like ["api.openai.com"]');
+      if (!Array.isArray(value) || !value.every((h) => typeof h === 'string' && HOST.test(h))) throw bad('a list of hosts, like ["models.example.net"]');
       break;
     case 'llamaServer':
       if (typeof value !== 'string' || (value && !isAbsolute(value))) throw bad('the absolute path of the llama-server program');
