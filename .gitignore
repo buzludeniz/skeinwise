@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+.skeinwise/
+test-results/
+playwright-report/
+*.gguf
+.DS_Store
