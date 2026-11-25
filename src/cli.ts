@@ -14,6 +14,7 @@ import { readImports } from './importers/detect.ts';
 import { readStatus } from './live/capture.ts';
 import { describeStatus, startLive } from './live/run.ts';
 import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP } from './mcp/commands.ts';
+import { serveFromArgs } from './server/serve.ts';
 import type { Store } from './store/store.ts';
 import { SYNC_COMMANDS, SYNC_FLAGS, SYNC_HELP } from './sync/commands.ts';
 
@@ -58,6 +59,9 @@ Your record:
   demo                      Build a demo record from invented data
       --out <dir>           Where to write the demo export files
       --force               Import even if the record is not empty
+  serve                     Open the app in your browser, on this computer only
+      --port <n>            Port to listen on (default 7319)
+      --open                Open the browser too
 
 Organising (every run can be undone):
   run <task|all>            Run one task, or all in order: tag, file, link, hub, layer, review
@@ -157,6 +161,7 @@ async function withStore<T>(io: Io, fn: (store: Store) => T | Promise<T>): Promi
 
 async function run(argv: string[], io: Io): Promise<number> {
   const [command = 'help', ...rest] = argv;
+  if (command === 'serve') return serveFromArgs(rest, io);
   const { values, positionals } = parseArgs({
     args: rest,
     allowPositionals: true,

@@ -1,0 +1,43 @@
+// The API's shapes, taken straight from the server's modules so the two can't drift.
+export type { Brief, BrainData, BrainPoint, EntryDetail, Numbers, YouLine } from '../../src/server/queries.ts';
+export type { EntryLines, EntryOrganised, HubDetail, LineCounts, OrganiseJob, OrganiserState } from '../../src/server/organiser.ts';
+export type { AskHit, AskKind, AskResult } from '../../src/organiser/ask.ts';
+export type { Folder, Hub, HubItem, HubSections, Layer, LayerName, Reason, ReviewItem } from '../../src/organiser/views.ts';
+export type { Run, Task } from '../../src/organiser/runs.ts';
+export type { Config, LabView } from '../../src/server/config.ts';
+export type { Timeline, Table, Series, TableProp, EntryRow } from '../../src/server/buckets.ts';
+export type { Found, Preview, Agent } from '../../src/server/found.ts';
+export type { Entry, Version, Source, Thread } from '../../src/store/store.ts';
+import type { LiveState } from '../../src/server/live.ts';
+export type { LiveState };
+
+export interface Status {
+  version: string;
+  locked: boolean;
+  entries: number;
+  lastSaved: string | null;
+  organiser: boolean;
+  /** Record live: whether the stream runs, and its two status lines. */
+  live: LiveState;
+}
+
+export interface Hit {
+  id: number;
+  kind: string;
+  speaker: string;
+  title: string;
+  createdAt: string;
+  sourceLabel: string;
+  threadTitle: string | null;
+  snippet: string;
+  threadId: number | null;
+}
+
+export interface ImportResult {
+  source: string;
+  kind: string;
+  added: number;
+  versioned: number;
+  unchanged: number;
+  threads: number;
+}
