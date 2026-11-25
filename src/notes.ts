@@ -2,9 +2,13 @@
 // one reads the notes folder back into the record as your own words, so a change made here or in any editor becomes a
 // version of the same entry. An agent writing through the memory server reads your edits in first, so they stay
 // yours, and then saves only its own file as a version under its name.
+//
+// A note file is written only inside the notes folder and never through a link (L8): its folder must resolve inside
+// notes/, and the file itself is opened with O_NOFOLLOW, so a link planted at a note's name, or a linked notes/daily,
+// can't send a write to a file elsewhere.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { UsageError } from './errors.ts';
 import { readImports } from './importers/detect.ts';
 import { parseFrontMatter } from './importers/notes.ts';
@@ -19,6 +23,62 @@ export interface NoteWrite {
 
 export function notesDir(home: string): string {
   return resolve(home, 'notes');
+}
+
+/** O_NOFOLLOW where the system has it; on Windows, where it doesn't, the lstat check in notePath stands alone. */
+const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
+
+function outside(rel: string): boolean {
+  return rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+}
+
+/** Whether anything is at the path, a link included (existsSync follows a link and calls a dangling one absent). */
+function present(path: string): boolean {
+  return lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+}
+
+const LINK = (rel: string) => `${rel} is a link, and Skeinwise doesn't write through links in the notes folder. Nothing was written.`;
+
+/** A note file's full path, once it is checked to lie in the notes folder with no link on the way. Its folder exists. */
+function notePath(dir: string, path: string): string {
+  const full = resolve(path);
+  const rel = relative(dir, full);
+  if (!rel || outside(rel)) throw new Error(`${path} is not in the notes folder ${dir}. Nothing was written.`);
+  if (outside(relative(realpathSync(dir), realpathSync(dirname(full))))) {
+    throw new Error(`${rel} leads out of the notes folder through a link. Nothing was written.`);
+  }
+  if (lstatSync(full, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error(LINK(rel));
+  return full;
+}
+
+/** Opens a file without following a link at its last step; a link there is refused in plain words. */
+function openNoFollow(full: string, flags: number): number {
+  try {
+    return openSync(full, flags | NO_FOLLOW, 0o600);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ELOOP') throw new Error(LINK(full));
+    throw err;
+  }
+}
+
+function withFile<T>(full: string, flags: number, fn: (fd: number) => T): T {
+  const fd = openNoFollow(full, flags);
+  try {
+    return fn(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+const { O_APPEND, O_CREAT, O_EXCL, O_RDONLY, O_TRUNC, O_WRONLY } = constants;
+
+/** Writes a new note file; refuses when anything, a link included, is already at its name. */
+function createNoteFile(dir: string, path: string, text: string): void {
+  withFile(notePath(dir, path), O_WRONLY | O_CREAT | O_EXCL, (fd) => writeFileSync(fd, text));
+}
+
+function readNoteFile(path: string): string {
+  return withFile(resolve(path), O_RDONLY, (fd) => readFileSync(fd, 'utf8'));
 }
 
 /** The local calendar day, as YYYY-MM-DD. */
@@ -39,13 +99,14 @@ export function appendDailyNote(store: Store, home: string, text: string, now: D
   const path = join(dir, 'daily', `${day}.md`);
   const item = `- ${agent ? `${agent}: ` : ''}${line.replace(/\r?\n/g, '\n  ')}\n`;
   if (agent) readNotes(store, home);
-  const created = !existsSync(path);
+  const created = !present(path);
   mkdirSync(dirname(path), { recursive: true });
   if (created) {
-    writeFileSync(path, `# ${day}\n\n${item}`, { flag: 'wx', mode: 0o600 });
+    createNoteFile(dir, path, `# ${day}\n\n${item}`);
   } else {
-    const old = readFileSync(path, 'utf8');
-    appendFileSync(path, old && !old.endsWith('\n') ? `\n${item}` : item);
+    const full = notePath(dir, path);
+    const old = readNoteFile(full);
+    withFile(full, O_WRONLY | O_APPEND, (fd) => writeFileSync(fd, old && !old.endsWith('\n') ? `\n${item}` : item));
   }
   return { path, created, entryId: agent ? readBackAs(store, dir, path, agent, false) : readBack(store, dir, path) };
 }
@@ -70,9 +131,9 @@ export function newNote(store: Store, home: string, title: string, now: Date): N
   if (!slug) throw new UsageError(`"${name}" has no letters or digits to name a file after.`);
   const dir = notesDir(home);
   const path = join(dir, `${slug}.md`);
-  if (existsSync(path)) throw new UsageError(`A note already exists at ${path}. Open it in an editor, or pick another title.`);
+  if (present(path)) throw new UsageError(`A note already exists at ${path}. Open it in an editor, or pick another title.`);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path, `---\ncreated: ${now.toISOString()}\n---\n\n# ${name}\n`, { flag: 'wx', mode: 0o600 });
+  createNoteFile(dir, path, `---\ncreated: ${now.toISOString()}\n---\n\n# ${name}\n`);
   return { path, created: true, entryId: readBack(store, dir, path) };
 }
 
@@ -92,14 +153,14 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
   const path = join(dir, `${slug}.md`);
   const content = `# ${name}\n\n${text}\n`;
   readNotes(store, home);
-  if (!existsSync(path)) {
+  if (!present(path)) {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(path, `---\ncreated: ${now.toISOString()}\nagent: ${agent}\n---\n\n${content}`, { flag: 'wx', mode: 0o600 });
+    createNoteFile(dir, path, `---\ncreated: ${now.toISOString()}\nagent: ${agent}\n---\n\n${content}`);
     // Live capture may read the new file first and file it as yours; the version and the front matter still name the
     // agent, and the importer reading `agent:` would close that gap.
     return { path, created: true, entryId: readBackAs(store, dir, path, agent, true) };
   }
-  const owner = parseFrontMatter(readFileSync(path, 'utf8')).meta.agent;
+  const owner = parseFrontMatter(readNoteFile(notePath(dir, path))).meta.agent;
   const file = relative(dir, path);
   if (typeof owner !== 'string' || !owner) {
     throw new UsageError(`${file} is your note, and agents can't change your notes. Pick another title, or add a line to today's note.`);
@@ -152,17 +213,27 @@ function entryOf(store: Store, dir: string, path: string): number {
   return row.id;
 }
 
-/** The file behind an entry, when it is a note in the record folder's notes; null for anything else. */
+/**
+ * The file behind an entry, when it is a note in the record folder's notes; null for anything else, and for a path
+ * that would lead out of the notes folder, by `..` or through a linked folder.
+ */
 export function homeNoteFile(store: Store, home: string, entry: Entry): string | null {
   if (entry.sourceKind !== 'notes') return null;
   const row = store.db.prepare('SELECT location FROM sources WHERE id = ?').get(entry.sourceId) as { location: string } | undefined;
-  if (!row?.location || resolve(row.location) !== notesDir(home)) return null;
-  return join(notesDir(home), entry.externalId);
+  const dir = notesDir(home);
+  if (!row?.location || resolve(row.location) !== dir) return null;
+  const file = resolve(dir, entry.externalId);
+  if (!relative(dir, file) || outside(relative(dir, file))) return null;
+  if (existsSync(dir) && existsSync(dirname(file)) && outside(relative(realpathSync(dir), realpathSync(dirname(file))))) return null;
+  return file;
 }
 
-/** Replaces a note file's text below its front matter, which stays as it was. */
+/**
+ * Replaces a note file's text below its front matter, which stays as it was. The path comes from homeNoteFile or
+ * notePath, which keep it in the notes folder; a link at the file itself is refused here.
+ */
 export function rewriteNoteFile(path: string, body: string): void {
-  if (!existsSync(path)) throw new Error(`The note file ${path} is gone, so it can't be updated. Nothing was saved.`);
-  const front = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(readFileSync(path, 'utf8'))?.[0];
-  writeFileSync(path, `${front ? `${front}\n` : ''}${body.trim()}\n`);
+  if (!present(path)) throw new Error(`The note file ${path} is gone, so it can't be updated. Nothing was saved.`);
+  const front = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(readNoteFile(path))?.[0];
+  withFile(resolve(path), O_WRONLY | O_TRUNC, (fd) => writeFileSync(fd, `${front ? `${front}\n` : ''}${body.trim()}\n`));
 }
