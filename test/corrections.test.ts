@@ -84,6 +84,13 @@ describe('corrections and the review queue on the demo record', () => {
     expect(findSchema(store.db, 'Scratch')).toBeUndefined();
   });
 
+  it('refuses to update a note that changed after its review', () => {
+    const item = openReviewItems(store.db).find((i) => i.noteEntry !== 420)!;
+    const note = store.getEntry(item.noteEntry)!;
+    store.editEntry(note.id, `${note.body}\n\nOne more line.`, 'you');
+    expect(() => resolveReview(store, home, item.id, 'update', true)).toThrow(/changed after review run/);
+  });
+
   it('review answers: update shows a diff and saves with yes; holds and skip set items aside', () => {
     const items = openReviewItems(store.db);
     const plotline = items.find((i) => i.noteEntry === 420)!;
@@ -106,10 +113,4 @@ describe('corrections and the review queue on the demo record', () => {
     expect(() => resolveReview(store, home, 99_999, 'holds', false)).toThrow(/No review item 99999/);
   });
 
-  it('refuses to update a note that changed after its review', () => {
-    const item = openReviewItems(store.db)[0]!;
-    const note = store.getEntry(item.noteEntry)!;
-    store.editEntry(note.id, `${note.body}\n\nOne more line.`, 'you');
-    expect(() => resolveReview(store, home, item.id, 'update', true)).toThrow(/changed after review run/);
-  });
 });

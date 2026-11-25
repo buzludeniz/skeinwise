@@ -12,7 +12,7 @@ import { type RunOptions, runSteps, runTask, steps } from '../src/organiser/orga
 import { RecordView } from '../src/organiser/record.ts';
 import { withUpdates } from '../src/organiser/review.ts';
 import { getRun, listRuns, undoRun } from '../src/organiser/runs.ts';
-import { entryLayers, findSchema, liveFolders, liveHubs, liveLinks, liveTags, openReviewItems } from '../src/organiser/views.ts';
+import { entryLayers, findSchema, hubEntryIds, liveFolders, liveHubs, liveLinks, liveTags, openReviewItems } from '../src/organiser/views.ts';
 import { openDb } from '../src/store/db.ts';
 import { type EntryInput, Store } from '../src/store/store.ts';
 
@@ -56,6 +56,15 @@ describe('the No-AI organiser on the demo record', () => {
     expect(plotline.sections.what_you_found.map((i) => i.text)).toContain('Decided: Plotline runs on SQLite.');
     expect(plotline.sections.open_ends.every((i) => i.text.endsWith('?'))).toBe(true);
     for (const item of Object.values(plotline.sections).flat()) expect(store.getEntry(item.entryId)!.speaker).toBe('you');
+  });
+
+  it('review flags only the notes later entries overtake: 3 or fewer of the 12', () => {
+    expect(listRuns(store.db).find((r) => r.task === 'review')!.counts).toMatchObject({ notes: 12 });
+    const flagged = openReviewItems(store.db).map((i) => store.getEntry(i.noteEntry)!.title);
+    expect(flagged.length).toBeLessThanOrEqual(3);
+    // Plotline moved from SQLite to Postgres; the stall's "Decided: two loaves only" is what its note already says.
+    expect(flagged).toContain('Plotline');
+    expect(flagged).not.toContain('Market stall');
   });
 
   it('files every entry once and tags every entry with a topic', () => {
@@ -171,6 +180,74 @@ describe('scope new', () => {
   it('review needs hubs first', async () => {
     await expect(runTask(store, new RecordView(store), { ...NONE, task: 'review' })).rejects.toThrow(/Run the hub task first/);
     expect(listRuns(store.db)).toHaveLength(0);
+  });
+});
+
+describe('a quieter review (LS-14)', () => {
+  let store: Store;
+  const NOW = '2026-06-01T00:00:00.000Z';
+  const BREAD: [string, string][] = [
+    ['Rye loaf', 'The rye loaf proofs four hours and bakes at 250 in the oven. Rye flour from the mill, the dough kept wet.'],
+    ['Sourdough starter', 'The sourdough starter lives in the fridge and gets fed daily with rye flour. The dough rises slowly in winter.'],
+    ['Oven schedule', 'The oven schedule: bake the rye and sourdough loaves on Saturdays, the dough shaped the night before.'],
+    ['Market stall', 'The market stall sells rye and white sourdough loaves, twelve loaves by eleven.'],
+    ['Flour order', 'The flour order goes to the mill each month: rye flour and white flour for the loaves and the dough.'],
+  ];
+  const RIVER = ['nitrate samples', 'river samples', 'nitrate rain', 'river outflow', 'outflow nitrate', 'river rain'];
+
+  function say(id: string, body: string, createdAt: string) {
+    store.ingest({
+      source: { kind: 'chatgpt', label: 'ChatGPT', location: '' },
+      threads: [{ externalId: id, title: id, entries: [{ externalId: `${id}-m`, kind: 'message', speaker: 'you', createdAt, body }] }],
+    });
+    return store.allEntries().find((e) => e.externalId === `${id}-m`)!;
+  }
+  const titles = () => openReviewItems(store.db).map((i) => store.getEntry(i.noteEntry)!.title).sort();
+  const review = () => runTask(store, new RecordView(store), { ...NONE, task: 'review' });
+
+  beforeEach(async () => {
+    store = new Store(openDb(':memory:'), () => NOW);
+    store.ingest({
+      source: { kind: 'notes', label: 'notes', location: '/n' },
+      threads: [],
+      entries: [
+        ...BREAD.map(([title, body], i): EntryInput => ({ externalId: `${title}.md`, kind: 'note', speaker: 'you', title, createdAt: `2025-01-0${i + 1}T00:00:00.000Z`, body })),
+        ...RIVER.map((w, i): EntryInput => ({
+          externalId: `river${i}.md`,
+          kind: 'note',
+          speaker: 'you',
+          title: `River ${i}`,
+          createdAt: `2025-02-0${i + 1}T00:00:00.000Z`,
+          body: `Notes on the ${w}. The ${w} at the site after the storm, and the flow too.`,
+        })),
+      ],
+    });
+    // Written five hours after the starter note: the same sitting, not news that overtakes it.
+    say('same-day', 'No longer feeding the sourdough starter daily; it gets fed weekly instead.', '2025-01-02T05:00:00.000Z');
+    await runTask(store, new RecordView(store), { ...NONE, task: 'hub' });
+    say('stall', 'Decided: the market stall sells rye and white sourdough loaves, twelve by eleven.', '2026-03-01T00:00:00.000Z');
+    say('rye', 'Decided: the rye loaf now uses a spelt starter and bakes at 240.', '2026-03-02T00:00:00.000Z');
+    say('oven', 'Changing my mind on the oven schedule: we bake on Fridays instead.', '2026-03-03T00:00:00.000Z');
+    say('flour', 'The flour order no longer goes to the mill; we switch to the co-op.', '2026-03-04T00:00:00.000Z');
+  });
+
+  it('flags a change of course, and a decision only when it says something new about the note', async () => {
+    const run = await review();
+    expect(titles()).toEqual(['Flour order', 'Oven schedule', 'Rye loaf']);
+    expect(run.counts).toMatchObject({ flagged: 3 });
+  });
+
+  it('keeps at most 3 notes per hub in the queue, and says how many more wait', async () => {
+    say('starter', 'Sourdough starter: no longer kept in the fridge, it lives on the counter instead.', '2026-03-05T00:00:00.000Z');
+    const run = await review();
+    const hubOf = new Map(liveHubs(store.db).flatMap((h) => hubEntryIds(store.db, h.id).map((id) => [id, h.id] as const)));
+    const perHub = new Map<number, number>();
+    for (const i of openReviewItems(store.db)) perHub.set(hubOf.get(i.noteEntry)!, (perHub.get(hubOf.get(i.noteEntry)!) ?? 0) + 1);
+    expect(Math.max(...perHub.values())).toBeLessThanOrEqual(3);
+    expect(run.counts).toMatchObject({ flagged: 3, capped: 1 });
+    expect(run.message).toMatch(/1 more note may be out of date/);
+    // The changes of course come first; the decision about the rye loaf waits.
+    expect(titles()).toEqual(['Flour order', 'Oven schedule', 'Sourdough starter']);
   });
 });
 
