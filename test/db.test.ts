@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { migrate, openDb, schemaVersion } from '../src/store/db.ts';
+import { inTransaction, isBusy, migrate, openDb, schemaVersion } from '../src/store/db.ts';
 import { MIGRATIONS } from '../src/store/schema.ts';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -153,5 +153,58 @@ describe('openDb', () => {
     expect(() => migrate(db)).toThrow(/Migration 3 would leave 1 broken reference\(s\) \(tags → runs\)/);
     expect(schemaVersion(db)).toBe(2);
     expect(() => db.prepare("INSERT INTO runs (task, engine, scope, status, started_at) VALUES ('tag', 'agent', 'agent', 'done', 'x')").run()).toThrow(/CHECK/);
+  });
+});
+
+describe('busy records (M8)', () => {
+  it('waits for another writer, then retries the whole transaction once and throws a second busy', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-busy-'));
+    try {
+      const file = join(dir, 'record.db');
+      const a = openDb(file);
+      const b = openDb(file, { busyTimeoutMs: 30 });
+      expect(a.prepare('PRAGMA busy_timeout').get()).toEqual({ timeout: 5000 });
+      a.exec('BEGIN IMMEDIATE');
+      let runs = 0;
+      const started = performance.now();
+      let error: unknown;
+      try {
+        inTransaction(b, () => runs++);
+      } catch (e) {
+        error = e;
+      }
+      expect(isBusy(error)).toBe(true);
+      // Two attempts, each waiting out the timeout; fn never ran because the lock is taken before it.
+      expect(performance.now() - started).toBeGreaterThanOrEqual(50);
+      expect(runs).toBe(0);
+      expect(b.isTransaction).toBe(false);
+      a.exec('COMMIT');
+      expect(inTransaction(b, () => ++runs)).toBe(1);
+      a.close();
+      b.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('succeeds on the retry when the first attempt meets a busy record', () => {
+    const db = openDb(':memory:');
+    let begins = 0;
+    const flaky = new Proxy(db, {
+      get(target, key) {
+        if (key === 'exec') {
+          return (sql: string) => {
+            if (sql === 'BEGIN IMMEDIATE' && begins++ === 0) throw Object.assign(new Error('database is locked'), { errcode: 5 });
+            return target.exec(sql);
+          };
+        }
+        const value = Reflect.get(target, key, target) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    expect(inTransaction(flaky, () => db.prepare("INSERT INTO sources (kind, label, location, added_at) VALUES ('notes', 'n', '/n', 'x')").run().changes)).toBe(1);
+    expect(begins).toBe(2);
+    expect(() => inTransaction(db, () => { throw new Error('boom'); })).toThrow('boom');
+    expect(db.isTransaction).toBe(false);
   });
 });
