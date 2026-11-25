@@ -1,17 +1,18 @@
 // The reader: one entry with its layers, neighbours and history, or a whole thread.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { BotMessageSquare, Copy, History, Link2, PencilLine, UserX } from 'lucide-preact';
-import { changed, loadRecord, message, openEditor, openEntry, openThread, toast } from '../actions.ts';
+import { BotMessageSquare, Copy, History, Link2, Network, PencilLine, UserX } from 'lucide-preact';
+import { changed, engineName, loadRecord, message, openEditor, openEntry, openPanel, openThread, toast } from '../actions.ts';
 import { api } from '../api.ts';
 import { fmtDate, plural, speakerName } from '../format.ts';
 import { renderMarkdown } from '../markdown.ts';
 import { useApp } from '../store.ts';
-import type { Brief, Entry, EntryDetail, LayerName, Thread } from '../types.ts';
+import type { Brief, Entry, EntryDetail, EntryOrganised, LayerName, Thread } from '../types.ts';
 import { Button, Empty, SidePanel } from '../ui/common.tsx';
+import { OrganiseButton } from './Organiser.tsx';
 
 type ReaderTarget = { kind: 'entry'; id: number } | { kind: 'thread'; id: number; focus?: number };
-type Detail = EntryDetail & { ownFile: boolean };
+type Detail = EntryDetail & EntryOrganised & { ownFile: boolean };
 
 const LAYERS: ['original' | LayerName, string][] = [
   ['original', 'Original'],
@@ -70,7 +71,6 @@ function copyLink(id: number) {
 
 function EntryReader({ id }: { id: number }) {
   const revision = useApp((s) => s.revision);
-  const organiser = useApp((s) => s.organiser.ready);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [layer, setLayer] = useState<(typeof LAYERS)[number][0]>('original');
@@ -95,7 +95,8 @@ function EntryReader({ id }: { id: number }) {
 
   if (error) return <Empty title="Couldn't open this entry">{error}</Empty>;
   if (!detail || detail.entry.id !== id) return <p class="soft pad">Opening…</p>;
-  const { entry, history, thread, before, after, similar, editedByAgent } = detail;
+  const { entry, history, thread, before, after, similar, editedByAgent, layers, hubs } = detail;
+  const written = layer === 'original' ? null : (layers.find((l) => l.layer === layer) ?? null);
   const shown = showVersion === null ? entry.body : (history.find((v) => v.version === showVersion)?.body ?? entry.body);
 
   return (
@@ -109,6 +110,19 @@ function EntryReader({ id }: { id: number }) {
           {fmtDate(entry.createdAt)} · {entry.sourceLabel}
           {entry.version > 1 && ` · version ${entry.version}`}
         </p>
+        {hubs.length > 0 && (
+          <p class="reader-hubs">
+            <Network size={14} aria-hidden="true" /> In{' '}
+            {hubs.map((h, i) => (
+              <span key={h.id}>
+                {i > 0 && ', '}
+                <button type="button" class="link" onClick={() => openPanel({ kind: 'hub', id: h.id })}>
+                  {h.name}
+                </button>
+              </span>
+            ))}
+          </p>
+        )}
       </header>
       {editedByAgent && (
         <p class="band band-agent">
@@ -130,11 +144,22 @@ function EntryReader({ id }: { id: number }) {
       </div>
 
       <div class="tabs" role="tablist" aria-label="Layers">
-        {LAYERS.map(([key, label]) => (
-          <button key={key} type="button" role="tab" aria-selected={layer === key} class={layer === key ? 'on' : ''} onClick={() => setLayer(key)}>
-            {label}
-          </button>
-        ))}
+        {LAYERS.map(([key, label]) => {
+          // A dot marks the organiser's tabs that hold a layer for this entry.
+          const has = key !== 'original' && layers.some((l) => l.layer === key);
+          return (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={layer === key}
+              class={`${layer === key ? 'on' : ''}${has ? ' tab-has' : ''}`}
+              onClick={() => setLayer(key)}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
       <div role="tabpanel" class="layer">
         {layer === 'original' ? (
@@ -149,13 +174,18 @@ function EntryReader({ id }: { id: number }) {
             )}
             <Body text={shown} />
           </>
-        ) : (
+        ) : written ? (
           <>
-            <p class="band band-machine">Not your words: this tab is written by the organiser, which names its engine, model and run here.</p>
-            <Empty title={`No ${layer} layer yet`}>
-              <p>{organiser ? 'The organiser hasn’t written this layer for this entry yet.' : 'Run the organiser to make this layer.'}</p>
-            </Empty>
+            <p class="band band-machine">
+              Not your words. Written by {engineName(written.engine, written.model)} in run {written.runId}.
+            </p>
+            <Body text={written.body} />
           </>
+        ) : (
+          <Empty title={`No ${layer} layer yet`}>
+            <p>Only the organiser’s layer task writes this tab. It asks the model once per entry, so it runs only when you start it.</p>
+            <OrganiseButton task="layer" label="Write layers" />
+          </Empty>
         )}
       </div>
 

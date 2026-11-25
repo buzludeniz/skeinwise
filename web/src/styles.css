@@ -491,6 +491,27 @@ code {
   border-bottom-color: var(--accent);
 }
 
+.tabs button.tab-has::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+.reader-hubs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 0;
+  font-size: var(--text-small);
+  color: var(--ink-soft);
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
