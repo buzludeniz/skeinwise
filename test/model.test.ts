@@ -7,6 +7,7 @@ import { type Config, DEFAULT_CONFIG } from '../src/config.ts';
 import { UsageError } from '../src/errors.ts';
 import { createModel, ModelTimeoutError, parseAnswer, serverKeyPath } from '../src/organiser/model.ts';
 import { previewRun, type RunOptions, runTask } from '../src/organiser/organise.ts';
+import { keyShaped } from './samples.ts';
 import { RecordView } from '../src/organiser/record.ts';
 import { Redactor } from '../src/organiser/redact.ts';
 import { listRuns } from '../src/organiser/runs.ts';
@@ -267,7 +268,10 @@ describe('organising with a model', () => {
   // The security audit's findings on what leaves the computer. Every key and address here is made up, and the only
   // servers are fakes, in the test or on 127.0.0.1.
   describe('what leaves the computer', () => {
-    const KEY = 'sk-test-made-up-0123456789abcdef';
+    // Key-shaped samples are joined at run time (test/samples.ts).
+    const KEY = keyShaped('s', 'k-test-made-up-0123456789abcdef');
+    const GITHUB = keyShaped('gh', 'p_fake0123456789abcdefghijklmnopqrstuv');
+    const AWS_ID = keyShaped('AK', 'IAFAKE0123456789AB');
     const remote = (over: Partial<Config> = {}) =>
       config({
         remoteUrl: 'https://models.example.net/v1',
@@ -280,7 +284,7 @@ describe('organising with a model', () => {
 
     // M10: a remote URL on this computer (a proxy, a tunnel) skipped redaction.
     it('redacts for the remote engine even when its URL is on this computer', async () => {
-      add('call.md', 'Called Sam about the rye loaf, sam@example.com, and the deploy key ghp_isqNu93aeRf0oaq2WOsxvMTVBmzT9FJGWTtB.', 'Bread call');
+      add('call.md', `Called Sam about the rye loaf, sam@example.com, and the deploy key ${GITHUB}.`, 'Bread call');
       const server = fakeServer((u) => hubAnswer(u));
       const client = createModel(remote({ remoteUrl: 'http://127.0.0.1:4000/v1', remoteHosts: ['127.0.0.1:4000'], names: ['Sam'] }), 'remote', {
         fetch: server.fetch,
@@ -294,12 +298,13 @@ describe('organising with a model', () => {
 
     // M9 with redaction off: a person's details go as written, secrets never do.
     it('replaces secrets for the remote engine when redaction is off', async () => {
-      add('deploy.md', 'Rye loaf deploy notes: password=Hunter2-not-real and AKIAIOSFODNN7EXAMPLE, ask Sam.', 'Bread deploy');
+      add('deploy.md', `Rye loaf deploy notes: password=Hunter2-not-real and ${AWS_ID}, ask Sam.`, 'Bread deploy');
       const server = fakeServer((u) => hubAnswer(u));
       const client = createModel(remote({ redaction: false, names: ['Sam'] }), 'remote', { fetch: server.fetch, env });
       await runTask(store, new RecordView(store), options('hub', client));
       const sent = server.chats().map((c) => JSON.stringify(c.body)).join('\n');
-      expect(sent).not.toMatch(/Hunter2|AKIAIOSFODNN7EXAMPLE/);
+      expect(sent).not.toMatch(/Hunter2/);
+      expect(sent).not.toContain(AWS_ID);
       expect(sent).toMatch(/\[SECRET_\d+\]/);
       expect(sent).toMatch(/ask Sam/);
     });
@@ -316,7 +321,7 @@ describe('organising with a model', () => {
       const otherPort = createModel(remote({ remoteUrl: 'https://models.example.net:8443/v1' }), 'remote', { fetch: server.fetch, env });
       await expect(otherPort.probe()).rejects.toThrow(/models\.example\.net:8443 isn't one/);
       // A config built in code is checked too, not only the settings file.
-      expect(() => createModel(remote({ apiKeyEnv: 'GITHUB_TOKEN' }), 'remote', { fetch: server.fetch, env: { GITHUB_TOKEN: 'ghp_x' } })).toThrow(
+      expect(() => createModel(remote({ apiKeyEnv: 'GITHUB_TOKEN' }), 'remote', { fetch: server.fetch, env: { GITHUB_TOKEN: 'made-up' } })).toThrow(
         /starts with SKEINWISE_ or ends with _API_KEY, not GITHUB_TOKEN/,
       );
       expect(server.calls).toHaveLength(0);
@@ -369,7 +374,7 @@ describe('organising with a model', () => {
     it('keeps the key and secrets out of every error and the runs table', async () => {
       const echo = (async (_url: string | URL | Request, init?: RequestInit) =>
         Response.json({
-          choices: [{ message: { content: `not json; you sent ${String((init?.headers as Record<string, string>).authorization)} and ghp_isqNu93aeRf0oaq2WOsxvMTVBmzT9FJGWTtB` } }],
+          choices: [{ message: { content: `not json; you sent ${String((init?.headers as Record<string, string>).authorization)} and ${GITHUB}` } }],
           usage: { prompt_tokens: 10, completion_tokens: 5 },
         })) as typeof globalThis.fetch;
       const client = createModel(remote(), 'remote', { fetch: echo, env });

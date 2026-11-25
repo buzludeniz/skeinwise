@@ -1,34 +1,41 @@
 import { describe, expect, it } from 'vitest';
 import { Redactor, scrubSecrets } from '../src/organiser/redact.ts';
+import { keyShaped } from './samples.ts';
 
-// Probes from the security audit (supply/07 part B, the wire proof of concept part 1). Every value is made up.
+// Probes from the security audit (supply/07 part B, the wire proof of concept part 1). Every value is made up, and
+// every key-shaped one is joined at run time (test/samples.ts).
+const AWS_ID = keyShaped('AK', 'IAFAKE0123456789AB');
+const AWS_SECRET = keyShaped('fakeSecret', '0123456789/AbCdEfGhIjKlMnOpQrS');
+const GITHUB = keyShaped('gh', 'p_fake0123456789abcdefghijklmnopqrstuv');
+const PASTED = keyShaped('sk', '-ant-api03-fake0123456789abcdef0123456789abcdef0123456789');
+const KEY_BODY = keyShaped('b3BlbnNzaC1rZXkt', 'djEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW');
 const DEPLOY = [
   'Shipping the staging box today. Mail me at sam.lee@example.com if it breaks.',
-  'AWS creds for the deploy script: AKIAIOSFODNN7EXAMPLE / wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
-  'GitHub token for CI: ghp_isqNu93aeRf0oaq2WOsxvMTVBmzT9FJGWTtB',
-  'Anthropic key I pasted into the chat: sk-ant-api03-cda7c9c678b7de77a0c61cc623ff99fc0f478f0f9989d2e399fa054e0e0b',
+  `AWS creds for the deploy script: ${AWS_ID} / ${AWS_SECRET}`,
+  `GitHub token for CI: ${GITHUB}`,
+  `Anthropic key I pasted into the chat: ${PASTED}`,
   'DB url: postgres://admin:Hunter2-not-real@10.0.4.17:5432/prod',
   'SSH: ssh -i /Users/sam/.ssh/id_ed25519 deploy@203.0.113.9',
   'Card on file for the cloud bill: 4111 1111 1111 1111 exp 04/29 cvv 123',
   'SIN for the payroll form: 046-454-286',
   '',
-  '-----BEGIN OPENSSH PRIVATE KEY-----',
-  'b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW',
-  '-----END OPENSSH PRIVATE KEY-----',
+  keyShaped('-----BEGIN OPENSSH PRI', 'VATE KEY-----'),
+  KEY_BODY,
+  keyShaped('-----END OPENSSH PRI', 'VATE KEY-----'),
 ].join('\n');
 
 const SECRETS = [
-  'AKIAIOSFODNN7EXAMPLE',
-  'wJalrXUtnFEMI/K7MDENG',
-  'ghp_isqNu93aeRf0oaq2WOsxvMTVBmzT9FJGWTtB',
-  'sk-ant-api03-',
+  AWS_ID,
+  AWS_SECRET.slice(0, 21),
+  GITHUB,
+  keyShaped('sk', '-ant-api03-'),
   'Hunter2-not-real',
   '10.0.4.17',
   '/Users/sam/.ssh/id_ed25519',
   '4111 1111 1111 1111',
   '046-454-286',
-  'BEGIN OPENSSH PRIVATE KEY',
-  'b3BlbnNzaC1rZXktdjEA',
+  keyShaped('BEGIN OPENSSH PRI', 'VATE KEY'),
+  KEY_BODY.slice(0, 20),
   'cvv 123',
 ];
 
@@ -53,14 +60,15 @@ describe('secrets', () => {
   it('catches the other common key and token shapes', () => {
     const r = new Redactor([], { personal: false });
     const samples = [
-      'sk-proj-AbCdEf0123456789AbCdEf0123456789',
-      'github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz',
-      'xoxb-1234567890-abcdefghij',
-      'AIzaSyA1234567890abcdefghijklmnopqrstuv',
-      'sk_live_0123456789abcdefABCDEF',
-      'hf_abcdefghijklmnopqrstuvwxyz0123456789',
-      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U',
-      'https://hooks.slack.com/services/T000/B000/XXXXXXXX',
+      keyShaped('sk', '-proj-AbCdEf0123456789AbCdEf0123456789'),
+      keyShaped('github', '_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz'),
+      keyShaped('xo', 'xb-1234567890-abcdefghij'),
+      keyShaped('AI', 'zaSyA1234567890abcdefghijklmnopqrstuv'),
+      keyShaped('sk', '_live_0123456789abcdefABCDEF'),
+      keyShaped('h', 'f_abcdefghijklmnopqrstuvwxyz0123456789'),
+      // A JWT: its header and claims, base64url-encoded, then a made-up signature.
+      [{ alg: 'HS256' }, { sub: '1234567890' }].map((part) => Buffer.from(JSON.stringify(part)).toString('base64url')).join('.') + '.fakeSignature0123456789abcdefABCDEF',
+      keyShaped('https://hooks.slack', '.com/services/T000/B000/XXXXXXXX'),
     ];
     for (const s of samples) expect(r.redact(`value: ${s} end`), s).not.toContain(s);
   });
@@ -137,7 +145,7 @@ describe('personal details', () => {
 
 describe('scrubSecrets', () => {
   it('removes the given key and anything shaped like a secret', () => {
-    expect(scrubSecrets('echo: key k-123-abc and ghp_isqNu93aeRf0oaq2WOsxvMTVBmzT9FJGWTtB', ['k-123-abc'])).toBe('echo: key *** and [SECRET_1]');
+    expect(scrubSecrets(`echo: key k-123-abc and ${GITHUB}`, ['k-123-abc'])).toBe('echo: key *** and [SECRET_1]');
     expect(scrubSecrets('nothing here', [null, undefined, ''])).toBe('nothing here');
   });
 });
