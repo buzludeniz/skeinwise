@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo-mark-dark.svg">
+  <img src="brand/logo-mark.svg" alt="" width="40" height="40">
+</picture>
+
 # Export and encrypted sync
 
 Two ways to get your record out of one computer. `skeinwise export` writes it as plain text you can read anywhere.

@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo-mark-dark.svg">
+  <img src="brand/logo-mark.svg" alt="" width="40" height="40">
+</picture>
+
 # Skeinwise: plan
 
 Skeinwise is a second brain that organises itself. It takes in your AI conversations, your notes and the folders you

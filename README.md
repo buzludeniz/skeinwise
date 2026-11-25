@@ -1,4 +1,9 @@
-# Skeinwise
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/logo-lockup-dark.svg">
+    <img src="docs/brand/logo-lockup-light.svg" alt="Skeinwise" width="320">
+  </picture>
+</h1>
 
 **A second brain that organises itself.** Skeinwise gathers your AI conversations, your notes and the folders you
 choose into one dated record on your own computer, and keeps it current as you work: new chats and notes come in live,
