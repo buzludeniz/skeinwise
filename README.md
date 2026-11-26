@@ -28,8 +28,7 @@ skein:
   llama.cpp or Ollama. You can point it at an outside model instead, or turn AI off and let keyword statistics and
   clustering do the organising.
 - **Plain data.** The record is one SQLite file plus your Markdown notes.
-- **Ready for agents.** Two MCP servers give Claude Code, Codex, Cursor and other tools memory over your record and a
-  way to steer the app's view.
+- **Ready for agents.** An MCP server gives Claude Code, Codex, Cursor and other tools memory over your record.
 - **Sized for a big record.** 1.0 is made for records of up to 50,000 entries. Its times at that size are pending:
   they go here once the 50,000-entry benchmark has run on main.
 

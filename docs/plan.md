@@ -34,7 +34,7 @@ as long-term memory. Everything stays on your computer.
 | Server | `node:http` with a small router | No framework needed for a local API |
 | UI | Vite, Preact, three.js, Lucide icons | Small bundle, real 3D, open-licensed icons |
 | Engine | A local model through an OpenAI-compatible server (llama.cpp `llama-server` or Ollama; Qwen3-4B suggested) by default, an outside endpoint, or No AI | The built-in AI runs on your computer |
-| Agents | Two MCP servers over stdio (`@modelcontextprotocol/sdk`): memory and window | Claude Code, Codex, Cursor and others connect with one config |
+| Agents | An MCP server over stdio (`@modelcontextprotocol/sdk`) for memory; the window server is not in 1.0 | Claude Code, Codex, Cursor and others connect with one config |
 | Tests | Vitest (unit and integration), Playwright (end to end) | |
 | CI | GitHub Actions: typecheck, test, build | Every push |
 
