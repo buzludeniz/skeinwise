@@ -1,4 +1,4 @@
-// The Lab: the table builder (two properties on the axes, a third as a filter, six forms) and Tides.
+// The Workbench: the table builder (two properties on the axes, a third as a filter, six forms) and Activity.
 
 import type { JSX } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -57,7 +57,7 @@ interface Cell {
 function Grid({ t, heat, onCell }: { t: Table; heat: boolean; onCell: (c: Cell) => void }) {
   return (
     <div class="grid-wrap">
-      <table class={`lab-table${heat ? ' heat' : ''}`}>
+      <table class={`workbench-table${heat ? ' heat' : ''}`}>
         <thead>
           <tr>
             <th scope="col">
@@ -283,8 +283,8 @@ function TableBuilder() {
   };
 
   return (
-    <div class="lab-builder">
-      <div class="lab-controls">
+    <div class="workbench-builder">
+      <div class="workbench-controls">
         <Select label="Across" value={x} options={PROPS} onChange={setX} />
         <Select label="Down" value={y} options={PROPS} onChange={setY} />
         <Select label="Only where" value={fProp} options={[['none', 'Anything'], ...PROPS]} onChange={setFProp} />
@@ -357,7 +357,7 @@ function TableBuilder() {
   );
 }
 
-function Tides() {
+function ActivityLines() {
   const revision = useApp((s) => s.revision);
   const [by, setBy] = useState<'source' | 'speaker' | 'folder'>('source');
   const [log, setLog] = useState(false);
@@ -380,7 +380,7 @@ function Tides() {
     };
   }, [by, revision]);
 
-  if (error) return <Empty title="Couldn't draw the tides">{error}</Empty>;
+  if (error) return <Empty title="Couldn't draw the activity lines">{error}</Empty>;
   const months = data?.months ?? [];
   const H = 320;
   const pad = { l: 40, r: 10, t: 12, b: 28 };
@@ -394,7 +394,7 @@ function Tides() {
   const ticks = log ? [1, 10, 100, 1000].filter((v) => v <= max) : [max / 2, max];
 
   return (
-    <div class="tides">
+    <div class="activity">
       <div class="row wrap">
         <Segmented
           label="Lines by"
@@ -464,22 +464,22 @@ function Tides() {
   );
 }
 
-export function Lab() {
-  const tab = useApp((s) => s.labTab);
+export function Workbench() {
+  const tab = useApp((s) => s.workbenchTab);
   return (
-    <section class="view lab" aria-label="Lab">
+    <section class="view workbench" aria-label="Workbench">
       <header class="view-head">
-        <h1>Lab</h1>
-        <div class="tabs" role="tablist" aria-label="Lab">
-          <button type="button" role="tab" aria-selected={tab === 'table'} class={tab === 'table' ? 'on' : ''} onClick={() => setState({ labTab: 'table' })}>
+        <h1>Workbench</h1>
+        <div class="tabs" role="tablist" aria-label="Workbench">
+          <button type="button" role="tab" aria-selected={tab === 'table'} class={tab === 'table' ? 'on' : ''} onClick={() => setState({ workbenchTab: 'table' })}>
             Table builder
           </button>
-          <button type="button" role="tab" aria-selected={tab === 'tides'} class={tab === 'tides' ? 'on' : ''} onClick={() => setState({ labTab: 'tides' })}>
-            Tides
+          <button type="button" role="tab" aria-selected={tab === 'activity'} class={tab === 'activity' ? 'on' : ''} onClick={() => setState({ workbenchTab: 'activity' })}>
+            Activity
           </button>
         </div>
       </header>
-      {tab === 'table' ? <TableBuilder /> : <Tides />}
+      {tab === 'table' ? <TableBuilder /> : <ActivityLines />}
     </section>
   );
 }

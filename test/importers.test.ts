@@ -277,6 +277,38 @@ describe('readImports', () => {
     }
   });
 
+  it('refuses a dropped zip that would unpack to 900 MiB before inflating it (PoC web/08), and blocks no caller (PoC 18b)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-drop-'));
+    try {
+      // web/08's shape: three zip64 entries of 300 MiB each. Each is under the 1 GiB file limit and all three under the
+      // 4 GiB total, so only the 200:1 ratio refuses it. Built by hand from a small kernel, as in the test above.
+      const kernel = deflateSync(new Uint8Array(4096));
+      const size = 300 * 1024 * 1024;
+      const drop = join(dir, 'export.zip');
+      const names = ['conversations.json', 'b.json', 'c.json'];
+      writeFileSync(drop, buildZip(names.map((name) => ({ name, data: kernel, size })), { zip64: true }));
+      const rss = process.memoryUsage().rss;
+      const started = performance.now();
+      expect(() => readImports(drop)).toThrow(/export\.zip: refused, .*\(900 MiB\), past the 200:1 limit/);
+      // 18b: upload/finish once read on the server's own thread, so /api/status waited out the inflation. The refusal
+      // comes from the zip's directory, so even a caller on the main thread is held for that read alone.
+      expect(performance.now() - started).toBeLessThan(100);
+      expect(process.memoryUsage().rss - rss).toBeLessThan(300 * 1024 * 1024);
+      let ticks = 0;
+      const timer = setInterval(() => ticks++, 1);
+      try {
+        const error = await readImportsInWorker(drop).catch((e: unknown) => e);
+        expect((error as UnsafeFileError).reason).toBe('zip');
+        expect((error as Error).message).toMatch(/past the 200:1 limit/);
+      } finally {
+        clearInterval(timer);
+      }
+      expect(ticks).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('reads in a worker thread with the same batches and warnings', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'skeinwise-worker-'));
     try {

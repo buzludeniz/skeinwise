@@ -28,8 +28,8 @@ The record is one SQLite file, `~/.skeinwise/record.db`, plus Markdown notes in 
 | ChatGPT export | `conversations.json`, following the active branch of each conversation |
 | Claude export | `conversations.json` |
 | Gemini (Google Takeout) | `MyActivity.json`; prompts are grouped into threads by 30-minute gaps |
-| Claude Code history | `~/.claude/projects/*/*.jsonl`; text only, tool calls dropped |
-| Codex history | `~/.codex/sessions/**/*.jsonl` |
+| Claude Code history | `~/.claude/projects/*/*.jsonl`; text only: tool calls and their results, system reminders and compaction summaries are left out; each entry keeps its project folder and git branch |
+| Codex history | `~/.codex/sessions/**/*.jsonl`; keeps its project folder and git branch |
 | Markdown folders and Obsidian vaults | Front matter, `[[links]]` and `#tags`; the date comes from front matter, the file name or the modified time |
 | Plain text | `.txt` files as notes |
 
@@ -248,7 +248,7 @@ Details: [mcp.md](mcp.md).
 |---|---|
 | `skeinwise init` | Creates the record folder |
 | `skeinwise import <path>…` | Imports exports, history folders or note folders |
-| `skeinwise search <words>` | Full-text search |
+| `skeinwise search <words> [--project <name>]` | Full-text search; `--project` keeps to coding sessions run in that folder (a name or a path) |
 | `skeinwise history <entry>`, `skeinwise restore <entry> <version>` | Lists an entry's versions; brings an old one back as a new version |
 | `skeinwise ask <question>` | A question, answered as a view |
 | `skeinwise run <task> [--scope new]` | Runs an organiser task |

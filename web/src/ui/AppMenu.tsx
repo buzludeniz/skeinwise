@@ -54,7 +54,7 @@ export function AppMenu({ onAddFiles }: { onAddFiles: () => void }) {
     };
   }, [open, sub]);
 
-  // The two lines under Record live change as things happen, so they're read again while the menu is open.
+  // The two lines under Live capture change as things happen, so they're read again while the menu is open.
   useEffect(() => {
     if (!open) return;
     void refreshStatus();
@@ -94,7 +94,7 @@ export function AppMenu({ onAddFiles }: { onAddFiles: () => void }) {
       <div class="menu-live">
         <Switch
           checked={recordLive}
-          label="Record live"
+          label="Live capture"
           onChange={(v) => {
             void saveConfig({ recordLive: v }).then((ok) => {
               if (ok) void refreshStatus();

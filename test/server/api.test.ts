@@ -295,11 +295,11 @@ describe('the organiser', () => {
   it('runs every task No-AI and shows what it made', async () => {
     const job = await organise({ engine: 'none' });
     expect(job).toMatchObject({ finished: true, error: null, task: 'all', engine: 'none' });
-    expect(job.runs.map((r: { task: string }) => r.task)).toEqual(['tag', 'tag', 'tag', 'file', 'link', 'hub', 'layer', 'review']);
+    expect(job.runs.map((r: { task: string }) => r.task)).toEqual(['tag', 'tag', 'tag', 'tag', 'file', 'link', 'hub', 'layer', 'review']);
     const o = await state();
     expect(o.hubs.length).toBeGreaterThan(0);
     expect(o.folders.length).toBeGreaterThan(0);
-    expect(o.runs).toHaveLength(8);
+    expect(o.runs).toHaveLength(9);
     expect(o.review.length).toBeGreaterThan(0);
 
     const stats = (await api('stats')).body;

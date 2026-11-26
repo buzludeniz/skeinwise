@@ -1,5 +1,5 @@
-// Where every point sits, in three layouts: the brain (notes in two lobes, originals wound up the brainstem and spine),
-// year rings seen from above, and flat clusters. Pure and seeded: the same record always gives the same picture.
+// Where every point sits, in three layouts: the brain (notes in two lobes, originals wound up the stem below them),
+// activity (one ring per year, seen from above), and flat clusters. Pure and seeded: the same record always gives the same picture.
 // Units: the brain is about 2.4 wide; y is up, +z is the front.
 
 export interface LayoutPoint {
@@ -105,7 +105,7 @@ const TEMPORAL = { cx: 0.7, cy: 0.06, cz: 0.24, rx: 0.36, ry: 0.32, rz: 0.6 };
 const CEREBELLUM = { cx: 0.3, cy: -0.08, cz: -0.86, rx: 0.42, ry: 0.32, rz: 0.4 };
 /** Half the gap between the hemispheres. */
 const FISSURE = 0.045;
-const SPINE_BOTTOM = -2.6;
+const STEM_BOTTOM = -2.6;
 const STEM_SPLIT = 0.7;
 
 /** A point on (rf = 1) or inside (rf < 1) one hemisphere, along a direction from its centre. side: +1 right, -1 left. */
@@ -127,12 +127,12 @@ function ellipsoidPoint(c: typeof TEMPORAL, side: 1 | -1, d: V3, rf: number): V3
   return [side * c.cx + d[0] * c.rx * rf, c.cy + d[1] * c.ry * rf, c.cz + d[2] * c.rz * rf];
 }
 
-/** The centre line of the spine and brainstem at u (0 the bottom of the spine, 1 the top of the stem), and its radius. */
+/** The centre line of the stem at u (0 its bottom, 1 its top, where it meets the brain), and its radius. */
 export function stemCentre(u: number): { p: V3; r: number } {
   if (u < STEM_SPLIT) {
     const t = u / STEM_SPLIT;
     return {
-      p: [0, SPINE_BOTTOM + t * (-0.72 - SPINE_BOTTOM), -0.56 + 0.06 * t + 0.08 * Math.sin(t * Math.PI * 1.6)],
+      p: [0, STEM_BOTTOM + t * (-0.72 - STEM_BOTTOM), -0.56 + 0.06 * t + 0.08 * Math.sin(t * Math.PI * 1.6)],
       r: 0.08 + 0.025 * t,
     };
   }
@@ -199,7 +199,7 @@ export function brainLayout(points: readonly LayoutPoint[]): Float32Array {
     } else originals.push(i);
   });
 
-  // Originals: a braid of three strands, oldest at the bottom of the spine.
+  // Originals: a braid of three strands, oldest at the bottom of the stem.
   byTime(points, originals);
   const n = originals.length;
   const turns = 10 + 4 * Math.log10(Math.max(10, n));
@@ -247,7 +247,7 @@ export function brainLayout(points: readonly LayoutPoint[]): Float32Array {
   return out;
 }
 
-/** Year rings, seen from above (the y axis): time runs outward, one ring per year, months as slices. */
+/** The activity layout, seen from above (the y axis): time runs outward, one ring per year, months as slices. */
 export function ringsLayout(points: readonly LayoutPoint[]): Float32Array {
   const out = new Float32Array(points.length * 3);
   if (!points.length) return out;
@@ -326,8 +326,8 @@ export function layoutFor(kind: Layout, points: readonly LayoutPoint[]): Float32
 }
 
 /**
- * The faint outline that shows the brain's shape: folds on the lobes, bands on the cerebellum, the brainstem and the
- * vertebrae. Decoration only; none of these points is an entry.
+ * The faint outline that shows the brain's shape: folds on the lobes, bands on the cerebellum, and the stem with its
+ * rings. Decoration only; none of these points is an entry.
  */
 export function brainOutline(seed = 7): { positions: Float32Array; shade: Float32Array } {
   const r = rng(seed);
@@ -374,15 +374,15 @@ export function brainOutline(seed = 7): { positions: Float32Array; shade: Float3
       shade.push(0.3 + 0.5 * (band + 0.35) / 1.35);
     }
   }
-  // The brainstem and spine: a faint tube, brighter at each vertebra.
+  // The stem: a faint tube; its lower part is brighter at each ring.
   for (let i = 0; i < 1600; i++) {
     const u = r();
     const { p, r: rad } = stemCentre(u);
     const a = r() * Math.PI * 2;
-    const spine = u < STEM_SPLIT;
-    const ring = spine && ((p[1] - SPINE_BOTTOM) / 0.17) % 1 < 0.28;
-    if (spine && !ring && r() < 0.55) continue;
-    const rr = rad * (spine ? (ring ? 1.75 : 1.35) : 1.3);
+    const lower = u < STEM_SPLIT;
+    const ring = lower && ((p[1] - STEM_BOTTOM) / 0.17) % 1 < 0.28;
+    if (lower && !ring && r() < 0.55) continue;
+    const rr = rad * (lower ? (ring ? 1.75 : 1.35) : 1.3);
     pos.push(p[0] + Math.cos(a) * rr, p[1], p[2] + Math.sin(a) * rr);
     shade.push(ring ? 0.75 : 0.35);
   }

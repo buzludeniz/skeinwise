@@ -1,4 +1,4 @@
-// Numbers: plain figures about the record. Entries, threads, notes, hubs and sources; your words and the
+// Stats: plain figures about the record. Entries, threads, notes, hubs and sources; your words and the
 // assistants'; the busiest months; and how far the organiser has got.
 
 import { useEffect, useState } from 'preact/hooks';
@@ -6,7 +6,7 @@ import { message } from '../actions.ts';
 import { api } from '../api.ts';
 import { fmtMonth, fmtNum, fmtRange, fmtShare, speakerName } from '../format.ts';
 import { useApp } from '../store.ts';
-import type { Numbers } from '../types.ts';
+import type { Stats } from '../types.ts';
 import { Empty } from '../ui/common.tsx';
 
 function Figure({ value, label, note }: { value: string; label: string; note?: string }) {
@@ -46,14 +46,14 @@ function Bars({ title, rows }: { title: string; rows: { label: string; value: nu
   );
 }
 
-export function NumbersView() {
+export function StatsView() {
   const revision = useApp((s) => s.revision);
-  const [n, setN] = useState<Numbers | null>(null);
+  const [n, setN] = useState<Stats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
-    api.get<Numbers>('stats').then(
+    api.get<Stats>('stats').then(
       (d) => live && (setN(d), setError(null)),
       (e: unknown) => live && setError(message(e)),
     );
@@ -64,13 +64,13 @@ export function NumbersView() {
 
   if (error)
     return (
-      <section class="view numbers" aria-label="Numbers">
+      <section class="view stats" aria-label="Stats">
         <Empty title="Couldn't count the record">{error}</Empty>
       </section>
     );
   if (!n)
     return (
-      <section class="view numbers" aria-label="Numbers" aria-busy="true">
+      <section class="view stats" aria-label="Stats" aria-busy="true">
         <p class="soft pad">Counting…</p>
       </section>
     );
@@ -79,12 +79,12 @@ export function NumbersView() {
   const busiest = [...n.byMonth].sort((a, b) => b.entries - a.entries || a.month.localeCompare(b.month)).slice(0, 6);
 
   return (
-    <section class="view numbers" aria-label="Numbers">
+    <section class="view stats" aria-label="Stats">
       <header class="view-head">
-        <h1>Numbers</h1>
+        <h1>Stats</h1>
         {n.first && <p class="soft">{fmtRange(n.first, n.last)}</p>}
       </header>
-      <div class="numbers-body">
+      <div class="stats-body">
         <div class="figures">
           <Figure value={fmtNum(n.entries)} label="Entries" />
           <Figure value={fmtNum(n.threads)} label="Threads" />
@@ -115,7 +115,7 @@ export function NumbersView() {
           )}
         </section>
 
-        <div class="numbers-grid">
+        <div class="stats-grid">
           <Bars title="Busiest months" rows={busiest.map((m) => ({ label: fmtMonth(m.month), value: m.entries }))} />
           <Bars title="By source" rows={n.bySource.slice(0, 10).map((s) => ({ label: s.label, value: s.entries }))} />
           <Bars title="By speaker" rows={n.bySpeaker.slice(0, 10).map((s) => ({ label: speakerName(s.speaker), value: s.entries }))} />

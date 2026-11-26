@@ -1,5 +1,6 @@
 // Plain-text formatting shared by the commands.
 
+import { safeBlock, safeLine } from './safe-text.ts';
 import type { Entry } from './store/store.ts';
 
 export function day(iso: string): string {
@@ -11,27 +12,29 @@ export function minute(iso: string): string {
 }
 
 export function speakerLabel(e: Entry): string {
-  return e.speaker === 'assistant' ? `${e.sourceLabel}` : e.speaker;
+  return safeLine(e.speaker === 'assistant' ? e.sourceLabel : e.speaker);
 }
 
+/** "#345  2026-04-05  you · ChatGPT · Plotline". Titles come from imports, so they are made safe to print. */
 export function entryHeader(e: Entry): string {
-  const where = e.threadTitle ? ` · ${e.threadTitle}` : e.title ? ` · ${e.title}` : '';
+  const where = e.threadTitle ? ` · ${safeLine(e.threadTitle)}` : e.title ? ` · ${safeLine(e.title)}` : '';
   const speaker = speakerLabel(e);
   // An assistant's line is already labelled with its source ("ChatGPT"); don't say it twice.
-  const source = speaker === e.sourceLabel ? '' : ` · ${e.sourceLabel}`;
+  const source = speaker === safeLine(e.sourceLabel) ? '' : ` · ${safeLine(e.sourceLabel)}`;
   return `#${e.id}  ${day(e.createdAt)}  ${speaker}${source}${where}`;
 }
 
+/** Text indented under a header, made safe to print. */
 export function indent(text: string, pad = '    '): string {
-  return text
+  return safeBlock(text)
     .split('\n')
     .map((l) => (l ? pad + l : l))
     .join('\n');
 }
 
-/** One line of text, cut to a length. */
+/** One line of text, made safe to print and cut to a length. */
 export function oneLine(text: string, max = 100): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
+  const flat = safeLine(text).replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
@@ -52,5 +55,5 @@ export function entryBrief(e: Entry): string {
 export function engineLabel(engine: string, model: string | null): string {
   if (engine === 'none') return 'No-AI';
   if (engine === 'you') return 'by you';
-  return model ? `${engine} model ${model}` : `${engine} model`;
+  return model ? `${safeLine(engine)} model ${safeLine(model)}` : `${safeLine(engine)} model`;
 }

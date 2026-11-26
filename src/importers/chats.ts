@@ -194,6 +194,63 @@ export function parseGemini(data: unknown, report = new FileReport('MyActivity.j
 /** Wrapper text the CLI injects (commands, reminders, tool output): not something the person wrote. */
 const AGENT_NOISE = /^\s*<(command-|local-command|system-reminder|user-prompt-submit-hook|bash-|environment_context|user_instructions)/;
 
+/** Spans a CLI or a hook adds inside a message, cut out wherever they stand. */
+const INJECTED = [
+  ['<system-reminder>', '</system-reminder>'],
+  ['<user-prompt-submit-hook>', '</user-prompt-submit-hook>'],
+] as const;
+
+/** How Claude Code opens the summary it writes when it compacts a session (older lines carry no isCompactSummary). */
+const COMPACT_SUMMARY = 'This session is being continued from a previous conversation that ran out of context.';
+
+/** Cuts each injected span out of the text in one pass. An opening tag with no closing one is left as written. */
+function cutInjected(text: string): string {
+  let out = text;
+  for (const [open, close] of INJECTED) {
+    if (!out.includes(open)) continue;
+    let kept = '';
+    let from = 0;
+    for (let start = out.indexOf(open); start >= 0; start = out.indexOf(open, from)) {
+      const end = out.indexOf(close, start + open.length);
+      if (end < 0) break;
+      kept += out.slice(from, start);
+      from = end + close.length;
+    }
+    if (from) out = (kept + out.slice(from)).trim();
+  }
+  return out;
+}
+
+/**
+ * What a person or an assistant wrote in an agent session: each text block with its injected spans cut out, and a
+ * block that is only wrapper text dropped, so a reminder sent ahead of a prompt no longer hides the prompt, and one
+ * sent after it is no longer saved as the person's words. Text with nothing injected comes back exactly as written.
+ */
+export function agentText(content: unknown, types: readonly string[] = ['text']): string {
+  const blocks =
+    typeof content === 'string'
+      ? [content]
+      : asArray(content)
+          .filter((b): b is Obj => isObj(b) && types.includes(String(b.type)))
+          .map((b) => str(b.text) ?? '');
+  return blocks
+    .map(cutInjected)
+    .filter((t) => t.trim() && !AGENT_NOISE.test(t))
+    .join('\n\n');
+}
+
+/** A user line that carries a tool's output: Claude Code files tool results as the user's turn. */
+function isToolResult(line: Obj, message: Obj): boolean {
+  return line.toolUseResult !== undefined || asArray(message.content).some((b) => isObj(b) && b.type === 'tool_result');
+}
+
+/** The working folder and git branch an agent session line was run in, when it names them. */
+function context(project: unknown, gitBranch: unknown): Pick<EntryInput, 'project' | 'gitBranch'> {
+  const cwd = str(project)?.trim();
+  const branch = str(gitBranch)?.trim();
+  return { ...(cwd ? { project: cwd } : {}), ...(branch ? { gitBranch: branch } : {}) };
+}
+
 /** Each line is parsed on its own: a bad one is skipped and named by its line number. */
 export function parseClaudeCodeSession(text: string, fallbackId: string, report = new FileReport(`${fallbackId}.jsonl`)): ThreadInput {
   let summary: string | undefined;
@@ -202,18 +259,22 @@ export function parseClaudeCodeSession(text: string, fallbackId: string, report 
   for (const { line: n, value: line } of parseJsonlLines(text)) {
     if (line.type === 'summary') summary ??= str(line.summary);
     if (line.type !== 'user' && line.type !== 'assistant') continue;
-    if (line.isSidechain || line.isMeta) continue;
+    // Side chains are subagents' talk, meta lines the CLI's own notes, and a compaction summary restates the session
+    // in the model's words: none of them is the person's.
+    if (line.isSidechain || line.isMeta || line.isCompactSummary) continue;
     sessionId ??= str(line.sessionId);
     const entry = report.each(`${n}`, () => {
       const message = isObj(line.message) ? line.message : {};
-      const body = blockText(message.content);
-      if (!body.trim() || AGENT_NOISE.test(body)) return undefined;
+      if (line.type === 'user' && isToolResult(line, message)) return undefined;
+      const body = agentText(message.content);
+      if (!body.trim() || body.startsWith(COMPACT_SUMMARY)) return undefined;
       return {
         externalId: str(line.uuid) ?? `${fallbackId}:${entries.length}`,
         kind: 'message' as const,
         speaker: line.type === 'user' ? 'you' : 'assistant',
         createdAt: timeOf(line.timestamp, '', `${n}`, report),
         body,
+        ...context(line.cwd, line.gitBranch),
       };
     });
     if (entry) entries.push(entry);
@@ -227,26 +288,36 @@ export function parseClaudeCodeSession(text: string, fallbackId: string, report 
 /** As parseClaudeCodeSession: a bad line is skipped and named by its line number. */
 export function parseCodexSession(text: string, fallbackId: string, report = new FileReport(`${fallbackId}.jsonl`)): ThreadInput {
   let sessionId: string | undefined;
+  // The session's folder and branch from session_meta; a turn_context line moves the folder when the session does.
+  let cwd: string | undefined;
+  let branch: string | undefined;
   const entries: EntryInput[] = [];
   // n, the object's place among the parsed lines, is part of each entry's id: keep it, so ids stay as they were.
   parseJsonlLines(text).forEach(({ line: lineNo, value: line }, n) => {
     const payload = isObj(line.payload) ? line.payload : {};
     if (line.type === 'session_meta') {
       sessionId ??= str(payload.id);
+      cwd ??= str(payload.cwd);
+      branch ??= isObj(payload.git) ? str(payload.git.branch) : undefined;
+      return;
+    }
+    if (line.type === 'turn_context') {
+      cwd = str(payload.cwd) ?? cwd;
       return;
     }
     if (line.type !== 'response_item' || payload.type !== 'message') return;
     const role = str(payload.role);
     if (role !== 'user' && role !== 'assistant') return;
     const entry = report.each(`${lineNo}`, () => {
-      const body = blockText(payload.content, ['input_text', 'output_text', 'text']);
-      if (!body.trim() || AGENT_NOISE.test(body) || body.startsWith('# AGENTS.md')) return undefined;
+      const body = agentText(payload.content, ['input_text', 'output_text', 'text']);
+      if (!body.trim() || body.startsWith('# AGENTS.md')) return undefined;
       return {
         externalId: `${sessionId ?? fallbackId}:${n}`,
         kind: 'message' as const,
         speaker: role === 'user' ? 'you' : 'assistant',
         createdAt: timeOf(line.timestamp, '', `${lineNo}`, report),
         body,
+        ...context(cwd, branch),
       };
     });
     if (entry) entries.push(entry);
