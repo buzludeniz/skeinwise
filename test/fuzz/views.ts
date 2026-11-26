@@ -328,23 +328,6 @@ const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => 
   return Response.json({ choices: [{ message: { role: 'assistant', content: world!.answer }, finish_reason: 'stop' }], usage: { prompt_tokens: 120, completion_tokens: 30 } });
 }) as typeof globalThis.fetch;
 
-/**
- * src/organiser/model.ts gives every request a signal from AbortSignal.timeout(REQUEST_MS), and that timer and its signal
- * live their full ten minutes after the request is answered. A long run makes hundreds of requests a second, and those
- * timers outgrow the memory budget within five minutes (reported to the lead, Nov 26). So in this target's worker the
- * timeouts an input makes are cleared once it is done, and the memory check measures what the input itself holds.
- */
-const requestTimers: NodeJS.Timeout[] = [];
-function clearTimeoutsWhenDone(): void {
-  AbortSignal.timeout = (ms: number): AbortSignal => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), ms);
-    timer.unref();
-    requestTimers.push(timer);
-    return controller.signal;
-  };
-}
-
 function newWorld(home: string): World {
   const store = new Store(openDb(':memory:'), () => NOW);
   store.ingest({
@@ -410,14 +393,6 @@ function checkPrivate(path: string): void {
 class RouteRefused extends Error {}
 
 async function runRoutes(input: Uint8Array): Promise<void> {
-  try {
-    await routesOnce(input);
-  } finally {
-    for (const timer of requestTimers.splice(0)) clearTimeout(timer);
-  }
-}
-
-async function routesOnce(input: Uint8Array): Promise<void> {
   const w = world!;
   if (++w.uses > STORE_USES) {
     w.store.db.close();
@@ -552,7 +527,6 @@ const viewRoutesTarget: Target = {
     saveConfig(home, { ...loadConfig(home), engine: 'local', localUrl: LOCAL });
     world?.store.db.close();
     world = newWorld(home);
-    clearTimeoutsWhenDone();
   },
   writesIn: (folder) => viewsDir(join(folder, 'home')),
   run: runRoutes,

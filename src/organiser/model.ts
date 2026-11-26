@@ -21,6 +21,18 @@ import { Redactor, scrubSecrets } from './redact.ts';
 /** The longest one request to the model may take once sent. */
 export const REQUEST_MS = 10 * 60 * 1000;
 const PROBE_MS = 5000;
+
+/**
+ * A signal that aborts after `ms` as AbortSignal.timeout's does, with a TimeoutError, and a way to drop its timer once
+ * the request is done. AbortSignal.timeout's timer and signal live their full time after the answer comes, ten minutes
+ * for a request. Unref'd as that timer is, so a request in flight doesn't hold the process open by its deadline alone.
+ */
+function deadline(ms: number): { signal: AbortSignal; clear: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), ms);
+  timer.unref();
+  return { signal: controller.signal, clear: () => clearTimeout(timer) };
+}
 const REDACTED_NOTE = 'Some words are replaced by placeholders like [NAME_1]. Keep any placeholder you use exactly as written.';
 
 export interface ModelDeps {
@@ -134,15 +146,23 @@ function localModel(config: Config, deps: ModelDeps): StreamingClient {
     prepare: (request) => ({ system: request.system, user: request.user }),
     probe: async () => {
       if (probed) return;
-      let res: Response;
+      // The deadline covers reading the list too, and goes once the probe has its answer or fails.
+      const timeout = deadline(PROBE_MS);
+      let listed: unknown;
       try {
-        res = await deps.fetch(`${url}/models`, { headers: keyHeader(readServerKey(deps)), redirect: 'error', signal: AbortSignal.timeout(PROBE_MS) });
-      } catch {
-        throw new UsageError(startHelp(url));
+        let res: Response;
+        try {
+          res = await deps.fetch(`${url}/models`, { headers: keyHeader(readServerKey(deps)), redirect: 'error', signal: timeout.signal });
+        } catch {
+          throw new UsageError(startHelp(url));
+        }
+        if (res.status === 401) throw new UsageError(keyRefused(url));
+        if (!res.ok) throw new UsageError(`${url}/models answered ${res.status}: is this an OpenAI-compatible server?\n\n${startHelp(url)}`);
+        listed = await res.json().catch(() => null);
+      } finally {
+        timeout.clear();
       }
-      if (res.status === 401) throw new UsageError(keyRefused(url));
-      if (!res.ok) throw new UsageError(`${url}/models answered ${res.status}: is this an OpenAI-compatible server?\n\n${startHelp(url)}`);
-      const ids = modelIds(await res.json().catch(() => null));
+      const ids = modelIds(listed);
       if (!ids) throw new UsageError(`${url}/models didn't list models the OpenAI way ({"data": [{"id": ...}]}).`);
       if (resolved && !ids.includes(resolved)) {
         throw new UsageError(`The server at ${url} has no model "${resolved}". It has: ${ids.join(', ') || 'none'}. Change it with: skeinwise config localModel <name>`);
@@ -360,7 +380,7 @@ async function attempt(
     throw timeout;
   };
   const headers: Record<string, string> = { 'content-type': 'application/json', ...keyHeader(key) };
-  const timeout = AbortSignal.timeout(REQUEST_MS);
+  const timeout = deadline(REQUEST_MS);
   let res: Response;
   let raw = '';
   let events: StreamEnd | null = null;
@@ -370,7 +390,7 @@ async function attempt(
       headers,
       body: JSON.stringify(body),
       redirect: 'error',
-      signal: live.signal ? AbortSignal.any([live.signal, timeout]) : timeout,
+      signal: live.signal ? AbortSignal.any([live.signal, timeout.signal]) : timeout.signal,
     });
     if (streamed && res.ok && /^text\/event-stream\b/.test(res.headers.get('content-type') ?? '')) {
       events = await readEvents(res, (piece) => {
@@ -382,6 +402,9 @@ async function attempt(
     }
   } catch (err) {
     return failed(err);
+  } finally {
+    // The answer is read whole, or the request failed or was stopped: its deadline goes now, not ten minutes on.
+    timeout.clear();
   }
   if (target.engine === 'local' && res.status === 401) throw new UsageError(keyRefused(url));
   if (!res.ok) throw new Error(`${url} answered ${res.status} ${res.statusText} during ${request.purpose}: ${clean(raw)}`);
