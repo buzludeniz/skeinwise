@@ -87,7 +87,7 @@ describe('one bad file', () => {
     expect(first.code).toBe(0);
     expect(first.out).toContain('caught up 6 chats from Claude Code');
     expect(first.out).not.toContain('failed');
-    expect(first.err).toContain(`${join('-Users-me-proj', 'zz-bad.jsonl')}:1: 1700000000000000000 is not a time; kept the entry with no time`);
+    expect(first.err).toContain(`-Users-me-proj/zz-bad.jsonl:1: 1700000000000000000 is not a time; kept the entry with no time`);
     expect(withStore((s) => s.allEntries())).toHaveLength(21);
   });
 
@@ -282,7 +282,7 @@ describe('the per-file record', () => {
     live.scan();
     appendFileSync(file, json({ type: 'user', sessionId: 'sess-6', uuid: 'u-6-10', timestamp: 1.7e18, message: { role: 'user', content: 'A late line.' } }));
     live.scan();
-    expect(warnings).toEqual([`${join('-Users-me-proj', 'sess-6.jsonl')}:11: 1700000000000000000 is not a time; kept the entry with no time`]);
+    expect(warnings).toEqual([`-Users-me-proj/sess-6.jsonl:11: 1700000000000000000 is not a time; kept the entry with no time`]);
     expect(row(file)!.sha256).toMatch(/^[0-9a-f]{64}$/); // read whole
     expect(store.allEntries()).toHaveLength(11);
 

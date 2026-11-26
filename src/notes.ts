@@ -10,7 +10,7 @@
 import { closeSync, constants, existsSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { UsageError } from './errors.ts';
-import { readImports } from './importers/detect.ts';
+import { pathInside, readImports } from './importers/detect.ts';
 import { parseFrontMatter } from './importers/notes.ts';
 import type { Entry, Store } from './store/store.ts';
 
@@ -162,7 +162,7 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
     return { path, created: true, entryId: readBackAs(store, dir, path, agent, true) };
   }
   const owner = parseFrontMatter(readNoteFile(notePath(dir, path))).meta.agent;
-  const file = relative(dir, path);
+  const file = pathInside(dir, path);
   if (typeof owner !== 'string' || !owner) {
     throw new UsageError(`${file} is your note, and agents can't change your notes. Pick another title, or add a line to today's note.`);
   }
@@ -194,7 +194,7 @@ function readBack(store: Store, dir: string, path: string): number {
 
 /** Reads one file of the notes folder into the record as an agent's save; with `speaker`, a new entry is the agent's. */
 function readBackAs(store: Store, dir: string, path: string, agent: string, speaker: boolean): number {
-  const file = relative(dir, path);
+  const file = pathInside(dir, path);
   for (const batch of readImports(dir)) {
     if (batch.source.kind !== 'notes') continue;
     const entries = (batch.entries ?? []).filter((e) => e.externalId === file).map((e) => (speaker ? { ...e, speaker: agent } : e));
@@ -209,7 +209,7 @@ function entryOf(store: Store, dir: string, path: string): number {
       `SELECT e.id FROM entries e JOIN sources s ON s.id = e.source_id
        WHERE s.kind = 'notes' AND s.location = ? AND e.external_id = ?`,
     )
-    .get(dir, relative(dir, path)) as { id: number } | undefined;
+    .get(dir, pathInside(dir, path)) as { id: number } | undefined;
   if (!row) throw new Error(`${path} was written but did not reach the record.`);
   return row.id;
 }
