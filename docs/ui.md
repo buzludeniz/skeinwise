@@ -89,11 +89,13 @@ A narrow column on the left, icon above label:
 | Timeline | `calendar-range` | Activity over time |
 | Profile | `user-round` | What the record says about you |
 | Workbench | `flask-conical` | The table builder and Activity |
+| Views | `layout-dashboard` | Charts and lists you pick or describe |
+| Assistant | `list-todo` | Your brief, open loops and tasks |
 | Guide | `graduation-cap` | How to read the brain |
 | + Add | `plus` | Add files, a note or a source |
 
-Keys 1 to 8 switch views. A Review badge sits on Threads when notes wait for review. The footer reads "Woven from N
-entries" and links to Stats.
+Keys 1 to 9 open the first nine items after Search; + Add has no key. A Review badge sits on Threads when notes wait
+for review. The footer reads "Woven from N entries" and links to Stats.
 
 ## Brain
 

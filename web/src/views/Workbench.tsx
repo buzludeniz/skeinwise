@@ -34,7 +34,7 @@ const FORMS: [Form, string][] = [
   ['dots', 'Dots'],
 ];
 
-function valueLabel(prop: string, v: string): string {
+export function valueLabel(prop: string, v: string): string {
   if (prop === 'time' && /^\d{4}-\d{2}$/.test(v)) return fmtMonth(v);
   if (prop === 'speaker') return speakerName(v);
   return v;
@@ -61,7 +61,7 @@ function heatFill(share: number): number {
 }
 
 /** Grid forms: a plain table, or a heatmap with the counts shaded. */
-function Grid({ t, heat, onCell }: { t: Table; heat: boolean; onCell: (c: Cell) => void }) {
+export function Grid({ t, heat, onCell }: { t: Table; heat: boolean; onCell: (c: Cell) => void }) {
   return (
     <div class="grid-wrap">
       <table class={`workbench-table${heat ? ' heat' : ''}`}>
@@ -107,7 +107,7 @@ function Grid({ t, heat, onCell }: { t: Table; heat: boolean; onCell: (c: Cell) 
 }
 
 /** SVG forms: bars, stacked bars, lines and dots, with x along the bottom and one colour per y value. */
-function Plot({ t, form, onCell }: { t: Table; form: Form; onCell: (c: Cell) => void }) {
+export function Plot({ t, form, onCell }: { t: Table; form: Form; onCell: (c: Cell) => void }) {
   const box = useRef<HTMLDivElement>(null);
   const width = useWidth(box);
   const colors = useSeriesColors(t.ys.length);
