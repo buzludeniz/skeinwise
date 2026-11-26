@@ -260,6 +260,26 @@ describe('readImports', () => {
     }
   });
 
+  it('skips a note in a zip whose packed bytes are cut off, with a warning, and imports the rest', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-cut-'));
+    try {
+      const text = strToU8('# Seed swap\n\nBring beans, peas and labels.\n'.repeat(20));
+      const packed = deflateSync(text);
+      const path = join(dir, 'notes.zip');
+      writeFileSync(path, buildZip([
+        { name: 'notes/cut.md', data: packed.subarray(0, packed.length >> 1), size: text.length },
+        { name: 'notes/whole.md', data: packed, size: text.length },
+      ]));
+      const warnings: string[] = [];
+      const batches = readImports(path, { onWarning: (m) => warnings.push(m) });
+      expect(JSON.stringify(batches)).toContain('Bring beans, peas and labels.');
+      expect(batches.flatMap((b) => b.entries ?? []).map((e) => e.externalId)).toEqual(['notes/whole.md']);
+      expect(warnings).toEqual([expect.stringMatching(/notes\.zip \(notes\/cut\.md\): refused, its packed bytes are damaged \(unexpected EOF\)/)]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a zip bomb by name before inflating it (PoC 09), in a worker too', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'skeinwise-bomb-'));
     try {

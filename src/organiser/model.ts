@@ -18,7 +18,8 @@ import { AnswerError, type ModelClient, type ModelRequest, type Sent } from './p
 import { Redactor, scrubSecrets } from './redact.ts';
 
 /** How long one request may take. A small model on a laptop can need minutes for a long answer. */
-const REQUEST_MS = 10 * 60 * 1000;
+/** The longest one request to the model may take once sent. */
+export const REQUEST_MS = 10 * 60 * 1000;
 const PROBE_MS = 5000;
 const REDACTED_NOTE = 'Some words are replaced by placeholders like [NAME_1]. Keep any placeholder you use exactly as written.';
 

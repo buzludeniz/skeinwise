@@ -86,7 +86,7 @@ describe('who may use the tools', () => {
     const made = await call(cursor, 'write_note', { title: 'Who wrote this', body: 'Cursor did.' });
     expect(made.isError).toBe(false);
     expect(readFileSync(join(home, 'notes', 'who-wrote-this.md'), 'utf8')).toContain('agent: cursor');
-    expect(store.history(made.json.entry_id).map((v) => v.editor)).toEqual(['cursor']);
+    expect(store.history(made.json.entry_id).map((v) => v.editor)).toEqual(['agent:cursor']);
   });
 
   it('stops a denied agent on its next call, and a new token replaces the old one', async () => {
@@ -264,7 +264,7 @@ describe('writing to the record', () => {
     expect(again.json).toMatchObject({ entry_id: made.json.entry_id, created: false, version: 2 });
     const read = (await call(server, 'read_entry', { entry_id: made.json.entry_id })).json.entries[0];
     expect(read).toMatchObject({ speaker: 'claude-code', body: '# Rye plan\n\nTry 78% hydration.' });
-    expect(read.versions.map((v: { editor: string }) => v.editor)).toEqual(['claude-code', 'claude-code']);
+    expect(read.versions.map((v: { editor: string }) => v.editor)).toEqual(['agent:claude-code', 'agent:claude-code']);
     expect((await call(server, 'search', { query: 'hydration' })).json.entries.map((h: { id: number }) => h.id)).toContain(made.json.entry_id);
   });
 
@@ -280,7 +280,7 @@ describe('writing to the record', () => {
     const res = await call(server, 'append_daily_note', { text: 'Reminded you to feed the starter.' });
     expect(res.json).toMatchObject({ created: true, version: 1 });
     expect(readFileSync(join(home, res.json.file), 'utf8')).toMatch(/\n- claude-code: Reminded you to feed the starter\.\n$/);
-    expect(store.history(res.json.entry_id).map((v) => v.editor)).toEqual(['claude-code']);
+    expect(store.history(res.json.entry_id).map((v) => v.editor)).toEqual(['agent:claude-code']);
   });
 
   it('tag_entries makes one run under the agent, which only that agent can undo', async () => {

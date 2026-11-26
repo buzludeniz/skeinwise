@@ -64,6 +64,9 @@ These were planned for 1.0 and moved to 1.1, so that 1.0 ships with every check 
 - **Readable titles everywhere:** one readable title and a clean snippet for every entry, in every view.
 - **More of the clickable brain,** past its first phase.
 - **`skeinwise purge`:** removes an entry and all its versions for good, for a secret pasted into a chat.
+- **The stand-in:** an agent asks your record before it asks you, and gets back what you settled, in your words,
+  with a verdict on whether it must still ask. Your local model builds it from your own record, so it differs for
+  each person. Money, sending and anything that can't be undone always come to you. [The plan](docs/stand-in.md).
 
 ## Quick start
 
@@ -180,6 +183,7 @@ node dist/src/cli.js demo
 - [Security](docs/security.md): what leaves your computer, who it defends against, the Lock, agent scopes and
   redaction. To report a problem, see [SECURITY.md](SECURITY.md)
 - [Connectors](docs/connectors.md) *(1.1)*: what each one reads, its permissions, and how to make your own client
+- [The stand-in](docs/stand-in.md) *(1.1)*: rulings, the `precedent` tool, the always-ask list and grading
 - [Research](docs/research.md): the export formats and the landscape
 - [UI](docs/ui.md) and [features](docs/features.md): the detailed design
 - [Changelog](CHANGELOG.md): what each release changed

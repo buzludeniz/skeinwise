@@ -242,6 +242,22 @@ Claude Code, Claude desktop, Codex or Cursor, and `skeinwise doctor` checks the 
 
 Details: [mcp.md](mcp.md).
 
+## The stand-in *(1.1)*
+
+An agent asks your record before it asks you. The `precedent` tool returns the rulings that answer the question (what
+you settled, quoted, dated, with its source) and a verdict: `answered`, `partial`, `unknown` or `must_ask`.
+
+- **Built per person:** the rulings task reads your own words, and your local model writes each hub's stance sheet from
+  your rulings, so every record gets a different stand-in.
+- **Fixed verdict rules:** only a confirmed ruling can answer; found and reported ones give `partial`; the newest
+  ruling wins.
+- **The always-ask list:** money, sending, credentials, deletion, releases and production always come back
+  `must_ask`. You can add to the list, not take from it.
+- **It never speaks as you,** and grading shows how often it was right. Under 90% agreement, nothing comes back
+  `answered`.
+
+Details: [stand-in.md](stand-in.md).
+
 ## Ledger and proof of date *(planned)*
 
 - Every import, edit and run appends a line to `ledger.jsonl`, with a hash chained to the line before. Any later

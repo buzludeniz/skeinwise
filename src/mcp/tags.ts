@@ -10,11 +10,8 @@ import type { Store } from '../store/store.ts';
 
 /** The schema an agent's tags go in unless it names another one. */
 export const AGENT_SCHEMA = 'Agent tags';
-/**
- * The runs table's engine for an agent's run. The organiser's RunEngine type doesn't list it yet (the hand-over asks
- * for it), so the value is cast here and nowhere else.
- */
-export const AGENT_ENGINE = 'agent' as RunEngine;
+/** The runs table's engine for an agent's run. */
+export const AGENT_ENGINE: RunEngine = 'agent';
 
 /** Most entries one call may tag. */
 export const MAX_TAGGED = 500;

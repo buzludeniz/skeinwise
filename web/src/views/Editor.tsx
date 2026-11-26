@@ -2,11 +2,11 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from 'preact/hooks';
 import { Save, X } from 'lucide-preact';
-import { changed, closeEditor, loadRecord, message, openEntry, toast } from '../actions.ts';
+import { changed, closeEditor, loadRecord, message, openEntry, toast, wordNotice } from '../actions.ts';
 import { api } from '../api.ts';
 import { openLink, renderMarkdown } from '../markdown.ts';
 import { useApp } from '../store.ts';
-import type { EntryDetail } from '../types.ts';
+import type { EntryDetail, SavedEntry } from '../types.ts';
 import { Button, MOD, TabList } from '../ui/common.tsx';
 import { tabPanel } from '../ui/tabs.ts';
 
@@ -67,17 +67,18 @@ export function Editor({ id, title: initialTitle }: { id: number | null; title: 
         return;
       }
       const before = saved ?? '';
-      const res = await api.put<{ version: { version: number }; wroteFile: boolean }>(`entries/${id}`, { body });
+      const res = await api.put<SavedEntry>(`entries/${id}`, { body });
       setSaved(body);
       await loadRecord();
       changed(
         `Saved as version ${res.version.version}${res.wroteFile ? ', and the file too' : ''}.`,
         `Put “${title || 'the note'}” back as it was`,
         async () => {
-          await api.put(`entries/${id}`, { body: before });
+          wordNotice(await api.put<SavedEntry>(`entries/${id}`, { body: before }));
           await loadRecord();
         },
       );
+      wordNotice(res);
     } catch (error) {
       toast(`Not saved: ${message(error)}`, { tone: 'error' });
     }

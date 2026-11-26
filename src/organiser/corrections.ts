@@ -8,7 +8,7 @@
 
 import { lineDiff } from '../diff.ts';
 import { UsageError } from '../errors.ts';
-import { homeNoteFile, rewriteNoteFile } from '../notes.ts';
+import { homeNoteFile, rewriteNoteFile, wordNoteFile } from '../notes.ts';
 import { inTransaction } from '../store/db.ts';
 import type { Store } from '../store/store.ts';
 import { currentMark, finishRun, getRun, startRun } from './runs.ts';
@@ -172,6 +172,8 @@ export interface Resolution {
   /** For a saved update: the note's new version, and the file rewritten when the note lives in the record folder. */
   version: number | null;
   file: string | null;
+  /** For a saved update to a note whose file is a Word document: its path in the record folder. It was left as it is. */
+  word: string | null;
 }
 
 const STATUS: Record<ReviewAction, ReviewItem['status']> = { update: 'updated', holds: 'holds', skip: 'skipped' };
@@ -185,7 +187,7 @@ export function resolveReview(store: Store, home: string, id: number, action: Re
   const item = getReviewItem(store.db, id);
   if (!item) throw new UsageError(`No review item ${id} in the current review. Run "skeinwise review" for the list.`);
   if (item.status !== 'open') throw new UsageError(`Review item ${id} is already answered (${item.status}).`);
-  const base = { item, action, diff: [] as string[], saved: false, version: null, file: null };
+  const base = { item, action, diff: [] as string[], saved: false, version: null, file: null, word: null };
   const mark = (status: ReviewItem['status']) =>
     store.db.prepare("UPDATE review_items SET status = ?, resolved_at = ? WHERE id = ? AND status = 'open'").run(status, store.now(), id);
   if (action !== 'update') {
@@ -201,9 +203,13 @@ export function resolveReview(store: Store, home: string, id: number, action: Re
   }
   const diff = lineDiff(note.body, item.proposed.trim());
   if (!yes) return { ...base, diff };
-  const file = homeNoteFile(store, home, note);
+  // The file goes first, so a file that can't be written leaves the record as it was. A Word document is only read:
+  // the update goes to the record alone, and the person is told the document doesn't have it.
+  const noteFile = homeNoteFile(store, home, note);
+  const word = noteFile ? wordNoteFile(home, noteFile) : null;
+  const file = word ? null : noteFile;
   if (file) rewriteNoteFile(file, item.proposed);
   const version = store.editEntry(note.id, item.proposed, { editor: 'you', runId: item.runId });
   mark('updated');
-  return { ...base, item: { ...item, status: 'updated' }, diff, saved: true, version: version.version, file };
+  return { ...base, item: { ...item, status: 'updated' }, diff, saved: true, version: version.version, file, word };
 }

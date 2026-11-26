@@ -47,6 +47,7 @@ export interface Manifest {
 /** A file written whole or not at all: the folder never holds half a bundle, even when a cloud drive syncs it mid-write. */
 export function writeAtomic(path: string, data: Uint8Array | string, mode = 0o600): void {
   mkdirSync(dirname(path), { recursive: true });
+  // Safe on Windows too, where O_EXCL ('wx') follows a dangling link: the name is random and new, so no link waits there.
   const part = `${path}.${randomBytes(4).toString('hex')}.part`;
   try {
     writeFileSync(part, data, { mode, flag: 'wx' });

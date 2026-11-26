@@ -3,13 +3,13 @@
 // chips open the entry they came from.
 
 import type { ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { BellRing, Check, CircleHelp, Clock, ListTodo, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from 'lucide-preact';
 import { engineName, message, openEntry, toast } from '../actions.ts';
 import { api, qs } from '../api.ts';
 import { fmtDate, plural, speakerName } from '../format.ts';
 import { useApp } from '../store.ts';
-import type { AskResult } from '../types.ts';
+import type { AskResult, AskStreamEvent } from '../types.ts';
 import { Button } from '../ui/common.tsx';
 import { type Brief, type Loop, type NewTask, onPaChange, pa, type PaTask } from './api.ts';
 import { countsLine, dayOn, dueLabel, fmtRemind, fromLocalInput, localDay, olderLine, openLine, toLocalInput } from './text.ts';
@@ -177,23 +177,36 @@ function BriefCard() {
   );
 }
 
-function AskAnswer({ view }: { view: AskResult }) {
+/** The answer while the model writes it: the text so far (already cleaned by the server) and what the model is doing. */
+interface Draft {
+  text: string;
+  status: string;
+}
+
+function AskAnswer({ view, draft }: { view: AskResult; draft: Draft | null }) {
   return (
     <div class="pa-answer">
-      {view.answer && (
+      {draft ? (
         <div class="model-answer">
-          <p>
-            {view.answer} <Cites ids={view.cites} />
-          </p>
-          <p class="band small">The model’s reading of these entries, not your words · {engineName(view.engine, view.model)}</p>
+          {draft.text && <p>{draft.text}</p>}
+          <p class="band small">{draft.status} · the model’s reading of these entries, not your words</p>
         </div>
+      ) : (
+        view.answer && (
+          <div class="model-answer">
+            <p>
+              {view.answer} <Cites ids={view.cites} />
+            </p>
+            <p class="band small">The model’s reading of these entries, not your words · {engineName(view.engine, view.model)}</p>
+          </div>
+        )
       )}
       {view.message && <p class="soft small">{view.message}</p>}
       {view.hits.length === 0 ? (
         <p class="soft">Nothing in your record matches that.</p>
       ) : (
         <>
-          {!view.answer && <p class="soft small">Found by search and dates. No model wrote this.</p>}
+          {!view.answer && !draft && <p class="soft small">Found by search and dates. No model wrote this.</p>}
           <ul class="hits">
             {view.hits.slice(0, 8).map((h) => (
               <li key={h.entryId}>
@@ -216,21 +229,56 @@ function AskAnswer({ view }: { view: AskResult }) {
   );
 }
 
+// The question goes to GET /api/ask/stream (src/server/ask-stream.ts): the entries found show at once, then the
+// answer as the model writes it, then the checked answer in its place. Stop, or leaving the view, closes the
+// connection, which stops the model; the entries found stay.
 function AskCard() {
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
   const [answer, setAnswer] = useState<AskResult | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const asking = useRef<AbortController | null>(null);
+  useEffect(() => () => asking.current?.abort(), []);
   const submit = (e: Event) => {
     e.preventDefault();
     const question = q.trim();
     if (!question || busy) return;
+    const stop = new AbortController();
+    asking.current = stop;
+    let ended = false;
     setBusy(true);
+    setAnswer(null);
+    setDraft(null);
+    setNote(null);
     setError(null);
+    const show = (event: AskStreamEvent) => {
+      if (event.type === 'hits') setAnswer(event.result);
+      else if (event.type === 'status') setDraft((d) => ({ text: d?.text ?? '', status: event.line }));
+      else if (event.type === 'text') setDraft((d) => ({ status: d?.status ?? '', text: (d?.text ?? '') + event.text }));
+      else if (event.type === 'restart') setDraft((d) => ({ status: d?.status ?? '', text: '' }));
+      else {
+        ended = true;
+        setDraft(null);
+        if (event.type === 'done') setAnswer(event.result);
+        else setError(event.message);
+      }
+    };
     api
-      .get<AskResult>(`ask${qs({ q: question })}`)
-      .then(setAnswer, (err: unknown) => setError(message(err)))
-      .finally(() => setBusy(false));
+      .stream<AskStreamEvent>(`ask/stream${qs({ q: question })}`, show, stop.signal)
+      .then(() => {
+        if (!ended) throw new Error('The answer stopped before it was finished.');
+      })
+      .catch((err: unknown) => {
+        setDraft(null);
+        if (stop.signal.aborted) setNote('Stopped. The entries found stay.');
+        else setError(message(err));
+      })
+      .finally(() => {
+        if (asking.current === stop) asking.current = null;
+        setBusy(false);
+      });
   };
   return (
     <Card id="pa-ask-h" title="Ask your record">
@@ -242,13 +290,22 @@ function AskCard() {
         <Button type="submit" small kind="primary" icon={CircleHelp} disabled={busy || !q.trim()} aria-busy={busy}>
           {busy ? 'Asking…' : 'Ask'}
         </Button>
+        {busy && (
+          <Button small icon={X} onClick={() => asking.current?.abort()}>
+            Stop
+          </Button>
+        )}
       </form>
       {error && (
         <p class="error-text" role="alert">
           {error}
         </p>
       )}
-      <div aria-live="polite">{answer && <AskAnswer view={answer} />}</div>
+      {/* Busy while the answer is written, so a screen reader reads it once it is checked, not piece by piece. */}
+      <div aria-live="polite" aria-busy={busy}>
+        {note && <p class="soft small">{note}</p>}
+        {answer && <AskAnswer view={answer} draft={draft} />}
+      </div>
     </Card>
   );
 }

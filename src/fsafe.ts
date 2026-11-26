@@ -422,7 +422,17 @@ function inflateEntry(fd: number, end: number, entry: ZipEntry, path: string, li
       // The file was cut short after it was opened: without this the loop would wait forever for bytes that never come.
       if (!chunk.length) throw zipError(label, 'it was cut short while it was being read');
       read += chunk.length;
-      inflater.push(chunk, read >= entry.compressedSize);
+      try {
+        inflater.push(chunk, read >= entry.compressedSize);
+      } catch (error) {
+        // fflate's own error for a damaged or cut-off packed stream carries a numeric code (its "unexpected EOF" is 0),
+        // and becomes the zip's refusal, so a caller only ever sees an UnsafeFileError for a bad entry. The callback's
+        // refusals are UnsafeFileErrors already; anything else is a bug and goes on as it is.
+        if (error instanceof Error && typeof (error as { code?: unknown }).code === 'number') {
+          throw zipError(label, `its packed bytes are damaged (${error.message})`);
+        }
+        throw error;
+      }
     }
   } finally {
     limits.past += peak;

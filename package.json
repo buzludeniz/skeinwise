@@ -30,7 +30,8 @@
     "build:web": "vite build -c web/vite.config.ts",
     "prepack": "npm run clean && npm run build",
     "pack:check": "node release/pack-check.ts",
-    "e2e": "pnpm build && playwright test -c e2e/playwright.config.ts"
+    "e2e": "pnpm build && playwright test -c e2e/playwright.config.ts",
+    "fuzz": "node test/fuzz/run.ts"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.1",

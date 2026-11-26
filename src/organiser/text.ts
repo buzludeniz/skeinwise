@@ -222,6 +222,64 @@ export function centroid(vectors: Vec[]): Vec {
   return normalise(sum);
 }
 
+/**
+ * The vectors close to a query vector, from an inverted index, so an all-pairs comparison needn't compare every pair:
+ * only vectors sharing a term are touched. The dot products are summed term by term, not as {@link cosine} sums them,
+ * so they can differ from cosine in the last bits (far below 1e-9).
+ */
+export class Postings {
+  private readonly start: Int32Array;
+  private readonly ids: Int32Array;
+  private readonly weights: Float64Array;
+  private readonly dot: Float64Array;
+  private readonly touched: Int32Array;
+
+  constructor(vectors: Vec[]) {
+    let dims = 0;
+    let total = 0;
+    for (const v of vectors) {
+      total += v.size;
+      for (const t of v.keys()) if (t >= dims) dims = t + 1;
+    }
+    const count = new Int32Array(dims + 1);
+    for (const v of vectors) for (const t of v.keys()) count[t + 1]!++;
+    for (let t = 0; t < dims; t++) count[t + 1]! += count[t]!;
+    this.start = count.slice();
+    this.ids = new Int32Array(total);
+    this.weights = new Float64Array(total);
+    const fill = count;
+    vectors.forEach((v, i) => {
+      for (const [t, w] of v) {
+        const p = fill[t]!++;
+        this.ids[p] = i;
+        this.weights[p] = w;
+      }
+    });
+    this.dot = new Float64Array(vectors.length);
+    this.touched = new Int32Array(vectors.length);
+  }
+
+  /** The vectors whose dot product with v is at least min: their indexes, in index order, and the dot products. */
+  near(v: Vec, min: number): { i: number; dot: number }[] {
+    let n = 0;
+    for (const [t, w] of v) {
+      if (t + 1 >= this.start.length) continue;
+      for (let p = this.start[t]!; p < this.start[t + 1]!; p++) {
+        const i = this.ids[p]!;
+        if (this.dot[i] === 0) this.touched[n++] = i;
+        this.dot[i]! += w * this.weights[p]!;
+      }
+    }
+    const out: { i: number; dot: number }[] = [];
+    for (let k = 0; k < n; k++) {
+      const i = this.touched[k]!;
+      if (this.dot[i]! >= min) out.push({ i, dot: this.dot[i]! });
+      this.dot[i] = 0;
+    }
+    return out.sort((a, b) => a.i - b.i);
+  }
+}
+
 /** The number of groups for n items: about the square root of n/2, at least 1 and at most 40. */
 export function chooseK(n: number): number {
   return Math.max(1, Math.min(40, Math.round(Math.sqrt(n / 2))));
@@ -233,71 +291,229 @@ export interface Clustering {
   centroids: Vec[];
 }
 
+/** Up to this many vectors, k-means runs every restart over every vector until nothing moves. */
+export const KMEANS_EXACT = 3000;
+/** Above it, the centres are fitted on a seeded sample of this many vectors, and every vector is then placed once. */
+export const KMEANS_SAMPLE = 5000;
+
 /**
  * Spherical k-means (cosine) with k-means++ seeding. Several seeded restarts; the tightest result wins. Empty vectors
  * are left out (group -1).
+ *
+ * Up to {@link KMEANS_EXACT} vectors, every restart runs over all of them until nothing moves. Above it, which a record
+ * of tens of thousands of entries reaches, that took most of an hour: the centres are fitted on a seeded sample of
+ * {@link KMEANS_SAMPLE}, with fewer restarts (16 at 3,000 gives 2 at 50,000), each stopping once fewer than 0.1% of the
+ * sample move; then every vector goes to its nearest centre in one pass. The same vectors always give the same groups.
  */
 export function kmeans(vectors: Vec[], k: number, seed = 1, restarts = 4): Clustering {
   const usable = vectors.map((v, i) => (v.size ? i : -1)).filter((i) => i >= 0);
   const kk = Math.min(k, usable.length);
   if (kk === 0) return { assign: vectors.map(() => -1), centroids: [] };
-  let best: { score: number; result: Clustering } | undefined;
-  for (let r = 0; r < restarts; r++) {
-    const result = kmeansOnce(vectors, usable, kk, mulberry32(seed * 7919 + r));
-    const score = usable.reduce((s, i) => s + cosine(vectors[i]!, result.centroids[result.assign[i]!]!), 0);
-    if (!best || score > best.score + 1e-12) best = { score, result };
+  const large = usable.length > KMEANS_EXACT;
+  const fit = large ? sampleOf(usable, KMEANS_SAMPLE, mulberry32(seed * 7919 - 1)) : usable;
+  const runs = large ? Math.max(2, Math.round((restarts * KMEANS_EXACT) / usable.length)) : restarts;
+  const settled = large ? fit.length * 0.001 : 1;
+  const space = new Centres(vectors, kk);
+  let best: { score: number; assign: number[]; centroids: Vec[] } | undefined;
+  for (let r = 0; r < runs; r++) {
+    const assign = space.fit(fit, mulberry32(seed * 7919 + r), settled);
+    const score = fit.reduce((sum, i) => sum + space.similarity(i, assign[i]!), 0);
+    if (!best || score > best.score + 1e-12) best = { score, assign, centroids: space.toVecs() };
   }
-  return best!.result;
+  if (!large) return { assign: best!.assign, centroids: best!.centroids };
+  space.load(best!.centroids);
+  const assign = vectors.map(() => -1);
+  space.place(usable, assign);
+  space.update(usable, assign);
+  return { assign, centroids: space.toVecs() };
 }
 
-function kmeansOnce(vectors: Vec[], usable: number[], k: number, rand: () => number): Clustering {
-  let centres = seedCentres(vectors, usable, k, rand);
-  const assign = vectors.map(() => -1);
-  for (let iter = 0; iter < 50; iter++) {
-    let moved = false;
-    for (const i of usable) {
+/** n of these indexes, picked at random (seeded), in their first order. */
+function sampleOf(indexes: number[], n: number, rand: () => number): number[] {
+  if (indexes.length <= n) return indexes;
+  const pool = [...indexes];
+  for (let i = 0; i < n; i++) {
+    const j = i + Math.floor(rand() * (pool.length - i));
+    [pool[i], pool[j]] = [pool[j]!, pool[i]!];
+  }
+  return pool.slice(0, n).sort((a, b) => a - b);
+}
+
+/**
+ * k-means's centres, held dense, and the vectors as flat arrays. Each similarity and each centre is summed exactly as
+ * {@link cosine} and {@link centroid} sum them on maps, in the same order, so a result is the same to the last bit; only
+ * the lookups are faster.
+ */
+class Centres {
+  private readonly vectors: Vec[];
+  private readonly k: number;
+  private readonly dims: number;
+  private readonly start: Int32Array;
+  private readonly ids: Int32Array;
+  private readonly weights: Float64Array;
+  private readonly rows: Float64Array;
+  /** Each centre's terms, in the order its map would hold them. */
+  private readonly terms: number[][];
+  private readonly seen: Int32Array;
+  private stamp = 0;
+
+  constructor(vectors: Vec[], k: number) {
+    this.vectors = vectors;
+    this.k = k;
+    let total = 0;
+    let dims = 0;
+    for (const v of vectors) {
+      total += v.size;
+      for (const t of v.keys()) if (t >= dims) dims = t + 1;
+    }
+    this.dims = dims;
+    this.start = new Int32Array(vectors.length + 1);
+    this.ids = new Int32Array(total);
+    this.weights = new Float64Array(total);
+    let p = 0;
+    vectors.forEach((v, i) => {
+      this.start[i] = p;
+      for (const [t, w] of v) {
+        this.ids[p] = t;
+        this.weights[p++] = w;
+      }
+    });
+    this.start[vectors.length] = p;
+    this.rows = new Float64Array(k * dims);
+    this.terms = Array.from({ length: k }, () => []);
+    this.seen = new Int32Array(dims);
+  }
+
+  /** cosine(vectors[i], centre j). */
+  similarity(i: number, j: number): number {
+    const from = this.start[i]!;
+    const to = this.start[i + 1]!;
+    const terms = this.terms[j]!;
+    const base = j * this.dims;
+    let dot = 0;
+    if (to - from <= terms.length) {
+      // A term the centre lacks adds w * 0, which leaves the sum as it was.
+      for (let p = from; p < to; p++) dot += this.weights[p]! * this.rows[base + this.ids[p]!]!;
+    } else {
+      const v = this.vectors[i]!;
+      for (const t of terms) {
+        const x = v.get(t);
+        if (x !== undefined) dot += this.rows[base + t]! * x;
+      }
+    }
+    return dot;
+  }
+
+  /** One restart over these vectors: seeds the centres, then alternates placing and updating until it settles. */
+  fit(members: number[], rand: () => number, settled: number): number[] {
+    this.seed(members, rand);
+    const assign = this.vectors.map(() => -1);
+    for (let iter = 0; iter < 50; iter++) {
+      const moved = this.place(members, assign);
+      this.update(members, assign);
+      if (moved < settled) break;
+    }
+    return assign;
+  }
+
+  /** k-means++: each new centre is picked with probability growing with its distance from the centres so far. */
+  private seed(members: number[], rand: () => number): void {
+    this.setVector(0, members[Math.floor(rand() * members.length)]!);
+    const nearest = members.map((i) => 1 - this.similarity(i, 0));
+    for (let j = 1; j < this.k; j++) {
+      const weights = nearest.map((d) => d * d);
+      const total = weights.reduce((a, b) => a + b, 0);
+      let pick = 0;
+      if (total > 0) {
+        let r = rand() * total;
+        while (pick < weights.length - 1 && r >= weights[pick]!) r -= weights[pick++]!;
+      } else {
+        pick = Math.floor(rand() * members.length);
+      }
+      this.setVector(j, members[pick]!);
+      members.forEach((i, n) => (nearest[n] = Math.min(nearest[n]!, 1 - this.similarity(i, j))));
+    }
+  }
+
+  /** Puts each vector with its nearest centre (the first, on a tie); returns how many changed group. */
+  place(members: number[], assign: number[]): number {
+    let moved = 0;
+    for (const i of members) {
       let bestJ = 0;
       let bestSim = -Infinity;
-      centres.forEach((c, j) => {
-        const s = cosine(vectors[i]!, c);
+      for (let j = 0; j < this.k; j++) {
+        const s = this.similarity(i, j);
         if (s > bestSim + 1e-12) {
           bestSim = s;
           bestJ = j;
         }
-      });
+      }
       if (assign[i] !== bestJ) {
         assign[i] = bestJ;
-        moved = true;
+        moved++;
       }
     }
-    centres = centres.map((old, j) => {
-      const members = usable.filter((i) => assign[i] === j).map((i) => vectors[i]!);
-      return members.length ? centroid(members) : old;
-    });
-    if (!moved) break;
+    return moved;
   }
-  return { assign, centroids: centres };
-}
 
-/** k-means++: each new centre is picked with probability growing with its distance from the centres so far. */
-function seedCentres(vectors: Vec[], usable: number[], k: number, rand: () => number): Vec[] {
-  const centres: Vec[] = [vectors[usable[Math.floor(rand() * usable.length)]!]!];
-  const nearest = usable.map((i) => 1 - cosine(vectors[i]!, centres[0]!));
-  while (centres.length < k) {
-    const weights = nearest.map((d) => d * d);
-    const total = weights.reduce((a, b) => a + b, 0);
-    let pick = 0;
-    if (total > 0) {
-      let r = rand() * total;
-      while (pick < weights.length - 1 && r >= weights[pick]!) r -= weights[pick++]!;
-    } else {
-      pick = Math.floor(rand() * usable.length);
-    }
-    const c = vectors[usable[pick]!]!;
-    centres.push(c);
-    usable.forEach((i, n) => (nearest[n] = Math.min(nearest[n]!, 1 - cosine(vectors[i]!, c))));
+  /** Moves each centre to the centroid of its vectors; a centre with none stays where it was. */
+  update(members: number[], assign: number[]): void {
+    const groups: number[][] = Array.from({ length: this.k }, () => []);
+    for (const i of members) groups[assign[i]!]!.push(i);
+    groups.forEach((group, j) => {
+      if (!group.length) return;
+      const base = this.clear(j);
+      const terms = this.terms[j]!;
+      this.stamp++;
+      for (const i of group) {
+        for (let p = this.start[i]!; p < this.start[i + 1]!; p++) {
+          const t = this.ids[p]!;
+          if (this.seen[t] !== this.stamp) {
+            this.seen[t] = this.stamp;
+            terms.push(t);
+          }
+          this.rows[base + t]! += this.weights[p]!;
+        }
+      }
+      let sum = 0;
+      for (const t of terms) sum += this.rows[base + t]! * this.rows[base + t]!;
+      if (sum === 0) return;
+      const norm = Math.sqrt(sum);
+      for (const t of terms) this.rows[base + t] = this.rows[base + t]! / norm;
+    });
   }
-  return centres;
+
+  /** The centres as maps, as centroid() makes them. */
+  toVecs(): Vec[] {
+    return this.terms.map((terms, j) => new Map(terms.map((t) => [t, this.rows[j * this.dims + t]!])));
+  }
+
+  /** Sets the centres from maps. */
+  load(centres: Vec[]): void {
+    centres.forEach((c, j) => {
+      const base = this.clear(j);
+      for (const [t, w] of c) {
+        this.terms[j]!.push(t);
+        this.rows[base + t] = w;
+      }
+    });
+  }
+
+  private setVector(j: number, i: number): void {
+    const base = this.clear(j);
+    for (let p = this.start[i]!; p < this.start[i + 1]!; p++) {
+      this.terms[j]!.push(this.ids[p]!);
+      this.rows[base + this.ids[p]!] = this.weights[p]!;
+    }
+  }
+
+  /** Empties centre j; returns where its row starts. */
+  private clear(j: number): number {
+    const base = j * this.dims;
+    for (const t of this.terms[j]!) this.rows[base + t] = 0;
+    this.terms[j] = [];
+    return base;
+  }
 }
 
 /**
