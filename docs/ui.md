@@ -99,41 +99,37 @@ for review. The footer reads "Woven from N entries" and links to Stats.
 
 ## Brain
 
-The main view: a dark canvas holding a 3D point cloud in the shape of a standing body, with the brain as its head.
+The main view: a dark canvas holding a 3D point cloud. It opens on the Clusters layout, one flat disc per colour group;
+the Brain layout shapes the cloud as a brain with a stem below it.
 
-- **Points.** In the head's two lobes, each point is a note, a concept hub or a summary. Every other entry (messages
-  and files) hangs on its source's nerve: chat assistants down the arms, coding agents down the legs, other sources
-  round the trunk. Along each nerve, time runs from its root at the cord, the oldest, to its tip, today.
-- **The cord** down the back is the calendar: a ring at the edge of each month, this month at the top, and a run of
-  empty months folded into one fainter ring.
-- **Framing** (Brain layout only): Body, Head or Cord brings the camera to that part, fitted to the space the controls
-  leave clear. A record of notes alone opens on the head.
+- **Points.** Each point is an entry, a concept hub or a summary. In Clusters a hub sits in the disc of the group most
+  of its entries share. In the Brain layout, notes, hubs and summaries sit in the two lobes, and the stem holds the
+  originals (messages and files), wound in time order from the bottom up, so the oldest words sit lowest.
 - **Colour** is the group: project, folder, source, speaker or hub, chosen in the legend.
 - **Moving.** Drag to rotate, scroll or pinch to zoom, double-click a point to open it. The cloud turns slowly on its
-  own until you touch it.
+  own until you touch it, except in Clusters, which lies flat.
 - **Hover** shows a small card with the title, date and source.
 - **Top right:** a search field that lights up matching points and dims the rest, **Fit** (frames the whole cloud),
   and view settings (point size, line density, labels, slow turning).
 - **Legend** along the foot, with a switch for the grouping ("By project", "By folder", "By source", "By speaker").
   Each group shows its count, the list ends in "+N more", and clicking a group isolates it.
-- **Layouts:** Brain, Activity (below), and a flat Clusters layout.
+- **Layouts:** Clusters (the default), Brain, and Activity (below).
+- **Keyboard.** The canvas takes focus; the arrow keys turn it, plus and minus zoom, F fits. Tab steps through the
+  labelled hubs and notes in every layout, and Enter pins a label's card.
 
 ## Guide
 
 A side panel titled "Reading your brain", in short plain paragraphs:
 
 - **Hubs:** the large labelled points, one per concept the organiser found.
-- **The body:** notes and hubs in the head, every other entry on its source's nerve, the cord as the calendar, and
-  what the framings show.
+- **The stem:** in the Brain layout, the originals, oldest at the bottom.
 - **Clusters:** points close together share words and links.
 - **The index:** what search reads, and how it ranks your own words first.
 - **Colour and labels:** what the legend's grouping does, and when labels show.
 - **The lines:** a *thread line* joins messages in one conversation; a *cross link* joins two entries in different
-  threads that read alike, and in the Brain layout one that reaches down the body stays faint until you light its
-  entries or select one of them; a *note link* is a `[[link]]` you wrote; a *hub spoke* joins a hub to each entry it
-  holds, but in the Brain layout only to the notes and hubs in the head (Activity, Clusters and the Timeline strip
-  join every entry); a *time chain* joins entries in date order; a *label spark* flashes from a label to its points on
-  hover; a *label leader* holds a label to its point. Time chains and label sparks are marked Later: not drawn yet.
+  threads that read alike; a *note link* is a `[[link]]` you wrote; a *hub spoke* joins a hub to each entry it holds;
+  a *time chain* joins entries in date order; a *label spark* flashes from a label to its points on hover; a *label
+  leader* holds a label to its point. Time chains and label sparks are marked Later: not drawn yet.
 
 ## Concept hub panel
 

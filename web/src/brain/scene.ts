@@ -1,6 +1,7 @@
-// The brain: one WebGL view of every entry as a point of light. In the brain layout, notes sit in the two lobes and
-// originals wind up the stem below them in time order. The same scene moves between the Brain view and the Timeline's
-// strip, where the points lie in one lane per source in time order, so the colours carry over.
+// The brain: one WebGL view of every entry as a point of light. It opens on the clusters layout, one disc per colour
+// group; in the brain layout, notes sit in the two lobes and originals wind up the stem below them in time order. The
+// same scene moves between the Brain view and the Timeline's strip, where the points lie in one lane per source in
+// time order, so the colours carry over.
 
 import {
   AdditiveBlending,
@@ -229,7 +230,8 @@ export class BrainScene {
 
   private input: SceneInput | null = null;
   private layouts = new Map<Layout | 'strip', Float32Array>();
-  private layout: Layout = 'brain';
+  /** The default, as the store's and the config's: the scene starts where the view will ask it to be. */
+  private layout: Layout = 'clusters';
   /** Where every point is drawn now, once the current move ends. */
   private current = new Float32Array(0);
   private from = new Float32Array(0);
@@ -480,6 +482,8 @@ export class BrainScene {
     this.lit = new Float32Array(n).fill(1);
     this.anyLit = false;
     this.mix = 1;
+    // The outline shows from the first frame only in the layout that has it, whichever layout the scene opens on.
+    this.applyMix();
     this.selected = -1;
     this.selectDirty = true;
 
@@ -994,8 +998,9 @@ export class BrainScene {
     this.syncLabels();
   }
 
+  /** Shown in every layout of the full view, so Tab reaches the hubs wherever the brain opens (the canvas says so). */
   private syncLabels(): void {
-    const show = this.options.labels && this.mode === 'full' && this.layout !== 'clusters';
+    const show = this.options.labels && this.mode === 'full';
     this.labelLayer.classList.toggle('hidden', !show);
   }
 
