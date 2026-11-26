@@ -167,8 +167,10 @@ The record keeps itself current without you running anything.
 - **Downloads** is off by default; `skeinwise config liveDownloads on` turns it on. Then a ChatGPT, Claude or Gemini
   export that lands there is proposed, never imported: review it with `skeinwise live pending` (`--all` for the ones
   already decided), then `skeinwise live accept <n>` or `skeinwise live reject <n>`. The same file is never proposed
-  twice, and a rejected one is never proposed again. Accepting keeps the version each change replaced. Only chat
-  exports are proposed, a link is refused, and the status line counts what waits.
+  twice, and a rejected one is never proposed again. While it waits, the record holds where the file is and its
+  SHA-256, none of its text: accepting reads the file again and refuses one that changed or is gone. Accepting keeps
+  the version each change replaced. Only chat exports are proposed, a link is refused, and the status line counts what
+  waits.
 - **One bad file never stops live.** It is listed by its path and tried again after 1 min, 5 min and 30 min, then
   hourly, and at once when it changes. A bad line is skipped, or kept with no time, and named by `file:line`.
 - **A busy record** (another skeinwise command writing to it) makes live wait and try again.

@@ -420,4 +420,38 @@ export const MIGRATIONS: readonly string[] = [
         AND (later.scope = 'all' OR (later.scope = r.scope AND later.scope <> 'new'))
     ));
   `,
+
+  // 8. A proposal nobody chose (H1: a Downloads capture) holds no copy of its batch, only its file's path and SHA-256,
+  // so none of its text is in the record until the person accepts it, when the file is read again. pending is rebuilt
+  // (same ids) for held: 1 for a row that keeps its batch while it waits (every row written before this), 0 for one
+  // held as its file alone, which must name that file.
+  `
+  CREATE TABLE pending_new (
+    id INTEGER PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
+    reason TEXT NOT NULL CHECK (reason IN ('unconfirmed', 'account')),
+    source_kind TEXT NOT NULL,
+    source_label TEXT NOT NULL,
+    origin_path TEXT,
+    origin_sha256 TEXT,
+    account TEXT,
+    threads INTEGER NOT NULL DEFAULT 0,
+    entries INTEGER NOT NULL DEFAULT 0,
+    bytes INTEGER NOT NULL DEFAULT 0,
+    held INTEGER NOT NULL DEFAULT 1 CHECK (held IN (0, 1)),
+    batch TEXT,
+    observed_at TEXT NOT NULL,
+    decided_at TEXT,
+    CHECK ((status = 'pending' AND held = 1) = (batch IS NOT NULL)),
+    CHECK (held = 1 OR (origin_path IS NOT NULL AND origin_sha256 IS NOT NULL))
+  );
+  INSERT INTO pending_new (id, status, reason, source_kind, source_label, origin_path, origin_sha256, account, threads,
+                           entries, bytes, held, batch, observed_at, decided_at)
+    SELECT id, status, reason, source_kind, source_label, origin_path, origin_sha256, account, threads, entries, bytes, 1,
+           batch, observed_at, decided_at FROM pending;
+  DROP TABLE pending;
+  ALTER TABLE pending_new RENAME TO pending;
+  CREATE UNIQUE INDEX pending_origin ON pending (origin_sha256, source_kind) WHERE origin_sha256 IS NOT NULL;
+  CREATE INDEX pending_status ON pending (status);
+  `,
 ];

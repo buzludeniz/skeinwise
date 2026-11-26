@@ -85,7 +85,9 @@ describe('PoC 06: a drive-by export is proposed, never written', () => {
         account: null,
         threads: 2,
         entries: 2,
-        bytes: expect.any(Number),
+        // A capture nobody started keeps no copy of its batch (H1): only its file's path and SHA-256.
+        bytes: 0,
+        held: false,
         observedAt: expect.any(String),
         decidedAt: null,
       },
@@ -115,7 +117,8 @@ describe('PoC 06: a drive-by export is proposed, never written', () => {
     const s = store();
     s.ingest(genuine!);
     const { pendingId } = s.ingest(driveBy!, { trusted: false, origin: driveByOrigin });
-    expect(s.acceptPending(pendingId!)).toEqual({ added: 1, versioned: 1, unchanged: 0, skipped: 0, threads: 2 });
+    // Accepting takes the batch read again from the file (live accept reads it); driveBy is that read.
+    expect(s.acceptPending(pendingId!, { batch: driveBy })).toEqual({ added: 1, versioned: 1, unchanged: 0, skipped: 0, threads: 2 });
     expect(s.history(1).map((v) => [v.version, v.origin?.sha256 ?? null])).toEqual([
       [1, genuine.origin!.sha256],
       [2, driveByOrigin.sha256],
@@ -143,14 +146,49 @@ describe('PoC 06: a drive-by export is proposed, never written', () => {
     const s = store();
     s.ingest(genuine!);
     const renamed: ImportBatch = { ...genuine!, threads: [{ ...genuine!.threads[0]!, title: 'Renamed' }] };
-    const { pendingId, proposed } = s.ingest(renamed, { trusted: false });
-    expect(proposed).toBe(1);
-    expect(s.pendingItem(pendingId!)).toMatchObject({ threads: 1, entries: 0 });
+    // A proposal that keeps its batch (another account's export the person imported) keeps the changes alone.
+    const pendingId = s.propose(renamed, { reason: 'account' });
+    expect(s.pendingItem(pendingId!)).toMatchObject({ threads: 1, entries: 0, held: true });
     const stored = JSON.parse((s.db.prepare('SELECT batch FROM pending').get() as { batch: string }).batch) as ImportBatch;
     expect(stored.threads[0]!.entries).toEqual([]);
     s.acceptPending(pendingId!);
     expect(s.getThread(1)!.title).toBe('Renamed');
     expect(s.history(1)).toHaveLength(1);
+  });
+});
+
+describe('H1: a proposal nobody chose keeps none of its text in the record', () => {
+  it('holds the file\u2019s path and SHA-256 alone, and accepts only a fresh read of that file', () => {
+    const s = store();
+    s.ingest(genuine!);
+    const { pendingId } = s.ingest(driveBy!, { trusted: false, origin: driveByOrigin });
+    expect(s.db.prepare('SELECT held, batch, bytes, origin_path, origin_sha256 FROM pending').get()).toEqual({
+      held: 0,
+      batch: null,
+      bytes: 0,
+      origin_path: driveByOrigin.path,
+      origin_sha256: driveByOrigin.sha256,
+    });
+    const otherBytes: ImportBatch = { ...driveBy!, origin: { ...driveByOrigin, sha256: 'f'.repeat(64) } };
+    const otherKind: ImportBatch = { ...driveBy!, source: { ...driveBy!.source, kind: 'chatgpt' } };
+    expect(() => s.acceptPending(pendingId!)).toThrow(`Pending item ${pendingId} is held as its file alone: read ${driveByOrigin.path} again to accept it`);
+    expect(() => s.acceptPending(pendingId!, { batch: otherBytes })).toThrow(`That is not the claude export pending item ${pendingId} was proposed from`);
+    expect(() => s.acceptPending(pendingId!, { batch: otherKind })).toThrow('That is not the claude export');
+    expect(s.pendingItem(pendingId!)).toMatchObject({ status: 'pending' });
+    expect(s.search('MongoDB')).toEqual([]);
+    // The row's origin and account go on every version, whatever path the fresh read came from.
+    const elsewhere: ImportBatch = { ...driveBy!, origin: { path: '/tmp/copy/conversations.json', sha256: driveByOrigin.sha256 } };
+    s.acceptPending(pendingId!, { batch: elsewhere });
+    expect(s.history(1).at(-1)).toMatchObject({ origin: driveByOrigin, account: null });
+    expect(s.db.prepare('SELECT held, batch FROM pending').get()).toEqual({ held: 0, batch: null });
+  });
+
+  it('refuses to hold back a batch nobody chose that names no file', () => {
+    const s = store();
+    s.ingest(genuine!);
+    const noFile: ImportBatch = { ...driveBy!, origin: null };
+    expect(() => s.ingest(noFile, { trusted: false })).toThrow('A Claude batch nobody chose needs the file it came from to wait for a yes');
+    expect(s.pendingItems({ all: true })).toEqual([]);
   });
 });
 

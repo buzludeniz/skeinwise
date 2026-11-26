@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { zipSync, strToU8 } from 'fflate';
 import { defaultTargets, LiveCapture, statusLines, type Target } from '../src/live/capture.ts';
+import { LIVE_COMMANDS } from '../src/live/pending.ts';
 import { readFilesUnder, readImports } from '../src/importers/detect.ts';
 import { openDb } from '../src/store/db.ts';
 import { Store } from '../src/store/store.ts';
@@ -96,7 +97,14 @@ describe('live capture', () => {
     expect(statusLines(first)[1]).toBe('up to date · 1 import waits for your yes: skeinwise live pending');
     expect(warnings).toEqual([`${join(downloads, 'export.zip')}: 2 changes to Claude wait for your yes as #1: skeinwise live pending`]);
 
-    expect(store.acceptPending(1)).toMatchObject({ added: 2, versioned: 0 });
+    // The record holds none of it until the yes, which reads the zip again (H1).
+    expect(store.pendingItem(1)).toMatchObject({ held: false, bytes: 0 });
+    expect(store.search('Chain wax')).toEqual([]);
+    let out = '';
+    const ctx = { io: { out: (t: string) => (out += t), err: () => {}, env: {} }, home: dir, store, values: {}, args: ['1'], json: () => {} };
+    expect(LIVE_COMMANDS.accept!(ctx)).toBe(0);
+    expect(out).toBe('Took #1 into the record: 2 new, 0 changed (Claude). Each change keeps the version before it.\n');
+    expect(store.history(store.search('Chain wax')[0]!.id)[0]).toMatchObject({ origin: { path: join(downloads, 'export.zip') } });
     expect(live.scan(new Date(0)).waiting).toBe(0);
 
     // A newer export with one changed chat proposes that one change, not the whole export again.
