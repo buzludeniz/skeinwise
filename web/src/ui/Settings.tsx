@@ -202,6 +202,9 @@ function LiveSettings({ config }: { config: Config }) {
   return (
     <>
       <h4>Live capture</h4>
+      <p class="soft small">
+        Files that land in Downloads wait in pending until you review them in the terminal with <code>skeinwise live pending</code>.
+      </p>
       <Switch label="Organise what Live capture brings in" checked={live.organise} onChange={(organise) => void saveConfig({ live: { organise } })} />
       {config.ai.engine === 'remote' && (
         <Switch label="Let it use the outside model, within the usage cap" checked={live.remote} onChange={(remote) => void saveConfig({ live: { remote } })} />

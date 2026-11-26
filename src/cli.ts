@@ -77,6 +77,8 @@ ${LIVE_HELP}
   serve                     Open the app in your browser, on this computer only
       --port <n>            Port to listen on (default 7319)
       --open                Open the browser too
+      --keep-token          Keep the last run's token, so an open page or bookmark still works
+                            (by default each start makes a new one)
 
 Organising (every run can be undone):
   run <task|all>            Run one task, or all in order: tag, file, link, hub, layer, review

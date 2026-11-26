@@ -27,6 +27,7 @@ import {
   schemas,
 } from '../organiser/views.ts';
 import type { Store } from '../store/store.ts';
+import { CliOnly } from './config.ts';
 import { brief, type Brief, organiserReady } from './queries.ts';
 
 export interface Engine {
@@ -43,6 +44,10 @@ export function pickEngine(home: string, wanted: unknown, deps: ModelDeps): Engi
     throw new UsageError(`Unknown engine "${String(name)}". Use local, remote or none.`);
   }
   if (name === 'none') return { engine: 'none', budget: config.budget };
+  // A request may pick the local model or none, never the outside one the terminal didn't choose (SETTINGS-1).
+  if (name === 'remote' && config.engine !== 'remote') {
+    throw new CliOnly('The outside model reads your words only when the terminal chose it: skeinwise config engine remote', 'skeinwise config engine remote');
+  }
   const engine = name as 'local' | 'remote';
   return { engine, client: createModel(config, engine, deps), budget: config.budget };
 }

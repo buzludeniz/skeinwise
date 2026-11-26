@@ -1,7 +1,9 @@
-// Calls to the local server. The token arrives once in the address's #fragment, is kept in this browser, and goes with
-// every call in a header.
+// Calls to the local server. The token arrives once in the address's #fragment, is kept in this page's memory only, and
+// goes with every call in a header. Nothing stores it, so a script or extension that reads storage finds no token, and
+// a reload asks for the address `skeinwise serve` printed, which carries a new token each start anyway (L9).
 
-const KEY = 'skeinwise.token';
+/** Where builds before L9 kept the token; boot removes it, so no old token stays in the browser. */
+const OLD_KEY = 'skeinwise.token';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -14,23 +16,17 @@ export class ApiError extends Error {
 let token: string | null = null;
 const listeners = { locked: new Set<() => void>(), unauthorised: new Set<() => void>() };
 
-/** Takes the token from #token=… (then clears it from the address bar) or from storage. */
+/** Takes the token from #token=… and clears it from the address bar, so it stays out of history and bookmarks. */
 export function initToken(): string | null {
+  try {
+    localStorage.removeItem(OLD_KEY);
+  } catch {
+    // Storage may be blocked, and then nothing was kept there.
+  }
   const m = /(?:^|[#&])token=([0-9a-f]{64})/.exec(location.hash);
   if (m) {
     token = m[1]!;
-    try {
-      localStorage.setItem(KEY, token);
-    } catch {
-      // Storage may be blocked; the token still works for this visit.
-    }
     history.replaceState(null, '', location.pathname + location.search);
-  } else {
-    try {
-      token = localStorage.getItem(KEY);
-    } catch {
-      token = null;
-    }
   }
   return token;
 }
