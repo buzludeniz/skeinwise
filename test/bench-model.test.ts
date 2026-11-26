@@ -101,7 +101,8 @@ describe('model bench', () => {
     const text = printModelReport(report);
     expect(text).toMatch(/^Skeinwise model timings \(test\): 1,000 entries, fake-4b at http:\/\/127\.0\.0\.1:8741\/v1/);
     expect(text).toMatch(/\nlayer {5}\d+/);
-  });
+    // It builds and imports a 1000-entry record: a couple of seconds alone, longer beside the whole suite.
+  }, 60_000);
 
   it('refuses a folder the bench did not make', async () => {
     await expect(modelBench({ url: 'http://127.0.0.1:8741/v1', dir: process.cwd(), entries: 1_000, sample: 1, label: 'x', seed: 1, tasks: [], fetch: fakeServer().fetch })).rejects.toThrow(
