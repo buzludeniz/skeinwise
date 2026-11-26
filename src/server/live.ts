@@ -28,6 +28,8 @@ export class AppLive {
   private run: LiveRun | null = null;
   private error: string | null = null;
   private wanted = false;
+  /** Resolves once the stream last turned off has ended its pass. */
+  private stopping: Promise<void> = Promise.resolve();
   private readonly store: Store;
   private readonly home: string;
   private readonly deps: LiveDeps;
@@ -41,16 +43,17 @@ export class AppLive {
   /**
    * Turns the stream on or off. Starting catches up on everything changed since the last pass, which can take a
    * while on a first run, so it starts on the next turn of the event loop and the settings request answers first.
+   * Turned off and on again, it starts once the old stream's pass has ended, so two passes never run side by side.
    */
   set(on: boolean): void {
     this.wanted = on;
     if (!on) {
-      this.run?.stop();
+      if (this.run) this.stopping = this.run.stop();
       this.run = null;
       return;
     }
     if (this.run) return;
-    setImmediate(() => {
+    void this.stopping.then(() => setImmediate(() => {
       if (!this.wanted || this.run) return;
       try {
         this.run = startLive(this.store, this.home, {
@@ -62,7 +65,7 @@ export class AppLive {
       } catch (error) {
         this.error = `Live capture couldn't start: ${text(error)}`;
       }
-    });
+    }));
   }
 
   state(): LiveState {

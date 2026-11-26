@@ -50,8 +50,11 @@ export interface LiveRun {
   first: LiveStatus;
   /** The start-up connector pull; with `once`, await it before `background.idle()`. */
   pulled: Promise<void>;
-  /** Stops watching and organising; a run cut off mid-way is marked failed. */
-  stop: () => void;
+  /**
+   * Stops watching and organising, and resolves once the pass under way has ended (see Background.stop). A run cut off
+   * mid-way is marked failed.
+   */
+  stop: () => Promise<void>;
 }
 
 /**
@@ -124,7 +127,7 @@ export function startLive(store: Store, home: string, options: LiveOptions = {})
       stopped = true;
       if (timer) clearInterval(timer);
       capture.stop();
-      background?.stop();
+      return background ? background.stop() : Promise.resolve();
     },
   };
 }

@@ -12,6 +12,11 @@
 // capture alone needs (the 150 MB budget of plan 7.2). Run in live's own process, the heap a pass grew stayed resident
 // for a minute or more after it was over; run in a worker thread, V8 kept the worker's pages in a pool for the main
 // thread to reuse.
+//
+// Live never waits on a child that has gone wrong. One that goes quiet for longer than a model request and its repair
+// can take ({@link PASS_SILENCE_MS}), or sends something that isn't a reply, is ended; so is one still running when live
+// stops. Whatever ends a child, the run it left unfinished is marked failed, as it would otherwise refuse every run
+// after it (assertNoRunning). Nothing that run made was saved: a run saves in one transaction at its end.
 
 import { type ChildProcess, execFileSync, fork } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -20,7 +25,7 @@ import { extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../config.ts';
 import { readNotes } from '../notes.ts';
-import { createModel } from '../organiser/model.ts';
+import { createModel, REQUEST_MS } from '../organiser/model.ts';
 import { runTask, steps } from '../organiser/organise.ts';
 import { RecordView } from '../organiser/record.ts';
 import { failRun, lastMark, scopeEntries, type Task } from '../organiser/runs.ts';
@@ -52,6 +57,10 @@ export interface BackgroundOptions {
    * hands in its own clock or fetch leaves this off.
    */
   isolate?: boolean;
+  /** How long a pass in a child process may go without a word before it is ended; {@link PASS_SILENCE_MS} by default. */
+  silenceMs?: number;
+  /** Tests only: the script run as the pass process, in place of src/live/pass-process. */
+  passScript?: string;
 }
 
 /** What a pass did, before the status file is written. */
@@ -62,6 +71,52 @@ export type PassReply = { type: 'progress'; line: string } | { type: 'done'; res
 
 // Next to this file: pass-process.ts when run from source, pass-process.js once built.
 const PASS_PROCESS = fileURLToPath(new URL(`./pass-process${extname(fileURLToPath(import.meta.url))}`, import.meta.url));
+
+/**
+ * The longest a pass in a child process may go without a word before it is ended: one model request and its repair,
+ * each at the model's own limit, and two minutes for the work around them. The pass reports each model request as it
+ * sends it (runTask's progress line), so only a pass that has stopped moving is quiet for this long.
+ */
+export const PASS_SILENCE_MS = 2 * REQUEST_MS + 2 * 60_000;
+
+const span = (ms: number) => (ms >= 60_000 ? `${Math.round(ms / 60_000)} minutes` : `${ms / 1000} seconds`);
+
+/**
+ * A message from the pass process, checked before anything in it is used: the reply it stands for, holding only the
+ * fields a reply has, or null when it is not one.
+ */
+export function passReply(message: unknown): PassReply | null {
+  if (!message || typeof message !== 'object') return null;
+  const m = message as Record<string, unknown>;
+  if (m.type === 'progress') return typeof m.line === 'string' ? { type: 'progress', line: m.line } : null;
+  if (m.type === 'error') return typeof m.message === 'string' ? { type: 'error', message: m.message } : null;
+  if (m.type !== 'done' || !m.result || typeof m.result !== 'object') return null;
+  const { entries, runs, waiting, notStarted } = m.result as Record<string, unknown>;
+  const count = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0;
+  if (!count(entries) || !Array.isArray(runs) || !runs.every(count)) return null;
+  if (waiting !== undefined && typeof waiting !== 'string') return null;
+  if (notStarted !== undefined && !(Array.isArray(notStarted) && notStarted.every((t) => typeof t === 'string'))) return null;
+  const result: PassResult = { entries, runs: [...runs] };
+  if (waiting !== undefined) result.waiting = waiting;
+  if (notStarted !== undefined) result.notStarted = [...(notStarted as string[])];
+  return { type: 'done', result };
+}
+
+/**
+ * Node's flags for the pass process: this process's own, less --input-type, which Node refuses for a script started
+ * from a file, and less the inspector's, so that live run under a debugger doesn't open (or wait on) another debugger
+ * port for every pass.
+ */
+export function passExecArgv(execArgv: readonly string[]): string[] {
+  const kept: string[] = [];
+  for (let i = 0; i < execArgv.length; i++) {
+    const arg = execArgv[i]!;
+    // These four also take their value as the next argument.
+    if (/^--(input-type|inspect-port|debug-port|inspect-publish-uid)$/.test(arg)) i++;
+    else if (!/^--(input-type|(inspect|debug)(-brk|-wait|-port|-publish-uid)?)(=|$)/.test(arg)) kept.push(arg);
+  }
+  return kept;
+}
 
 /** Runs organiser passes one at a time; a trigger during a pass queues exactly one more. */
 export class Background {
@@ -101,20 +156,26 @@ export class Background {
   }
 
   /**
-   * Stops future passes. A run cut off mid-way is marked failed, so the next `skeinwise run` isn't blocked by it; what it
-   * made was never saved, because a run saves in one transaction at its end.
+   * Stops future passes, and resolves once the pass under way has ended. A run cut off mid-way is marked failed, so the
+   * next `skeinwise run` isn't blocked by it; what it made was never saved, because a run saves in one transaction at
+   * its end. A pass in a child process is ended at once: its run would not be saved, and a live started again (the
+   * app's switch turned off and on) must not find it still going beside its own pass. A pass in this process finishes
+   * the step it is on and runs no more.
    */
-  stop(): void {
+  stop(): Promise<void> {
     this.stopped = true;
     clearTimeout(this.retry);
-    // A pass in a child process finishes the step it is on and runs no more, as one in this process does.
-    if (this.child?.connected) this.child.send({ type: 'stop' });
-    if (this.running) {
-      const { store } = this.options;
-      const now = store.now();
-      for (const row of store.db.prepare("SELECT id FROM runs WHERE status = 'running'").all() as { id: number }[]) {
-        failRun(store.db, row.id, 'Stopped: skeinwise live was closed while this ran. Nothing was saved.', 0, 0, now);
-      }
+    if (this.running) this.failRunning('Stopped: skeinwise live was closed while this ran. Nothing was saved.');
+    this.child?.kill('SIGKILL');
+    return this.idle();
+  }
+
+  /** Marks failed each run left running, with this message. */
+  private failRunning(message: string): void {
+    const { store } = this.options;
+    const now = store.now();
+    for (const row of store.db.prepare("SELECT id FROM runs WHERE status = 'running'").all() as { id: number }[]) {
+      failRun(store.db, row.id, message, 0, 0, now);
     }
   }
 
@@ -165,32 +226,58 @@ export class Background {
   /** One pass in a child process; resolves with what it did, or rejects with the error that stopped it. */
   private inChild(): Promise<PassResult> {
     const { home, env } = this.options;
+    const silenceMs = this.options.silenceMs ?? PASS_SILENCE_MS;
     return new Promise((done, fail) => {
-      // Node's own flags carry over, less --input-type, which Node refuses for a script started from a file.
-      const execArgv = process.execArgv.filter((arg) => !arg.startsWith('--input-type'));
-      const child = fork(PASS_PROCESS, [], { env, execArgv, stdio: ['ignore', 'ignore', 'pipe', 'ipc'], serialization: 'advanced' });
+      const execArgv = passExecArgv(process.execArgv);
+      const child = fork(this.options.passScript ?? PASS_PROCESS, [], { env, execArgv, stdio: ['ignore', 'ignore', 'pipe', 'ipc'], serialization: 'advanced' });
       this.child = child;
       let stderr = '';
       child.stderr?.on('data', (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)));
       let result: PassResult | null = null;
       let error: string | null = null;
-      child.on('message', (reply: PassReply) => {
+      /** Why this process ended the child, once it has. */
+      let ended: string | null = null;
+      const end = (why: string) => {
+        ended ??= why;
+        child.kill('SIGKILL');
+      };
+      let quiet: ReturnType<typeof setTimeout> | undefined;
+      const heard = () => {
+        clearTimeout(quiet);
+        quiet = setTimeout(
+          () => end(`The background pass went ${span(silenceMs)} without a word, so it was ended. Nothing it was doing was saved; the next capture tries again.`),
+          silenceMs,
+        );
+      };
+      heard();
+      child.on('message', (message: unknown) => {
+        const reply = passReply(message);
+        if (!reply) return end(`The background pass sent something that isn't a reply, so it was ended. Nothing it was doing was saved.`);
+        heard();
         if (reply.type === 'progress') this.options.progress?.(reply.line);
         else if (reply.type === 'done') result = reply.result;
         else error = reply.message;
       });
       child.on('error', (err) => {
+        clearTimeout(quiet);
         this.child = null;
         fail(err);
       });
       child.on('close', (code, signal) => {
+        clearTimeout(quiet);
         this.child = null;
-        if (result) done(result);
-        else if (error !== null) fail(new Error(error));
-        else fail(new Error(`The background pass stopped (${signal ?? `exit ${code}`})${stderr.trim() ? `: ${stderr.trim().split('\n').at(-1)}` : '.'}`));
+        if (ended === null && result) return done(result);
+        if (ended === null && error !== null) return fail(new Error(error));
+        const why =
+          ended ??
+          (this.stopped
+            ? 'Live was stopped before this pass finished. Nothing it was doing was saved.'
+            : `The background pass stopped (${signal ?? `exit ${code}`})${stderr.trim() ? `: ${stderr.trim().split('\n').at(-1)}` : '.'}`);
+        // Ended with no reply of its own: the run it was on is still marked running, and would refuse every run after it.
+        this.failRunning(`Stopped: ${why}`);
+        fail(new Error(why));
       });
       child.send({ type: 'start', home });
-      if (this.stopped) child.send({ type: 'stop' });
     });
   }
 }
