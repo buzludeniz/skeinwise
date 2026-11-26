@@ -216,12 +216,13 @@ const MADE: Record<string, string> = {
 
 const undo: Command = (ctx) => {
   const id = needId(ctx.args[0], 'run');
-  const result = undoRun(ctx.store.db, id);
+  const result = undoRun(ctx.store.db, id, ctx.home);
   if (ctx.values.json) ctx.json(result);
   else if (result.run.task === 'correction') say(ctx, `Undid run ${id}, your correction: ${result.run.message ?? ''}`);
   else {
     const removed = Object.entries(result.removed).map(([table, n]) => `${n} ${MADE[table] ?? table}`);
-    say(ctx, `Undid run ${id} (${runWhat(result.run, schemaNames(ctx.store))}). Removed ${removed.length ? removed.join(', ') : 'nothing'}.`);
+    const back = result.restored.length ? ` Put back the text of ${result.restored.map((n) => `#${n}`).join(', ')}.` : '';
+    say(ctx, `Undid run ${id} (${runWhat(result.run, schemaNames(ctx.store))}). Removed ${removed.length ? removed.join(', ') : 'nothing'}.${back}`);
   }
   return 0;
 };

@@ -376,7 +376,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       if (!(REVIEW_ACTIONS as readonly unknown[]).includes(action)) throw new HttpError(400, `action is ${REVIEW_ACTIONS.join(', ')}`);
       return resolveReview(store, home, id(req.params[0]), action as ReviewAction, yes === true);
     }],
-    ['POST', /^\/api\/runs\/(\d+)\/undo$/, (req) => undoRun(store.db, id(req.params[0]))],
+    ['POST', /^\/api\/runs\/(\d+)\/undo$/, (req) => undoRun(store.db, id(req.params[0]), home)],
     ['POST', /^\/api\/folders\/merge$/, async (req) => {
       const { from, into } = await req.json();
       const ref = (v: unknown, what: string) => (typeof v === 'number' ? String(v) : text(v, what, 300));

@@ -1,10 +1,12 @@
 // Runs: one pass of an engine over a scope. A run starts as "running", and everything it makes is saved in one
 // transaction together with its "done" status, so a failed run saves nothing. Undo deletes what a run made.
 
+import { existsSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { UsageError } from '../errors.ts';
+import { homeNoteFile, rewriteNoteFile } from '../notes.ts';
 import { inTransaction } from '../store/db.ts';
-import type { Entry } from '../store/store.ts';
+import { type Entry, Store } from '../store/store.ts';
 import type { RecordView } from './record.ts';
 
 export type Task = 'tag' | 'file' | 'link' | 'hub' | 'layer' | 'review';
@@ -243,10 +245,20 @@ export function replacedRuns(db: DatabaseSync, task: Task, schemaId: number | nu
 export interface UndoResult {
   run: Run;
   removed: Record<string, number>;
+  /** Notes whose text came back: a review run's accepted updates, each put back as a new version. */
+  restored: number[];
 }
 
-/** Undoes a run: deletes everything it made (or reverses a correction) and marks it undone, in one transaction. */
-export function undoRun(db: DatabaseSync, id: number): UndoResult {
+/**
+ * Undoes a run: puts back the text of notes it updated, then deletes everything it made (or reverses a correction) and
+ * marks it undone in one transaction. `home` is the record's folder: a note kept there has its file put back too, so
+ * an undone review run needs it. Each note goes back in its own transaction first (the store's restore opens one, and
+ * SQLite has no nested BEGIN). If the undo stops after that, running it again finds those notes already back.
+ */
+export function undoRun(db: DatabaseSync, id: number, home?: string): UndoResult {
+  const before = getRun(db, id);
+  const undoable = before?.status === 'done' && before.task !== 'correction' && before.task !== 'ask' && !dependents(db, id).length;
+  const restored = undoable ? restoreEdits(db, before, home) : [];
   return inTransaction(db, () => {
     const run = getRun(db, id);
     if (!run) throw new UsageError(`No run ${id}. Run "skeinwise runs" for the list.`);
@@ -269,8 +281,46 @@ export function undoRun(db: DatabaseSync, id: number): UndoResult {
       }
     }
     db.prepare("UPDATE runs SET status = 'undone' WHERE id = ?").run(id);
-    return { run: { ...run, status: 'undone' }, removed };
+    return { run: { ...run, status: 'undone' }, removed, restored };
   });
+}
+
+/**
+ * Puts back the text each note had before the run updated it (an accepted review update, saved with the run's id), as a
+ * new version, so the update stays in history, and its file when it is kept in the record folder. Everything is
+ * checked before anything changes: a note changed again since is refused, unless it already reads as before. Returns
+ * the notes put back.
+ */
+function restoreEdits(db: DatabaseSync, run: Run, home: string | undefined): number[] {
+  const edits = db
+    .prepare('SELECT entry_id AS entryId, MIN(version) AS first, MAX(version) AS last FROM versions WHERE run_id = ? GROUP BY entry_id ORDER BY entry_id')
+    .all(run.id) as { entryId: number; first: number; last: number }[];
+  if (!edits.length) return [];
+  if (home === undefined) throw new Error(`Run ${run.id} updated notes, so undoing it needs the record's folder to put their files back.`);
+  const store = new Store(db);
+  const plans = edits.map(({ entryId, first, last }) => {
+    const history = store.history(entryId);
+    const before = history.find((v) => v.version === first - 1);
+    if (!before) throw new Error(`Entry ${entryId} has no version before run ${run.id}'s update ${first}.`);
+    const current = history.at(-1)!;
+    const back = current.contentHash === before.contentHash;
+    if (current.version !== last && !back) {
+      throw new UsageError(
+        `Note #${entryId} changed after run ${run.id} updated it. Bring back the version you want with "skeinwise restore ${entryId} ${before.version}", then undo run ${run.id}.`,
+      );
+    }
+    return { entryId, before, back };
+  });
+  const restored: number[] = [];
+  for (const { entryId, before, back } of plans) {
+    if (back) continue;
+    store.restoreVersion(entryId, before.version, { editor: 'you' });
+    // A file that is gone has nothing to put back.
+    const file = homeNoteFile(store, home, store.getEntry(entryId)!);
+    if (file && existsSync(file)) rewriteNoteFile(file, before.body);
+    restored.push(entryId);
+  }
+  return restored;
 }
 
 function reverseCorrection(db: DatabaseSync, run: Run): void {
