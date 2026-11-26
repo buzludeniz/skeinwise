@@ -106,14 +106,17 @@ describe('tag runs over all or part of the record', () => {
     const dates = store.allEntries().map((e) => e.createdAt).sort();
     counts.push(await tag(store, { kind: 'since', date: dates[Math.floor(dates.length * 0.9)]! }));
 
-    // The counts and rows below are what the build before the change (11da41a) gives for the same runs.
+    // The counts and rows below are what the build before the change (11da41a) gives for the same runs. They were
+    // taken again when the Projects name rule (a name tags an entry only when its words stand side by side and the
+    // name stands out) took 9 demo entries off Projects. Four write Learning Rust's words apart, and five say "ride
+    // coast to coast". The first and third runs' Projects counts moved, and with them 18 rows.
     const c = (entries: number, tagged: number, coverage: number, tags: number, added: number, removed: number, unchanged: number) =>
       ({ entries, tagged, coverage, tags, added, removed, unchanged });
     const byRun = counts.map((run) => run.map(({ schema, ...n }) => [schema, n]));
     expect(byRun).toEqual([
-      [['Topics', c(586, 584, 100, 18, 596, 0, 0)], ['Projects', c(586, 24, 4, 4, 25, 0, 0)], ['Moods', c(586, 2, 0, 1, 2, 0, 0)], ['Areas', c(586, 21, 4, 2, 21, 0, 0)]],
+      [['Topics', c(586, 584, 100, 18, 596, 0, 0)], ['Projects', c(586, 15, 3, 4, 16, 0, 0)], ['Moods', c(586, 2, 0, 1, 2, 0, 0)], ['Areas', c(586, 21, 4, 2, 21, 0, 0)]],
       [['Topics', c(4, 4, 100, 8, 7, 0, 2)], ['Projects', c(4, 3, 75, 2, 4, 0, 0)], ['Moods', c(4, 0, 0, 0, 0, 0, 0)], ['Areas', c(4, 0, 0, 0, 0, 0, 0)]],
-      [['Topics', c(589, 589, 100, 22, 45, 43, 560)], ['Projects', c(589, 66, 11, 5, 40, 0, 29)], ['Moods', c(589, 2, 0, 1, 0, 0, 2)], ['Areas', c(589, 21, 4, 2, 0, 0, 21)]],
+      [['Topics', c(589, 589, 100, 22, 45, 43, 560)], ['Projects', c(589, 57, 10, 5, 40, 0, 20)], ['Moods', c(589, 2, 0, 1, 0, 0, 2)], ['Areas', c(589, 21, 4, 2, 0, 0, 21)]],
       [['Topics', c(29, 29, 100, 20, 29, 0, 20)], ['Projects', c(29, 23, 79, 5, 0, 0, 26)], ['Moods', c(29, 2, 7, 1, 0, 0, 2)], ['Areas', c(29, 2, 7, 2, 0, 0, 2)]],
       [['Topics', c(29, 29, 100, 20, 0, 0, 49)], ['Projects', c(29, 23, 79, 5, 0, 0, 26)], ['Moods', c(29, 2, 7, 1, 0, 0, 2)], ['Areas', c(29, 2, 7, 2, 0, 0, 2)]],
       [['Topics', c(59, 59, 100, 4, 59, 0, 2)], ['Projects', c(59, 6, 10, 1, 0, 0, 6)], ['Moods', c(59, 0, 0, 0, 0, 0, 0)], ['Areas', c(59, 1, 2, 1, 0, 0, 1)]],
@@ -125,8 +128,8 @@ describe('tag runs over all or part of the record', () => {
          ORDER BY et.run_id, et.rowid`,
       )
       .all();
-    expect(rows).toHaveLength(1580);
-    expect(createHash('sha256').update(JSON.stringify(rows)).digest('hex')).toBe('1d74d11e931e7385f31f86ed712868044e1566dd4797012f08076767f909d6e5');
+    expect(rows).toHaveLength(1562);
+    expect(createHash('sha256').update(JSON.stringify(rows)).digest('hex')).toBe('b31a268d34110b5a98ff8feecda382ba862d83619c9f77e3270b8271044bf748');
   });
 
   it('read only the live pairs of the entries they tag when they cover new entries', async () => {
