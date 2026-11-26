@@ -71,6 +71,44 @@ describe('ingest', () => {
     const [e] = s.allEntries();
     expect(e).toMatchObject({ threadId: null, title: 'A', kind: 'note', sourceKind: 'notes' });
   });
+
+  it('prepares each statement once, however many entries an import holds (import memory at 50k)', () => {
+    // A fresh prepare per entry held about 100 MB of native statements on the 50k bench's 30,000 ChatGPT messages.
+    const db = openDb(':memory:');
+    let prepared = 0;
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      prepared++;
+      return prepare(sql);
+    }) as typeof db.prepare;
+    const s = new Store(db);
+    const batch = (thread: string, n: number, word: string): ImportBatch => ({
+      source: { kind: 'claude-code', label: 'Claude Code', location: '/p' },
+      threads: [
+        {
+          externalId: thread,
+          title: thread,
+          entries: Array.from({ length: n }, (_, i) => ({
+            externalId: `${thread}:${i}`,
+            kind: 'message' as const,
+            speaker: i % 2 ? 'assistant' : 'you',
+            createdAt: '2025-01-01T10:00:00.000Z',
+            body: `${word} ${i}`,
+            project: '/code/plotline',
+          })),
+        },
+      ],
+    });
+    s.ingest(batch('a', 2, 'first'));
+    s.ingest(batch('a', 2, 'first'));
+    s.ingest(batch('a', 2, 'second'));
+    const warm = prepared;
+    expect(s.ingest(batch('b', 300, 'first'))).toMatchObject({ added: 300 });
+    expect(s.ingest(batch('b', 300, 'first'))).toMatchObject({ unchanged: 300 });
+    expect(s.ingest(batch('b', 300, 'second'))).toMatchObject({ versioned: 300 });
+    expect(prepared).toBe(warm);
+    expect(s.search('second').length).toBeGreaterThan(0);
+  });
 });
 
 describe('editEntry', () => {
