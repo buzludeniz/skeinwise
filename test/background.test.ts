@@ -200,6 +200,11 @@ describe('a pass in a child process (isolate)', () => {
 
 describe('a pass process that goes wrong', () => {
   const FAKE = fileURLToPath(new URL('./fixtures/pass-child.mjs', import.meta.url));
+  // The silence timer starts when the child is forked, before Node has started in it. A Windows runner can take longer
+  // than these tests' short windows just to start the child: on the v1/fuzz merge it was ended at 0.3 s before it wrote
+  // its pid, and at 0.4 s before its first progress line. So on Windows every window and gap is ten times longer.
+  // PASS_SILENCE_MS, the real window, is minutes long.
+  const SLOW = process.platform === 'win32' ? 10 : 1;
   /** A Background whose pass process is the scripted stand-in, sending these messages. */
   function scripted(replies: unknown[], extra: { gapMs?: number; exit?: boolean } & Partial<BackgroundOptions> = {}) {
     const { gapMs = 0, exit = false, ...options } = extra;
@@ -227,22 +232,25 @@ describe('a pass process that goes wrong', () => {
   const running = () => startRun(store.db, { task: 'tag', engine: 'local', model: 'fake-4b', scope: 'new', mark: 0, now: DEMO_NOW });
 
   it('is ended when it goes quiet for too long, and the run it was on is marked failed', async () => {
-    const { bg, pid } = scripted([{ type: 'progress', line: 'tags: sending (1/3)' }], { silenceMs: 300 });
+    const silenceMs = 300 * SLOW;
+    const went = `The background pass went ${silenceMs / 1000} seconds without a word`;
+    const { bg, pid } = scripted([{ type: 'progress', line: 'tags: sending (1/3)' }], { silenceMs });
     const id = running();
     const started = Date.now();
     const result = await bg.pass();
-    expect(Date.now() - started).toBeLessThan(5000);
-    expect(result.error).toBe('The background pass went 0.3 seconds without a word, so it was ended. Nothing it was doing was saved; the next capture tries again.');
+    expect(Date.now() - started).toBeLessThan(silenceMs + 4700);
+    expect(result.error).toBe(`${went}, so it was ended. Nothing it was doing was saved; the next capture tries again.`);
     expect(alive(await pid())).toBe(false);
     expect(listRuns(store.db).find((r) => r.id === id)).toMatchObject({ status: 'failed', message: `Stopped: ${result.error}` });
-    expect(statusLines(readStatus(join(home, 'live.json')))[1]).toMatch(/organising stopped: The background pass went 0\.3 seconds without a word/);
+    expect(statusLines(readStatus(join(home, 'live.json')))[1]).toContain(`organising stopped: ${went}`);
   }, 30_000);
 
   it('is left alone while it keeps reporting, however long the pass', async () => {
     const lines: string[] = [];
     const progress = [1, 2, 3, 4, 5].map((i) => ({ type: 'progress', line: `tags: sending (${i}/5)` }));
     const done = { type: 'done', result: { entries: 5, runs: [7, 8] } };
-    const { bg } = scripted([...progress, done], { silenceMs: 400, gapMs: 150, exit: true, progress: (l) => lines.push(l) });
+    // Each gap is inside the window, and the whole pass is longer than it.
+    const { bg } = scripted([...progress, done], { silenceMs: 400 * SLOW, gapMs: 150 * SLOW, exit: true, progress: (l) => lines.push(l) });
     const result = await bg.pass();
     expect(result.error).toBeUndefined();
     expect(result).toMatchObject({ entries: 5, runs: [7, 8] });

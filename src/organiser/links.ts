@@ -6,7 +6,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { direct, type Plan, type TaskContext } from './plan.ts';
 import { linkTargets } from './record.ts';
 import { replacedRuns } from './runs.ts';
-import { cosine, tokenize } from './text.ts';
+import { cosine, Postings, tokenize } from './text.ts';
 
 /** How many cross links an entry gets at most, and how alike two entries must be. */
 const PER_ENTRY = 3;
@@ -15,6 +15,8 @@ const MIN_SIM = 0.35;
 const MIN_WORDS = 5;
 /** Two entries this alike are copies, not related entries. */
 const SAME = 0.999;
+/** Far more than the index's sums can differ from cosine's, far less than any difference that matters. */
+const EPS = 1e-9;
 
 interface NewLink {
   from: number;
@@ -61,14 +63,22 @@ function crossLinks(ctx: TaskContext): NewLink[] {
   const { record } = ctx;
   const candidates = record.entries.filter((e) => tokenize(e.body).length >= MIN_WORDS);
   const vectors = new Map(candidates.map((e) => [e.id, record.entryVector(e.id)]));
+  // Comparing every pair took most of an hour at 50,000 entries. Only entries that share terms can reach MIN_SIM, and
+  // the index finds those with its own sums, within EPS of cosine. Cosine scores only the ones that can still make an
+  // entry's top PER_ENTRY, so the links are exactly the ones comparing every pair gives.
+  const postings = new Postings(candidates.map((e) => vectors.get(e.id)!));
   const out: NewLink[] = [];
   for (const e of ctx.entries) {
     const v = vectors.get(e.id);
     if (!v) continue;
     const unit = record.unitOf(e.id);
+    const close = postings.near(v, MIN_SIM - EPS).filter(({ i }) => candidates[i]!.id !== e.id && record.unitOf(candidates[i]!.id) !== unit);
+    // PER_ENTRY entries clear of both limits make the cut, so nothing more than EPS below the last of them can.
+    const floor = kthLargest(close.flatMap((c) => (c.dot >= MIN_SIM + EPS && c.dot < SAME - EPS ? [c.dot] : [])), PER_ENTRY) - EPS;
     const best: { id: number; sim: number }[] = [];
-    for (const other of candidates) {
-      if (other.id === e.id || record.unitOf(other.id) === unit) continue;
+    for (const c of close) {
+      if (c.dot < floor) continue;
+      const other = candidates[c.i]!;
       const sim = cosine(v, vectors.get(other.id)!);
       if (sim < MIN_SIM || sim >= SAME) continue;
       best.push({ id: other.id, sim });
@@ -79,6 +89,19 @@ function crossLinks(ctx: TaskContext): NewLink[] {
     }
   }
   return out;
+}
+
+/** The k-th largest value, or -Infinity when there are fewer than k. */
+function kthLargest(values: number[], k: number): number {
+  const top: number[] = [];
+  for (const x of values) {
+    if (top.length === k && x <= top[k - 1]!) continue;
+    let at = top.findIndex((y) => x > y);
+    if (at < 0) at = top.length;
+    top.splice(at, 0, x);
+    if (top.length > k) top.pop();
+  }
+  return top.length === k ? top[k - 1]! : -Infinity;
 }
 
 /** Cross links have no direction, so one key serves both ways round. */
