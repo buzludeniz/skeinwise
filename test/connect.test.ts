@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -11,6 +11,7 @@ import { agentOfToken, quoteArg, readAccess } from '../src/mcp/access.ts';
 import { FRAME_OPEN, unframe } from '../src/mcp/frame.ts';
 import { SETUP_COMMANDS, SETUP_HELP, setup } from '../src/setup.ts';
 import { demoRecord, LEGACY_VERSION } from './mcp/helpers.ts';
+import { expectMode } from './modes.ts';
 
 // `skeinwise connect` and `skeinwise setup` (LS-12), each in a throwaway HOME made here: the agents' config files,
 // histories and record all sit under it, and `claude` is a fake script that writes down how it was called.
@@ -161,7 +162,7 @@ describe('skeinwise connect', () => {
 
     const copy = join(user, '.claude.json.skeinwise-backup-20261125T100000Z');
     expect(readFileSync(copy, 'utf8')).toBe('{"numStartups": 3}\n');
-    expect(statSync(copy).mode & 0o777).toBe(0o600);
+    expectMode(copy, 0o600);
     expect(output.out).toContain('Added to Claude Code.');
     expect(output.out).toContain(`kept at ${copy}`);
   });
@@ -212,7 +213,7 @@ describe('skeinwise connect', () => {
       env: { SKEINWISE_AGENT_TOKEN: expect.stringMatching(/^swa_/), SKEINWISE_HOME: home },
     });
     expect(agentOfToken(readAccess(home), after.mcpServers.skeinwise.env.SKEINWISE_AGENT_TOKEN)).toBe('cursor');
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expectMode(file, 0o600);
     expect(readFileSync(`${file}.skeinwise-backup-20261125T100000Z`, 'utf8')).toBe(before);
     expect(output.out).toContain(`Wrote ${file}.`);
   });
@@ -289,7 +290,7 @@ describe('skeinwise connect', () => {
     const token = /SKEINWISE_AGENT_TOKEN = "(swa_[^"]+)"/.exec(text)![1]!;
     expect(agentOfToken(readAccess(home), token)).toBe('codex');
     expect(text).toContain(`SKEINWISE_HOME = ${JSON.stringify(home)}`);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expectMode(file, 0o600);
   });
 
   it('refuses a Codex config that sets skeinwise up in a form it does not edit', () => {
@@ -367,7 +368,7 @@ describe('skeinwise setup', () => {
     const store = openHome(home);
     expect(store.sources()).toHaveLength(0);
     store.db.close();
-    expect(statSync(join(home, 'record.db')).mode & 0o777).toBe(0o600);
+    expectMode(join(home, 'record.db'), 0o600);
   });
 
   it('brings everything in with --yes, sums it up, and finds it already in the next time', async () => {

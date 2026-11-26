@@ -1,4 +1,4 @@
-// The bench (`node bench/run.ts`; `pnpm bench` once package.json carries the script): writes a seeded synthetic corpus, runs every measure of the v1 plan's performance budgets
+// The bench (`pnpm bench`, or `node bench/run.ts`): writes a seeded synthetic corpus, runs every measure of the v1 plan's performance budgets
 // (section 7.2) on it, prints each against its budget, and exits 1 when any is over budget or fails to run.
 //
 //   node bench/run.ts [50k|150k] [--dir <folder>] [--keep] [--seed <n>] [--entries <n>]
