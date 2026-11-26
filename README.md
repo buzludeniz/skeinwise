@@ -53,8 +53,8 @@ These were planned for 1.0 and moved to 1.1, so that 1.0 ships with every check 
 - **Search ranked by relevance alone,** without putting your own words first, with results grouped by conversation.
 - **The whole brain at any size:** zooming in loads the detail past the first 20,000 points. 1.0 shows a sample of
   20,000 and says so.
-- **Obsidian aliases and folder links:** `[[Note|alias]]` and `[[Folder/Note]]`. 1.0 reads front matter and skips
-  your templates.
+- **Obsidian aliases and folder links:** `[[Note|alias]]` and `[[Folder/Note]]`. 1.0 keeps a note's front matter,
+  its tags included, and skips your templates.
 - **Streaming beyond `ask`:** layers, hubs, review and the brief appear as they are written. In 1.0, `ask` streams and
   can be cancelled, and the rest show a progress line.
 - **Held imports in the app:** a card for an export that waits for your yes. In 1.0 you review them with
@@ -133,9 +133,9 @@ skeinwise search sourdough starter
 
 Importing again is safe: entries already in the record are skipped, and changed text becomes a new version.
 
-Keep it current with the update stream. After one `run all`, `live` imports new Claude Code and Codex chats and the
-note folders you name as they appear, and organises what is new in the background. With `config liveDownloads on`,
-an export that lands in Downloads waits for your yes in `live pending`:
+Keep it current with the update stream. After one `run all`, `live` imports new Claude Code and Codex chats, and the
+Markdown, text and Word files in the folders you name, as they appear, and organises what is new in the background.
+With `config liveDownloads on`, an export that lands in Downloads waits for your yes in `live pending`:
 
 ```bash
 skeinwise config liveFolders ~/Notes
