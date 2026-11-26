@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, extname, join, relative, resolve } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { openZipSafe, UnsafeFileError, type UnsafeReason } from '../fsafe.ts';
@@ -156,6 +156,15 @@ function walk(root: string, warn: (message: string) => void, pinned?: Pinned): R
   return out;
 }
 
+/**
+ * A path inside the folder that was named, as the record keeps it (an entry's id) and the warnings name it: its parts
+ * joined with "/" on every system, so an import on Windows gives the same ids as on macOS or Linux, and a sync between
+ * them matches the same entries.
+ */
+export function pathInside(root: string, path: string): string {
+  return relative(root, path).split(sep).join('/');
+}
+
 /** The names read from inside a zip. A .docx isn't one: it is read on its own or from a folder, never from a zip. */
 function wantedName(name: string): boolean {
   return /\.(json|jsonl|md|markdown|txt)$/i.test(name) && !name.includes('__MACOSX');
@@ -199,7 +208,7 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
   const ext = extname(abs).toLowerCase();
   let batches: ImportBatch[];
   if (stat.isDirectory()) {
-    batches = collect(walk(abs, warn, { real, dev: stat.dev, ino: stat.ino }), abs, (p) => relative(abs, p), options, warn, null);
+    batches = collect(walk(abs, warn, { real, dev: stat.dev, ino: stat.ino }), abs, (p) => pathInside(abs, p), options, warn, null);
   } else if (ext === '.zip') {
     const zip = unzip(abs, real, warn);
     try {
@@ -215,7 +224,7 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
     // person hears why.
     const file = readImportFile(real);
     const raw = { path: abs, read: () => ({ text: file.text }), modifiedAt: file.mtime };
-    batches = collect([raw], dirname(abs), (p) => relative(dirname(abs), p), options, warn, { path: abs, sha256: file.sha256 });
+    batches = collect([raw], dirname(abs), (p) => pathInside(dirname(abs), p), options, warn, { path: abs, sha256: file.sha256 });
   }
   if (!batches.length && !options.emptyOk) throw new Error(`Nothing to import in ${path}`);
   return batches;
@@ -285,7 +294,7 @@ export function readFilesUnder(root: string, paths: string[], options: ImportOpt
     // A link, a folder or a FIFO is refused by the read itself, with a warning, and skipped alone.
     files.push(fileUnder(abs, full, mtime));
   }
-  return collect(files, abs, (p) => relative(abs, p), options, warn, null);
+  return collect(files, abs, (p) => pathInside(abs, p), options, warn, null);
 }
 
 /**
