@@ -507,8 +507,9 @@ test.describe('at the cap', () => {
     await settle();
     await layouts.getByRole('radio', { name: 'Brain' }).click();
     await settle();
-    // The biggest hub: about 1,000 drawn entries, so its selection draws about 1,000 spokes. In the Head framing, as
-    // the whole body leaves the head's labels small and near the controls along the top in this small window.
+    // The biggest hub: about 1,000 drawn entries. The body draws its spokes to the head alone, and Activity, where the
+    // selection moves next, about 1,000 of them. In the Head framing, as the whole body leaves the head's labels small
+    // in this small window.
     await headFraming(page);
     await labels(page).first().focus();
     await labels(page).first().click();

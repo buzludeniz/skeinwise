@@ -18,9 +18,9 @@ import {
   WebGLRenderer,
 } from 'three';
 import { hash01, layoutFor, ringGuides, stripLayout, type Layout, type LayoutPoint } from '../layout.ts';
-import { bodyLayout, type BodyLayout } from './body.ts';
+import { belowNeck, bodyLayout, type BodyLayout, headSpokes } from './body.ts';
 import { bodyContours, bodyOutline, cordRings, nerveLines } from './bodyGeometry.ts';
-import { type Framing, framingBox } from './framing.ts';
+import { clearBand, type Framing, framingBox } from './framing.ts';
 import { hexToRgb } from '../themes.ts';
 import type { SceneInput } from './input.ts';
 import { nearestPoint } from './pick.ts';
@@ -236,6 +236,10 @@ export class BrainScene {
   /** The body behind the brain layout, for its guides, and the now its cord's top month was set from. */
   private body: BodyLayout | null = null;
   private contours: { positions: Float32Array; tone: Float32Array } | null = null;
+  /** The spokes the body draws: those between a hub and the entries in the head. Built on first use per record. */
+  private bodySpokes: Uint32Array | null = null;
+  /** The bands, in CSS pixels, that the view's controls cover along the canvas's top and bottom; null until measured. */
+  private insets: { top: number; bottom: number } | null = null;
   private now = Date.now();
   /** What the brain layout's camera fits in the full view: the whole body, the head or the cord. */
   private framing: Framing = 'body';
@@ -483,6 +487,7 @@ export class BrainScene {
   setData(input: SceneInput, grow = false): void {
     this.input = input;
     this.layouts.clear();
+    this.bodySpokes = null;
     this.body = null;
     this.now = Date.now();
     const n = input.points.length;
@@ -540,6 +545,18 @@ export class BrainScene {
   }
 
   /** Fits the brain layout's camera to the whole body, the head or the cord. Only the full view frames; the strip doesn't. */
+  /**
+   * The bands, in CSS pixels, that the view's own controls cover along the top and the bottom of the canvas: the brain
+   * layout fits between them, so neither the head's labels nor the feet sit under a bar. Until the camera is moved by
+   * hand the fit follows them (a legend that arrives with the data, a narrower window); after that, the next fit does.
+   */
+  setInsets(top: number, bottom: number): void {
+    const next = { top: Math.max(0, Math.round(top)), bottom: Math.max(0, Math.round(bottom)) };
+    if (this.insets && next.top === this.insets.top && next.bottom === this.insets.bottom) return;
+    this.insets = next;
+    if (!this.touched && this.layout === 'brain' && this.mode === 'full') this.fit(false);
+  }
+
   setFraming(framing: Framing): void {
     if (framing === this.framing) return;
     this.framing = framing;
@@ -661,6 +678,22 @@ export class BrainScene {
     return pos;
   }
 
+  /**
+   * The hub spokes drawn now. In the body a hub's spokes reach only the entries in the head (notes and other hubs), not
+   * down every nerve, where they'd hide the body; every other layout, and the strip, draws them all.
+   */
+  private spokesShown(): Uint32Array {
+    const all = this.input?.spokes ?? new Uint32Array(0);
+    if (!this.bodyShown || !this.input) return all;
+    this.bodySpokes ??= headSpokes(this.input.points, all);
+    return this.bodySpokes;
+  }
+
+  /** In the body, a cross link that reaches below the neck, to an entry on a nerve: faint until its entries are lit. */
+  private faintAtRest(a: number, b: number): boolean {
+    return this.bodyShown && !!this.input && belowNeck(this.input.points, a, b);
+  }
+
   /** The body's outline and guides belong to the brain layout in the full view, not to the strip. */
   private get bodyShown(): boolean {
     return this.layout === 'brain' && this.mode === 'full';
@@ -774,7 +807,8 @@ export class BrainScene {
   private buildLines(from?: { threads?: unknown; links?: unknown; cross?: unknown; spokes?: unknown }): void {
     if (!this.input) return;
     const pos = this.layoutOf(this.layout);
-    const { threads, links, cross, spokes } = this.input;
+    const { threads, links, cross } = this.input;
+    const spokes = this.spokesShown();
     if (!from) {
       const segs = threads.length / 2;
       const idx = [...Array(segs).keys()].sort((a, b) => hash01(a, 11) - hash01(b, 11));
@@ -836,20 +870,24 @@ export class BrainScene {
   }
 
   private buildLineLit(): void {
-    const set = (lines: LineSegments | null, pairs: Uint32Array, per: number) => {
+    const set = (lines: LineSegments | null, pairs: Uint32Array, per: number, faint?: (a: number, b: number) => boolean) => {
       if (!lines) return;
       const attr = lines.geometry.getAttribute('lit') as BufferAttribute;
       const arr = attr.array as Float32Array;
       for (let s = 0; s < pairs.length / 2; s++) {
-        const v = Math.min(this.lit[pairs[s * 2]!] ?? 1, this.lit[pairs[s * 2 + 1]!] ?? 1);
+        const [a, b] = [pairs[s * 2]!, pairs[s * 2 + 1]!];
+        let v = Math.min(this.lit[a] ?? 1, this.lit[b] ?? 1);
+        // At rest (nothing lit) a faint line takes the dimmed value. Lit (Light up, a card, a legend group or a Timeline
+        // span) it shows as any other; a selected point's own lines are drawn apart, in ink.
+        if (v === 1 && faint?.(a, b)) v = 0;
         arr.fill(v, s * per, s * per + per);
       }
       attr.needsUpdate = true;
     };
     set(this.threadLines, this.threadOrder, 2);
     if (this.input) set(this.linkLines, this.input.links, LINK_STEPS * 2);
-    if (this.input) set(this.crossLines, this.input.cross, LINK_STEPS * 2);
-    if (this.input) set(this.spokeLines, this.input.spokes, 2);
+    if (this.input) set(this.crossLines, this.input.cross, LINK_STEPS * 2, (a, b) => this.faintAtRest(a, b));
+    if (this.input) set(this.spokeLines, this.spokesShown(), 2);
   }
 
   // The selection.
@@ -899,7 +937,7 @@ export class BrainScene {
     if (this.options.lineDensity > 0) {
       add(touching(this.input.links), true);
       add(touching(this.input.cross), true, 0.08);
-      add(touching(this.input.spokes), false);
+      add(touching(this.spokesShown()), false);
       add(touching(this.threadOrder), false);
     }
     const length = parts.reduce((sum, p) => sum + p.length, 0);
@@ -1128,8 +1166,8 @@ export class BrainScene {
       }
     }
     if (minY === Infinity) return { yaw: 0.55, pitch: 0.1, dist: 6, target: new Vector3() };
-    // The whole body is tall: room above the crown keeps the head's labels clear of the controls along the top.
-    if (layout === 'brain' && this.mode === 'full' && this.framing === 'body') maxY += (maxY - minY) * 0.12;
+    // The whole body is tall: a little room above the crown for the head's labels, which sit above their points.
+    if (layout === 'brain' && this.mode === 'full' && this.framing === 'body') maxY += (maxY - minY) * 0.06;
     const target = new Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
     for (const s of sets) {
       for (let i = 0; i < s.length; i += 3) flat = Math.max(flat, Math.hypot(s[i]! - target.x, s[i + 2]! - target.z));
@@ -1154,7 +1192,12 @@ export class BrainScene {
       return { yaw: 0, pitch: 0, dist: Math.max(halfW / th, halfH / tv) * 1.12 + 0.1, target };
     }
     const halfH = (maxY - minY) / 2;
-    return { yaw: this.orbit.yaw, pitch: 0.08, dist: Math.max(halfH / tv, flat / th) * 1.04 + flat * 0.55, target };
+    // Fit the band the controls leave clear (at least a third of the height), and centre the brain in it.
+    const { clear, shift } = clearBand(this.insets?.top ?? 0, this.insets?.bottom ?? 0, this.height);
+    const dist = Math.max(halfH / (tv * clear), flat / th) * 1.04 + flat * 0.55;
+    // The camera aims above the brain's middle by as much as the band sits below the canvas's, and so the reverse.
+    target.y += shift * dist * tv;
+    return { yaw: this.orbit.yaw, pitch: 0.08, dist, target };
   }
 
   private placeCamera(): void {

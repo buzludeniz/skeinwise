@@ -77,6 +77,28 @@ export function across(path: Path, u: number): [V3, V3] {
  * The body layout. `sources` is the record's source list, in the order `strand` indexes it (groups.ts's
  * layoutPoints); `now` sets the cord's top month.
  */
+/** Whether an entry sits in the head, as notes and hubs do, rather than on its source's nerve. */
+export function inHead(point: { kind: number } | undefined): boolean {
+  return point?.kind === 1;
+}
+
+/**
+ * The hub spokes the body draws, as index pairs: those between a hub and the entries in the head. A spoke to an entry on
+ * a nerve would cross the whole body, so the body leaves it out; the other layouts draw every spoke.
+ */
+export function headSpokes(points: readonly { kind: number }[], spokes: Uint32Array): Uint32Array {
+  const keep: number[] = [];
+  for (let s = 0; s + 1 < spokes.length; s += 2) {
+    if (inHead(points[spokes[s]!]) && inHead(points[spokes[s + 1]!])) keep.push(spokes[s]!, spokes[s + 1]!);
+  }
+  return new Uint32Array(keep);
+}
+
+/** Whether a line between two entries reaches below the neck: one of its ends hangs on a nerve, not in the head. */
+export function belowNeck(points: readonly { kind: number }[], a: number, b: number): boolean {
+  return !inHead(points[a]) || !inHead(points[b]);
+}
+
 export function bodyLayout(points: readonly LayoutPoint[], sources: readonly { id: number; kind: string }[], now: number): BodyLayout {
   const n = points.length;
   const positions = new Float32Array(n * 3);
@@ -86,7 +108,7 @@ export function bodyLayout(points: readonly LayoutPoint[], sources: readonly { i
   // The head: phase 1's cortex, unchanged, for every note and hub.
   const head: number[] = [];
   const hung: number[] = [];
-  points.forEach((p, i) => (p.kind === 1 ? head : hung).push(i));
+  points.forEach((p, i) => (inHead(p) ? head : hung).push(i));
   const cortex = brainLayout(head.map((i) => points[i]!));
   head.forEach((i, k) => positions.set(cortex.subarray(k * 3, k * 3 + 3), i * 3));
 

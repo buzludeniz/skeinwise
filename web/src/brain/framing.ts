@@ -48,3 +48,16 @@ export function framingBox(framing: Framing, cord: Path): Box {
   }
   return { min, max };
 }
+
+/**
+ * The band of the canvas the view's controls leave clear, from the bands they cover along its top and bottom (CSS
+ * pixels). `clear` is its share of the height, never under a third; `shift` is how far its middle sits below the canvas's
+ * middle (above it when negative), in half-heights, held so a brain fitted to the band stays on the canvas. Bands that cover
+ * the whole canvas (a canvas not yet measured) leave it all clear.
+ */
+export function clearBand(top: number, bottom: number, height: number): { clear: number; shift: number } {
+  if (!(height > 0) || top + bottom >= height) return { clear: 1, shift: 0 };
+  const clear = Math.max(1 / 3, 1 - (top + bottom) / height);
+  const shift = (top - bottom) / height;
+  return { clear, shift: Math.max(clear - 1, Math.min(1 - clear, shift)) };
+}

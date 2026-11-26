@@ -6,9 +6,17 @@ import { MOD, SidePanel } from '../ui/common.tsx';
 
 const LINES: [string, string, boolean][] = [
   ['Thread line', 'Joins the messages of one conversation, in the order they were said.', true],
-  ['Cross link', 'Joins two entries in different threads that read alike. The organiser finds them.', true],
+  [
+    'Cross link',
+    'Joins two entries in different threads that read alike. The organiser finds them. In the Brain layout, one that reaches down the body stays faint until you light its entries or select one of them.',
+    true,
+  ],
   ['Note link', 'A [[link]] you wrote in a note. It arcs between the two notes.', true],
-  ['Hub spoke', 'Joins a hub to each entry it holds. Faint until you light the entries.', true],
+  [
+    'Hub spoke',
+    'Joins a hub to each entry it holds. In the Brain layout it reaches only the notes and hubs in the head; Activity, Clusters and the Timeline strip join every entry. Faint until you light the entries.',
+    true,
+  ],
   ['Time chain', 'Joins entries in date order, so you can follow a day or a week.', false],
   ['Label spark', 'Flashes from a label to its points while you hover the label.', false],
   ['Label leader', 'Holds a label close to the point it names.', true],
@@ -22,7 +30,8 @@ export function GuidePanel() {
         <h3>Hubs</h3>
         <p>
           Hubs are the large labelled points. Each one stands for an idea the organiser found across many entries, and
-          a faint spoke joins it to each of them. Double-click a hub to read what it found.
+          a faint spoke joins it to each of them; in the Brain layout, only to those in the head. Double-click a hub to
+          read what it found.
           {hubs ? '' : ' There are none yet: run the organiser to make hubs.'}
         </p>
         <h3>The body</h3>

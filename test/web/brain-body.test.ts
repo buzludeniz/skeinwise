@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { CAPSULES, outside, pointAlong, regionOf, type V3 } from '../../web/src/brain/anatomy.ts';
-import { BEAD, bodyLayout, HEAD_SCALE, toHead, UNLISTED } from '../../web/src/brain/body.ts';
+import { BEAD, belowNeck, bodyLayout, HEAD_SCALE, headSpokes, inHead, toHead, UNLISTED } from '../../web/src/brain/body.ts';
 import { brainLayout, type LayoutPoint } from '../../web/src/layout.ts';
 
 const NOW = Date.parse('2026-11-25T12:00:00Z');
@@ -157,5 +157,36 @@ describe('a stable picture', () => {
       NOW,
     );
     for (const i of hung) expect(Array.from(again.positions.subarray(i * 3, i * 3 + 3))).toEqual(Array.from(layout.positions.subarray(i * 3, i * 3 + 3)));
+  });
+});
+
+describe("the body's lines", () => {
+  // A note, a hub, a message and a file, as the scene's input lists them (a hub is a kind 1 point, like a note).
+  const points: LayoutPoint[] = [
+    { id: 1, kind: 1, time: NOW - DAY, cluster: 0, strand: 9, thread: 0, group: 0 },
+    { id: -5, kind: 1, time: NOW - DAY, cluster: 0, strand: 0, thread: 0, group: 0 },
+    { id: 2, kind: 0, time: NOW - 2 * DAY, cluster: 0, strand: 4, thread: 1, group: 0 },
+    { id: 3, kind: 2, time: NOW - 3 * DAY, cluster: 0, strand: 7, thread: 0, group: 0 },
+    { id: -6, kind: 1, time: NOW - DAY, cluster: 0, strand: 0, thread: 0, group: 0 },
+  ];
+
+  it('puts in the head exactly the entries inHead names, and hangs the rest on nerves', () => {
+    const { nerveOf } = bodyLayout(points, sources, NOW);
+    points.forEach((p, i) => expect(nerveOf[i]! < 0).toBe(inHead(p)));
+  });
+
+  it("draws a hub's spokes to the notes and hubs in the head, not down the nerves", () => {
+    const spokes = new Uint32Array([1, 0, 1, 2, 1, 3, 4, 1, 4, 2]);
+    expect([...headSpokes(points, spokes)]).toEqual([1, 0, 4, 1]);
+    expect(headSpokes(points, new Uint32Array(0))).toHaveLength(0);
+  });
+
+  it('says a line reaches below the neck when either end hangs on a nerve', () => {
+    expect(belowNeck(points, 0, 1)).toBe(false);
+    expect(belowNeck(points, 0, 2)).toBe(true);
+    expect(belowNeck(points, 3, 4)).toBe(true);
+    expect(belowNeck(points, 2, 3)).toBe(true);
+    // An index past the record is no entry in the head.
+    expect(belowNeck(points, 0, 99)).toBe(true);
   });
 });

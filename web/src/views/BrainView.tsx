@@ -49,6 +49,33 @@ export function BrainView() {
   const lit = useApp((s) => s.lit);
   const compact = useApp((s) => s.compact);
   const clip = useApp((s) => s.clip);
+
+  // The bands the controls cover along the canvas's top and bottom, which the brain layout fits between. The search row
+  // is measured, not the whole top bar, so a lit chip never moves the camera; an open legend keeps its closed band.
+  useEffect(() => {
+    const area = host.current;
+    const root = area?.parentElement;
+    if (!scene || !area || !root) return;
+    const bars = () => [...root.querySelectorAll<HTMLElement>('.brain-tools, .brain-layouts, .legend')];
+    let last = 0;
+    const measure = () => {
+      const box = area.getBoundingClientRect();
+      let top = 0;
+      let bottom = 0;
+      for (const bar of bars()) {
+        const r = bar.getBoundingClientRect();
+        if (!r.height) continue;
+        if (r.top + r.height / 2 < box.top + box.height / 2) top = Math.max(top, r.bottom - box.top);
+        else bottom = Math.max(bottom, bar.classList.contains('open') ? last : box.bottom - r.top);
+      }
+      last = bottom;
+      scene.setInsets(top, bottom);
+    };
+    measure();
+    const watch = new ResizeObserver(measure);
+    for (const el of [root, ...bars()]) watch.observe(el);
+    return () => watch.disconnect();
+  }, [scene, compact, layout, model]);
   const [settings, setSettings] = useState(false);
   const [help, setHelp] = useState(layout === 'rings');
   // The selected point, by its point id (an entry id, or a hub id negated), so it outlives a regroup or a reload.
