@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseClaude, parseClaudeCodeSession, parseCodexSession } from '../src/importers/chats.ts';
+import { parseClaude, parseClaudeCodeSession, parseCodexSession, parseGemini } from '../src/importers/chats.ts';
 import { readImports } from '../src/importers/detect.ts';
 import { entity, FileReport, stripHtml, toIso } from '../src/importers/util.ts';
 import { openDb } from '../src/store/db.ts';
@@ -60,14 +60,14 @@ describe('PoC 01: one malformed value never stops an import', () => {
     expect(store().ingest(batches[0]!)).toMatchObject({ added: 3, threads: 3 });
   });
 
-  it('b) a note named with an impossible date is dated by the file, and the other 50 import too', () => {
+  it('b) a note named with an impossible date is dated by the file and named, and the other 50 import too', () => {
     const vault = join(dir, '01b_vault');
     mkdirSync(vault);
     for (let i = 0; i < 50; i++) writeFileSync(join(vault, `note-${i}.md`), `# Note ${i}\n\nbody ${i}`);
     writeFileSync(join(vault, 'Meeting 2023-14-02.md'), '# Meeting\n\ntypo in the month');
 
     const { batches, warnings } = imported(vault);
-    expect(warnings).toEqual([]);
+    expect(warnings).toEqual(['Meeting 2023-14-02.md: "2023-14-02" is not a time; kept the entry with the file’s time']);
     const notes = batches[0]!.entries!;
     expect(notes).toHaveLength(51);
     const meeting = notes.find((e) => e.title === 'Meeting')!;
@@ -75,7 +75,7 @@ describe('PoC 01: one malformed value never stops an import', () => {
     expect(store().ingest(batches[0]!)).toMatchObject({ added: 51 });
   });
 
-  it('c) a broken numeric entity stays as written, and both Gemini replies import', () => {
+  it('c) a broken numeric entity stays as written and is named by its item, and both Gemini replies import', () => {
     mkdirSync(join(dir, '01c_gemini'));
     const item = (t: string, prompt: string, html: string) => ({
       header: 'Gemini Apps',
@@ -93,7 +93,7 @@ describe('PoC 01: one malformed value never stops an import', () => {
       ]),
     );
     const { batches, warnings } = imported(file);
-    expect(warnings).toEqual([]);
+    expect(warnings).toEqual(['MyActivity.json:2: "&#x;" and 1 more name no character; kept as written']);
     expect(batches[0]!.threads.flatMap((t) => t.entries.map((e) => e.body))).toEqual([
       'good prompt',
       'fine & dandy',
@@ -112,6 +112,49 @@ describe('PoC 01: one malformed value never stops an import', () => {
     const { batches, warnings } = imported(folder);
     expect(batches[0]!.entries!.map((e) => e.title).sort()).toEqual(['ok 0', 'ok 1', 'ok 2']);
     expect(warnings).toEqual([expect.stringMatching(/locked\.md: skipped, EACCES/)]);
+  });
+
+  it('a front matter date that is no date is named with its line, and the note keeps the next date it has', () => {
+    const vault = join(dir, 'front-matter-dates');
+    mkdirSync(vault);
+    const write = (name: string, text: string) => writeFileSync(join(vault, name), text);
+    write('typo.md', '---\ntitle: Typo\ncreated: 2023-14-02\n---\n# Typo\n');
+    write('2024-03-01 standup.md', '---\nDate: "next tuesday"\n---\nstandup notes\n');
+    write('fine.md', '---\ncreated: 2024-05-06\ndate: not read, created is\n---\nfine\n');
+    write('2024-07-08 plain.md', 'no front matter\n');
+    write('Q 2024-99-99.md', '---\ndate: 2024-09-10\n---\nthe front matter dates it\n');
+
+    const { batches, warnings } = imported(vault);
+    expect(warnings.sort()).toEqual([
+      '2024-03-01 standup.md:2: "next tuesday" is not a time; kept the entry with the date in its name',
+      'typo.md:3: "2023-14-02" is not a time; kept the entry with the file’s time',
+    ]);
+    const created = Object.fromEntries(batches[0]!.entries!.map((e) => [e.title, e.createdAt]));
+    expect(created).toMatchObject({
+      Typo: statSync(join(vault, 'typo.md')).mtime.toISOString(),
+      '2024-03-01 standup': '2024-03-01T09:00:00.000Z',
+      fine: '2024-05-06T00:00:00.000Z',
+      '2024-07-08 plain': '2024-07-08T09:00:00.000Z',
+      'Q 2024-99-99': '2024-09-10T00:00:00.000Z',
+    });
+  });
+
+  it('names one Gemini item once, however many references in it name no character, and counts past 20', () => {
+    const many = Array.from({ length: 23 }, (_, n) => ({
+      header: 'Gemini Apps',
+      title: `Prompted q${n}`,
+      time: `2025-01-01T10:${String(n).padStart(2, '0')}:00.000Z`,
+      products: ['Gemini Apps'],
+      safeHtmlItem: [{ html: '<p>&#xD800; &#0; &#x110000; &copy; &#65;</p>' }],
+    }));
+    const warnings: string[] = [];
+    const report = new FileReport('MyActivity.json', (m) => warnings.push(m));
+    const batch = parseGemini(many, report);
+    report.done();
+    expect(batch.threads.flatMap((t) => t.entries.map((e) => e.body))).toContain('&#xD800; &#0; &#x110000; &copy; A');
+    expect(warnings).toHaveLength(21);
+    expect(warnings[0]).toBe('MyActivity.json:1: "&#xD800;" and 2 more name no character; kept as written');
+    expect(warnings[20]).toBe('MyActivity.json: 3 more like that (0 skipped, 0 kept without their time, 23 kept as written)');
   });
 
   it('an entry that throws is skipped and named; the rest of its conversation and the export import', () => {
@@ -225,5 +268,8 @@ describe('toIso and entities never throw', () => {
       undefined,
     ]);
     expect(stripHtml('<p>see &#x; or &#99999999; &#xD800; &#0; &#x1F600;</p>')).toBe('see &#x; or &#99999999; &#xD800; &#0; 😀');
+    const unread: string[] = [];
+    expect(stripHtml('<p>&#x; &copy; &nope; &#99999999; &amp; &#65;</p>', (r) => unread.push(r))).toBe('&#x; &copy; &nope; &#99999999; & A');
+    expect(unread).toEqual(['&#x;', '&#99999999;']);
   });
 });
