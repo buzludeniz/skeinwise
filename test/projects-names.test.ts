@@ -84,6 +84,17 @@ describe('Projects name matches', () => {
     expect((await projects(store)).get('garden')).toEqual(['Autumn', 'Garden', 'Spring']);
   });
 
+  it("a number in a name is part of it: one numbered note doesn't name the others", async () => {
+    notes({
+      'Hiring note 12': 'Two interviews booked.',
+      'Hiring note 13': 'One offer out.',
+      'Hiring note 14': 'Nobody this week.',
+      Monday: 'See [[Hiring note 12]].',
+      Tuesday: 'More in [[Hiring note 12]].',
+    });
+    expect((await projects(store)).get('hiring note 12')).toEqual(['Hiring note 12', 'Monday', 'Tuesday']);
+  });
+
   it('Plotline still tags the demo entries that name it without linking to it', async () => {
     const demo = new Store(openDb(':memory:'), () => DEMO_NOW);
     importDemo(demo, dir);

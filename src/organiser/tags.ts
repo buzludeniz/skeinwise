@@ -430,8 +430,9 @@ interface Word {
 }
 
 /**
- * The words of a text as tokenize reads them (apostrophes dropped, one-letter words and numbers left out, stemmed),
- * stop words kept, so a name's words can be found side by side.
+ * Every run of letters and digits in a text, apostrophes dropped and stemmed as tokenize stems, so a name's words can
+ * be found side by side. Unlike tokenize, it keeps stop words, numbers and one-letter words: they are part of a name.
+ * Without the number, "Hiring note 4929" was every note called "Hiring note" and some number.
  */
 function scanWords(text: string): Word[] {
   const t = text.replace(/['’]/g, '');
@@ -447,7 +448,6 @@ function scanWords(text: string): Word[] {
       opens = c === 10 || c === 46 || c === 33 || c === 63; // \n . ! ?
     }
     end = m.index + w.length;
-    if (w.length < 2 || /^\d+$/.test(w)) continue;
     const first = w[0]!;
     out.push({
       stem: stem(w.toLowerCase()),
