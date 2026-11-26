@@ -234,10 +234,12 @@ export interface Confirmed {
 
 /**
  * Makes the change a request asked for, as the user's own decision. The request goes either way: a change that can no
- * longer be made (the thread is gone, the run undone) is refused with the reason.
+ * longer be made (the thread is gone, the run undone) is refused with the reason. `before` hears the request taken,
+ * before anything changes, so the user is told what is about to be done.
  */
-export function confirmRequest(home: string, store: Store, id: number, now: string): Confirmed {
+export function confirmRequest(home: string, store: Store, id: number, now: string, before?: (request: McpRequest) => void): Confirmed {
   const request = take(home, id, now);
+  before?.(request);
   if (request.tool === 'not_mine') {
     if (!store.visibleThread(request.target)) throw new UsageError(`Thread ${request.target} is already left out or gone, so request ${id} is dropped.`);
     store.setNotMine(request.target, true);

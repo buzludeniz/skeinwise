@@ -153,7 +153,11 @@ describe('agent requests: mcp pending, confirm and refuse', () => {
     expect(listed).not.toContain('\u001b');
     expectMode(join(home, REQUESTS_FILE), 0o600);
 
-    expect((await mcp(['confirm', String(a.id)])).out).toBe(`Done: thread ${first} is left out now. Bring it back with: skeinwise not-mine ${first} --undo\n`);
+    // confirm says which agent asked for what before it makes the change.
+    expect((await mcp(['confirm', String(a.id)])).out).toBe(
+      `Request ${a.id}: claude-code asked for not_mine on thread ${first} (Leave out thread ${first}, "red"). Making that change now.\n` +
+        `Done: thread ${first} is left out now. Bring it back with: skeinwise not-mine ${first} --undo\n`,
+    );
     expect(store.visibleThread(first!)).toBeUndefined();
     expect((await mcp(['refuse', String(b.id)])).out).toBe(`Refused request ${b.id}; nothing changed.\n`);
     expect(store.visibleThread(second!)).toBeDefined();
