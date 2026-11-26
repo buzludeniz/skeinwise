@@ -1,0 +1,11 @@
+# The secret scan's allow-list. CI's `secrets` job runs gitleaks over every committed file with its default rules plus
+# this file. Each entry says why what it allows is fake. Key-shaped samples are joined from parts at run time with
+# keyShaped() from test/samples.ts (test/no-key-literals.test.ts fails on a literal), so add a path here only for a
+# file whose fakes can't be split that way, and never for anything under src/.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The redaction tests' fake samples (test/redact.test.ts, from line 59): invented values shaped like keys and tokens, which the Redactor must catch"
+paths = ['''^test/redact\.test\.ts$''']

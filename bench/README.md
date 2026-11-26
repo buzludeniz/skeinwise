@@ -9,6 +9,9 @@ node bench/run.ts 150k       # on demand: much longer
 node bench/run.ts 50k --entries 3000 --keep   # a quick check of the bench itself, 50k budgets
 ```
 
+`pnpm bench` runs the same script. In CI (`.github/workflows/bench.yml`), every push runs
+`pnpm bench 50k --entries 3000`, and the full 50k and 150k benches run only when the workflow is started by hand.
+
 The corpus is invented: a heavy user's ChatGPT export (60 percent of the entries), Claude Code sessions in 20
 projects (30 percent) and an Obsidian-style vault with daily notes, links, aliases and callouts (10 percent). The same
 size and seed give the same files. Everything runs in one bench folder, `.skeinwise/bench/<size>` by default (git
