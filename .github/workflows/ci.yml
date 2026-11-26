@@ -83,6 +83,25 @@ jobs:
           install: false
       - run: pnpm audit --prod
 
+  # Plan 7.1: 80% of lines in importers, store, live, mcp, server and fsafe.ts, 70% over src/ (vitest.config.ts).
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
+        with:
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm coverage
+
   secrets:
     name: secret scan
     runs-on: ubuntu-latest
