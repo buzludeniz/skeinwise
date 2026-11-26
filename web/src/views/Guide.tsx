@@ -25,10 +25,17 @@ export function GuidePanel() {
           a faint spoke joins it to each of them. Double-click a hub to read what it found.
           {hubs ? '' : ' There are none yet: run the organiser to make hubs.'}
         </p>
-        <h3>The stem</h3>
+        <h3>The body</h3>
         <p>
-          The originals, your messages and files, wind up the stem below the brain in date order: the oldest at the
-          bottom, the newest at the top. The notes you wrote and the hubs sit in the two lobes.
+          The notes you wrote and the hubs sit in the head's two lobes. Every other entry, your messages and files,
+          hangs on its source's nerve: chat assistants run down the arms, coding agents down the legs, and other sources
+          round the trunk.
+        </p>
+        <p>
+          The cord down the back is the calendar, with a ring at the edge of each month and this month at the top. A run
+          of empty months folds into one fainter ring. Along every nerve, time runs from its root at the cord, the
+          oldest, to its tip, today. A nerve that stops short shows when its source went quiet, and a faint one drawn
+          all the way has nothing in it yet. Framing brings the camera to the whole body, the head or the cord.
         </p>
         <h3>Clusters</h3>
         <p>Points close together have something in common: the same thread, the same group, or links between them.</p>
