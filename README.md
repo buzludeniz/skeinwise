@@ -62,7 +62,9 @@ These were planned for 1.0 and moved to 1.1, so that 1.0 ships with every check 
 - **Choosing which projects come in:** one row for each Claude Code or Codex project, and a way to leave a source out
   later.
 - **Readable titles everywhere:** one readable title and a clean snippet for every entry, in every view.
-- **More of the clickable brain,** past its first phase.
+- **The brain's last two kinds of line:** time chains, which join entries in date order, and label sparks, which
+  flash from a label to its points on hover. 1.0 draws thread lines, cross links, note links, hub spokes and label
+  leaders.
 - **`skeinwise purge`:** removes an entry and all its versions for good, for a secret pasted into a chat.
 - **The stand-in:** an agent asks your record before it asks you, and gets back what you settled, in your words,
   with a verdict on whether it must still ask. Your local model builds it from your own record, so it differs for
