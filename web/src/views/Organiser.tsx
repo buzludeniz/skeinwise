@@ -166,6 +166,7 @@ const TASKS: Record<Run['task'], string> = {
   review: 'Review',
   ask: 'Question',
   correction: 'Your correction',
+  note: 'Agent note',
 };
 
 export function RunsList() {

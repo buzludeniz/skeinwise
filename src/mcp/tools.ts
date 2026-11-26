@@ -309,7 +309,7 @@ export const MEMORY_TOOLS: Tool<MemoryCtx>[] = [
     name: 'write_note',
     title: 'Write a note',
     description:
-      'Start a note under your name, or give new text to a note you started (the same title). It can\'t change the user\'s notes or another agent\'s. Each save is a version under your name.',
+      'Start a note under your name, or give new text to a note you started (the same title). It can\'t change the user\'s notes or another agent\'s. Each save is a version under your name and a run of its own; undo_run with its run_id takes it back.',
     inputSchema: {
       type: 'object',
       properties: { title: string('The note\'s title; it also names the file.', { maxLength: 200 }), body: string('The note\'s text, in Markdown.', { maxLength: 100_000 }) },
@@ -318,18 +318,18 @@ export const MEMORY_TOOLS: Tool<MemoryCtx>[] = [
     readOnly: false,
     run: (ctx, a) => {
       const write = writeAgentNote(ctx.store, ctx.home, ctx.agent, text(a, 'title', 200, true), text(a, 'body', 100_000, true), new Date(ctx.now()));
-      return { entry_id: write.entryId, file: relative(ctx.home, write.path), created: write.created, version: ctx.store.getEntry(write.entryId)!.version };
+      return { entry_id: write.entryId, run_id: write.runId, file: relative(ctx.home, write.path), created: write.created, version: ctx.store.getEntry(write.entryId)!.version };
     },
   },
   {
     name: 'append_daily_note',
     title: "Add to today's note",
-    description: "Add a line to the user's daily note for today, starting with your name. The save is a version under your name.",
+    description: "Add a line to the user's daily note for today, starting with your name. The save is a version under your name and a run of its own; undo_run with its run_id takes it back.",
     inputSchema: { type: 'object', properties: { text: string('The line to add.', { maxLength: 10_000 }) }, required: ['text'] },
     readOnly: false,
     run: (ctx, a) => {
       const write = appendDailyNote(ctx.store, ctx.home, text(a, 'text', 10_000, true), new Date(ctx.now()), ctx.agent);
-      return { entry_id: write.entryId, file: relative(ctx.home, write.path), created: write.created, version: ctx.store.getEntry(write.entryId)!.version };
+      return { entry_id: write.entryId, run_id: write.runId, file: relative(ctx.home, write.path), created: write.created, version: ctx.store.getEntry(write.entryId)!.version };
     },
   },
   {
@@ -379,7 +379,7 @@ export const MEMORY_TOOLS: Tool<MemoryCtx>[] = [
     name: 'undo_run',
     title: 'Undo a run',
     description:
-      'Ask to take back a run you made (tag_entries gives its run_id), removing everything it added. You can undo only your own runs, and nothing changes until the user confirms the request in Skeinwise.',
+      'Ask to take back a run you made (tag_entries, write_note and append_daily_note give its run_id), removing everything it added: a note it started goes, and a note it changed gets its earlier text back. You can undo only your own runs, and nothing changes until the user confirms the request in Skeinwise.',
     inputSchema: { type: 'object', properties: { run_id: integer('The run.') }, required: ['run_id'] },
     readOnly: false,
     run: (ctx, a) => {

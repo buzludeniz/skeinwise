@@ -2,9 +2,10 @@
 // transaction together with its "done" status, so a failed run saves nothing. Undo deletes what a run made.
 
 import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { UsageError } from '../errors.ts';
-import { homeNoteFile, readNotes, rewriteNoteFile } from '../notes.ts';
+import { homeNoteFile, notesDir, readNotes, removeNoteFile, rewriteNoteFile, startedNoteFile } from '../notes.ts';
 import { inTransaction } from '../store/db.ts';
 import { type Entry, Store } from '../store/store.ts';
 import type { RecordView } from './record.ts';
@@ -12,8 +13,10 @@ import type { RecordView } from './record.ts';
 export type Task = 'tag' | 'file' | 'link' | 'hub' | 'layer' | 'review';
 /** The order `run all` follows: tags, folders and links first, then hubs, layers, and the review of notes on hubs. */
 export const TASKS: readonly Task[] = ['tag', 'file', 'link', 'hub', 'layer', 'review'];
-export type RunTask = Task | 'ask' | 'correction';
-export type RunEngine = 'none' | 'local' | 'remote' | 'you';
+/** 'note' is an agent's note saved through the memory server: its versions carry the run's id, so undo takes them back. */
+export type RunTask = Task | 'ask' | 'correction' | 'note';
+/** 'agent' is a run an agent made through the memory server, with the agent's name as the model. */
+export type RunEngine = 'none' | 'local' | 'remote' | 'you' | 'agent';
 export type RunStatus = 'running' | 'done' | 'failed' | 'undone';
 
 export type Scope =
@@ -135,6 +138,11 @@ export interface StartRun {
   mark: number;
   detail?: Record<string, unknown>;
   now: string;
+  /**
+   * Starts even while another run is unfinished. Only for an agent's note: it saves versions, not anything the
+   * organiser makes, so it can't replace another run's work, and live's organiser run mustn't hold back an agent.
+   */
+  alongside?: boolean;
 }
 
 /** Refuses to start while another run is unfinished: two runs at once could each replace the other's work. */
@@ -151,7 +159,7 @@ export function assertNoRunning(db: DatabaseSync): void {
 }
 
 export function startRun(db: DatabaseSync, run: StartRun): number {
-  assertNoRunning(db);
+  if (!run.alongside) assertNoRunning(db);
   const res = db
     .prepare(
       `INSERT INTO runs (task, engine, model, scope, schema_id, status, detail, mark, started_at)
@@ -249,16 +257,23 @@ export interface UndoResult {
   restored: number[];
 }
 
+/** What undoing a run did to notes before its transaction: the text put back, and the notes the run started removed. */
+interface NoteUndo {
+  restored: number[];
+  purged: number[];
+}
+
 /**
  * Undoes a run: puts back the text of notes it updated, then deletes everything it made (or reverses a correction) and
  * marks it undone in one transaction. `home` is the record's folder: a note kept there has its file put back too, so
  * an undone review run needs it. Each note goes back in its own transaction first (the store's restore opens one, and
- * SQLite has no nested BEGIN). If the undo stops after that, running it again finds those notes already back.
+ * SQLite has no nested BEGIN). If the undo stops after that, running it again finds those notes already back. A note an
+ * agent's run started is removed, its file and its entry. `now` is the caller's clock, for the versions put back.
  */
-export function undoRun(db: DatabaseSync, id: number, home?: string): UndoResult {
+export function undoRun(db: DatabaseSync, id: number, home?: string, now?: () => string): UndoResult {
   const before = getRun(db, id);
   const undoable = before?.status === 'done' && before.task !== 'correction' && before.task !== 'ask' && !dependents(db, id).length;
-  const restored = undoable ? restoreEdits(db, before, home) : [];
+  const { restored, purged } = undoable ? restoreEdits(db, before, home, now) : { restored: [], purged: [] };
   return inTransaction(db, () => {
     const run = getRun(db, id);
     if (!run) throw new UsageError(`No run ${id}. Run "skeinwise runs" for the list.`);
@@ -279,6 +294,7 @@ export function undoRun(db: DatabaseSync, id: number, home?: string): UndoResult
         const res = db.prepare(`DELETE FROM ${table} WHERE run_id = ?`).run(id);
         if (res.changes) removed[table] = Number(res.changes);
       }
+      if (purged.length) removed.notes = purged.length;
     }
     db.prepare("UPDATE runs SET status = 'undone' WHERE id = ?").run(id);
     return { run: { ...run, status: 'undone' }, removed, restored };
@@ -291,16 +307,37 @@ export function undoRun(db: DatabaseSync, id: number, home?: string): UndoResult
  * checked before anything changes: a note changed again since is refused, unless it already reads as before. The notes
  * folder is read first, so an edit made in a file that the record hasn't seen yet counts as a change and is never
  * written over. Returns the notes put back.
+ *
+ * A note an agent's run started (task 'note', its first version the run's) is removed, file and entry, while it still
+ * reads as the run left it. Its file goes only when it is the one the run recorded, in the notes folder, not a link,
+ * and holding exactly what the run wrote (startedNoteFile); anything else is refused before anything changes.
  */
-function restoreEdits(db: DatabaseSync, run: Run, home: string | undefined): number[] {
+function restoreEdits(db: DatabaseSync, run: Run, home: string | undefined, now: (() => string) | undefined): NoteUndo {
   const edits = db
     .prepare('SELECT entry_id AS entryId, MIN(version) AS first, MAX(version) AS last FROM versions WHERE run_id = ? GROUP BY entry_id ORDER BY entry_id')
     .all(run.id) as { entryId: number; first: number; last: number }[];
-  if (!edits.length) return [];
-  if (home === undefined) throw new Error(`Run ${run.id} updated notes, so undoing it needs the record's folder to put their files back.`);
-  const store = new Store(db);
+  if (!edits.length) return { restored: [], purged: [] };
+  if (home === undefined) throw new UsageError(`Run ${run.id} changed notes, so undoing it needs the record's folder to put their files back.`);
+  const store = new Store(db, now);
   readNotes(store, home);
-  const plans = edits.map(({ entryId, first, last }) => {
+  const started = edits.filter((e) => e.first === 1 && run.task === 'note').map(({ entryId, last }) => {
+    const history = store.history(entryId);
+    const current = history.at(-1)!;
+    if (current.contentHash !== history.find((v) => v.version === last)!.contentHash) {
+      throw new UsageError(
+        `Note #${entryId} changed after run ${run.id} wrote it. Undo the later change first ("skeinwise history ${entryId}" lists them), or keep the note.`,
+      );
+    }
+    // A file that was there before the run holds text that isn't the run's, so only a file the run made may go.
+    const { file, sha256, created } = (run.detail ?? {}) as { file?: unknown; sha256?: unknown; created?: unknown };
+    const recorded = created === true && typeof file === 'string' && typeof sha256 === 'string' ? { file, sha256 } : null;
+    const own = homeNoteFile(store, home, store.getEntry(entryId)!);
+    if (!recorded || !own || own !== resolve(notesDir(home), recorded.file)) {
+      throw new UsageError(`Run ${run.id} saved note #${entryId}, but not into a file it made and recorded, so nothing was removed.`);
+    }
+    return { entryId, file: startedNoteFile(home, recorded.file, recorded.sha256, run.id) };
+  });
+  const plans = edits.filter((e) => !(e.first === 1 && run.task === 'note')).map(({ entryId, first, last }) => {
     const history = store.history(entryId);
     const before = history.find((v) => v.version === first - 1);
     if (!before) throw new Error(`Entry ${entryId} has no version before run ${run.id}'s update ${first}.`);
@@ -313,6 +350,13 @@ function restoreEdits(db: DatabaseSync, run: Run, home: string | undefined): num
     }
     return { entryId, before, back };
   });
+  const purged: number[] = [];
+  for (const { entryId, file } of started) {
+    // The file first: if the entry can't be purged after it, running the undo again finds no file and purges.
+    if (file) removeNoteFile(file);
+    store.purgeEntry(entryId);
+    purged.push(entryId);
+  }
   const restored: number[] = [];
   for (const { entryId, before, back } of plans) {
     // The file goes first, as in resolveReview: if it can't be written, this note is as the run left it, and running
@@ -325,7 +369,7 @@ function restoreEdits(db: DatabaseSync, run: Run, home: string | undefined): num
     store.restoreVersion(entryId, before.version, { editor: 'you' });
     restored.push(entryId);
   }
-  return restored;
+  return { restored, purged };
 }
 
 function reverseCorrection(db: DatabaseSync, run: Run): void {

@@ -92,7 +92,7 @@ describe('notes an agent writes', () => {
     const theirs = appendDailyNote(store, home, 'You asked me to check the rye recipe', now, 'claude-code');
     expect(theirs).toMatchObject({ path: mine.path, created: false, entryId: mine.entryId });
     expect(readFileSync(mine.path, 'utf8')).toBe('# 2026-11-25\n\n- Fed the starter\n- claude-code: You asked me to check the rye recipe\n');
-    expect(store.history(mine.entryId).map((v) => v.editor)).toEqual(['you', 'claude-code']);
+    expect(store.history(mine.entryId).map((v) => v.editor)).toEqual(['you', 'agent:claude-code']);
     expect(store.getEntry(mine.entryId)!.speaker).toBe('you');
   });
 
@@ -103,7 +103,7 @@ describe('notes an agent writes', () => {
     expect(store.history(mine.entryId).map((v) => [v.editor, v.body.split('\n').at(-1)])).toEqual([
       ['you', '- Fed the starter'],
       ['you', '- Fed the starter twice'],
-      ['cursor', '- cursor: Noted'],
+      ['agent:cursor', '- cursor: Noted'],
     ]);
   });
 
@@ -117,7 +117,7 @@ describe('notes an agent writes', () => {
     const again = writeAgentNote(store, home, 'Claude-Code', 'Rye notes', 'Hydration 78%', now);
     expect(again).toMatchObject({ path: made.path, created: false, entryId: made.entryId });
     expect(readFileSync(made.path, 'utf8')).toBe(`---\ncreated: ${now.toISOString()}\nagent: claude-code\n---\n\n# Rye notes\n\nHydration 78%\n`);
-    expect(store.history(made.entryId).map((v) => v.editor)).toEqual(['claude-code', 'Claude-Code']);
+    expect(store.history(made.entryId).map((v) => v.editor)).toEqual(['agent:claude-code', 'agent:Claude-Code']);
     expect(store.getEntry(made.entryId)).toMatchObject({ speaker: 'claude-code', version: 2 });
   });
 
@@ -132,7 +132,7 @@ describe('notes an agent writes', () => {
     writeFileSync(made.path, readFileSync(made.path, 'utf8').replace('75%', '80%'));
     expect(() => writeAgentNote(store, home, 'claude-code', 'Rye notes', 'Hydration 70%', now)).toThrow(/was changed by you after claude-code wrote it/);
     expect(readFileSync(made.path, 'utf8')).toContain('Hydration 80%');
-    expect(store.history(made.entryId).map((v) => v.editor)).toEqual(['claude-code', 'you']);
+    expect(store.history(made.entryId).map((v) => v.editor)).toEqual(['agent:claude-code', 'you']);
 
     expect(() => writeAgentNote(store, home, 'claude-code', '  ', 'x', now)).toThrow(/Give the note a title/);
     expect(() => writeAgentNote(store, home, 'claude-code', 'x', ' ', now)).toThrow(/Give the note some text/);

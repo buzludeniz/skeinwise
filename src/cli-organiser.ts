@@ -214,11 +214,12 @@ const MADE: Record<string, string> = {
   hubs: 'hubs',
   layers: 'layers',
   review_items: 'review items',
+  notes: 'notes an agent started',
 };
 
 const undo: Command = (ctx) => {
   const id = needId(ctx.args[0], 'run');
-  const result = undoRun(ctx.store.db, id, ctx.home);
+  const result = undoRun(ctx.store.db, id, ctx.home, ctx.store.now);
   if (ctx.values.json) ctx.json(result);
   else if (result.run.task === 'correction') say(ctx, `Undid run ${id}, your correction: ${result.run.message ?? ''}`);
   else {
