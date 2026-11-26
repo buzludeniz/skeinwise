@@ -12,5 +12,9 @@ const port = parentPort;
 if (!port) throw new Error('worker.ts runs only as a worker: see pool.ts');
 installWriteGuard();
 const job = workerData as Job;
-const done = loop(targetNamed(job.name), { ...job, onFinding: (finding) => port.postMessage({ finding }) });
+// Something to wait on while an input's promise is pending, so one that never settles is still running when pool.ts
+// looks (a hang), rather than letting the worker exit with nothing left to do.
+const awake = setInterval(() => {}, 2 ** 30);
+const done = await loop(targetNamed(job.name), { ...job, onFinding: (finding) => port.postMessage({ finding }) });
+clearInterval(awake);
 port.postMessage({ done });
