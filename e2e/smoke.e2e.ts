@@ -61,7 +61,9 @@ async function twoPictures(page: Page, settled?: () => Promise<void>): Promise<[
   await page.waitForTimeout(1500);
   if (settled) {
     await settled();
-    await page.waitForTimeout(100);
+    // Past the labels' 0.25 s fade: a label that turned on or off just before the change finishes its fade, since a
+    // transition already running keeps its length when reduced motion shortens the others.
+    await page.waitForTimeout(400);
   }
   const before = await canvas.screenshot({ mask });
   await page.waitForTimeout(1000);
