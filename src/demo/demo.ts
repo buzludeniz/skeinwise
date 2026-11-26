@@ -1,11 +1,15 @@
 // Writes the demo record as real export files (ChatGPT, Claude, Claude Code, Markdown notes), so the demo goes
 // through the same importers as a person's own data. Everything is invented and seeded: the same seed gives the
-// same files.
+// same files. About 600 entries in 8 hubs, with Plotline's developer threads across three tools on top of the
+// person's other topics.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type DemoTopic, TOPICS } from './content.ts';
+import { DEMO_TAGS, type DemoTopic, PLOTLINE_DEV, TOPICS } from './content.ts';
+import { readImports } from '../importers/detect.ts';
+import { defineTag } from '../organiser/corrections.ts';
 import { mulberry32 } from '../random.ts';
+import type { ImportResult, Store } from '../store/store.ts';
 
 /** The demo's "today": nothing in the record is dated after it. */
 export const DEMO_NOW = '2026-11-20T18:00:00.000Z';
@@ -25,6 +29,8 @@ interface DemoThread {
   title: string;
   started: Date;
   messages: Msg[];
+  /** Plotline's developer sessions and story, drawn after the topics. */
+  dev?: boolean;
 }
 
 export interface DemoSummary {
@@ -141,6 +147,28 @@ export function buildThreads(seed = 7): DemoThread[] {
       });
     }
   }
+  // Plotline's development, drawn from its own seed so the threads above stay exactly as they were.
+  const dev = new Rng(seed + 2);
+  const window = months(PLOTLINE_DEV.window[0], PLOTLINE_DEV.window[1]);
+  /** Messages a minute or so apart for an answer, a few minutes for the next question. */
+  const timed = (texts: string[], started: Date): Msg[] => {
+    let t = started.getTime();
+    return texts.map((text, i) => {
+      const at = new Date(t);
+      t += (i % 2 ? dev.int(2, 9) * 60 : dev.int(20, 90)) * 1000;
+      return { you: i % 2 === 0, text, at };
+    });
+  };
+  PLOTLINE_DEV.sessions.forEach((source, i) => {
+    const started = momentIn(dev, tideMonth(dev, window));
+    const order = PLOTLINE_DEV.pairs.map((pair) => ({ pair, key: dev.next() })).sort((a, b) => a.key - b.key);
+    const turns = order.slice(0, dev.int(...PLOTLINE_DEV.turns)).flatMap((o) => o.pair);
+    threads.push({ topic: PLOTLINE_DEV.key, source, id: dev.uuid(), title: PLOTLINE_DEV.titles[i]!, started, messages: timed(turns, started), dev: true });
+  });
+  for (const story of PLOTLINE_DEV.story) {
+    const started = new Date(story.at);
+    threads.push({ topic: PLOTLINE_DEV.key, source: story.source, id: dev.uuid(), title: story.title, started, messages: timed(story.turns, started), dev: true });
+  }
   return threads.sort((a, b) => a.started.getTime() - b.started.getTime());
 }
 
@@ -247,16 +275,19 @@ export function writeDemo(dir: string, seed = 7): DemoSummary {
   for (const topic of TOPICS) {
     const window = months(topic.window[0], topic.window[1]);
     topic.notes.forEach((note, i) => {
-      const created = momentIn(rng, window[Math.min(i, window.length - 1)]!).toISOString().slice(0, 10);
+      // Drawn even when the note has its own date, so the draws after it stay where they were.
+      const drawn = momentIn(rng, window[Math.min(i, window.length - 1)]!).toISOString().slice(0, 10);
+      const created = note.created ?? drawn;
       const front = ['---', `title: ${note.title}`, `created: ${created}`, `tags: [${note.tags.join(', ')}]`, '---', ''];
       write(`notes/${slug(note.title)}.md`, `${front.join('\n')}# ${note.title}\n\n${note.body}\n`);
       notes += 1;
     });
   }
 
-  // Daily notes on days with chats, pointing at that topic's first note.
+  // Daily notes on days with chats, pointing at that topic's first note; the developer sessions get none. At 15 percent
+  // of those days the record has 136 units to group, inside the 113 to 144 for which chooseK gives 8 hubs.
   const days = new Map<string, DemoThread>();
-  for (const th of threads) if (rng.next() < 0.25) days.set(th.started.toISOString().slice(0, 10), th);
+  for (const th of threads.filter((t) => !t.dev)) if (rng.next() < 0.15) days.set(th.started.toISOString().slice(0, 10), th);
   for (const [day, th] of days) {
     const topic = TOPICS.find((t) => t.key === th.topic)!;
     const line = rng.pick(DAILY_LINES)(topic.notes[0]!.title);
@@ -271,4 +302,25 @@ export function writeDemo(dir: string, seed = 7): DemoSummary {
     notes,
     files,
   };
+}
+
+export interface DemoImport {
+  summary: DemoSummary;
+  /** What each import added, by source. */
+  results: (ImportResult & { source: string })[];
+}
+
+/**
+ * Builds the demo record in `store`: writes the exports into `dir`, imports them as a person's own exports would be,
+ * and defines the person's own tags (DEMO_TAGS). For the `demo` case in src/cli.ts, in place of writeDemo and its
+ * import loop.
+ */
+export function importDemo(store: Store, dir: string, seed = 7): DemoImport {
+  const summary = writeDemo(dir, seed);
+  const results: DemoImport['results'] = [];
+  for (const part of ['chatgpt', 'claude', 'claude-code', 'notes']) {
+    for (const batch of readImports(join(dir, part))) results.push({ source: batch.source.label, ...store.ingest(batch) });
+  }
+  for (const t of DEMO_TAGS) defineTag(store, t.schema, t.tag, t.words);
+  return { summary, results };
 }

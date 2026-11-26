@@ -105,6 +105,31 @@ describe('the skeinwise command', () => {
     expect((await cli('search', 'reservoir', '--speaker', 'you')).out).toContain('Nothing found');
   });
 
+  it('filters search by the folder a coding session ran in, with --project', async () => {
+    const projects = join(dir, 'claude-code', 'projects');
+    const sessions: [string, string, string][] = [
+      ['s-plot', '/home/mara/code/plotline', 'Reminders go out twice in plotline'],
+      ['s-ledger', '/home/mara/code/ledger', 'Reminders for invoices go out twice'],
+    ];
+    for (const [id, cwd, prompt] of sessions) {
+      const folder = join(projects, cwd.replaceAll('/', '-'));
+      mkdirSync(folder, { recursive: true });
+      const line = { type: 'user', uuid: `${id}-u1`, sessionId: id, cwd, gitBranch: 'main', timestamp: '2026-04-01T09:00:00.000Z' };
+      writeFileSync(join(folder, `${id}.jsonl`), `${JSON.stringify({ ...line, message: { role: 'user', content: prompt } })}\n`);
+    }
+    expect((await cli('import', join(dir, 'claude-code'))).code).toBe(0);
+    expect((await cli('help')).out).toMatch(/--to <date> .*\n {6}--project <name> +Only coding sessions/);
+
+    const all = JSON.parse((await cli('search', 'reminders', '--json')).out) as { id: number }[];
+    expect(all).toHaveLength(2);
+    const plot = await cli('search', 'reminders', '--project', 'plotline', '--json');
+    expect(plot.code).toBe(0);
+    const hits = JSON.parse(plot.out) as { id: number }[];
+    expect(hits).toHaveLength(1);
+    expect(JSON.parse((await cli('show', String(hits[0]!.id), '--json')).out)).toMatchObject({ project: '/home/mara/code/plotline', gitBranch: 'main' });
+    expect((await cli('search', 'reminders', '--project', 'plot')).out).toContain('Nothing found');
+  });
+
   it('restores an old version of an entry as a new one', async () => {
     const notes = join(dir, 'vault');
     mkdirSync(notes);
