@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig } from '../../src/config.ts';
 import { CLI_ONLY, CliOnly, ConfigError, DEFAULT_CONFIG, readConfig, writeConfig } from '../../src/server/config.ts';
 import { loadToken, sameToken } from '../../src/server/token.ts';
+import { expectMode } from '../modes.ts';
 
 let home: string;
 beforeEach(() => {
@@ -26,7 +27,7 @@ describe('settings', () => {
     expect(next.brain.pointSize).toBe(1.5);
     const raw = JSON.parse(readFileSync(join(home, 'app.json'), 'utf8')) as Record<string, unknown>;
     expect(raw.later).toEqual({ schedule: 'nightly' });
-    expect(statSync(join(home, 'app.json')).mode & 0o777).toBe(0o600);
+    expectMode(join(home, 'app.json'), 0o600);
     expect(existsSync(join(home, 'config.json'))).toBe(false);
   });
 
@@ -131,7 +132,7 @@ describe('the access token', () => {
     const token = loadToken(home);
     expect(token).toMatch(/^[0-9a-f]{64}$/);
     expect(loadToken(home)).toBe(token);
-    expect(statSync(join(home, 'token')).mode & 0o777).toBe(0o600);
+    expectMode(join(home, 'token'), 0o600);
     expect(sameToken(token, token)).toBe(true);
     expect(sameToken(undefined, token)).toBe(false);
     expect(sameToken('', token)).toBe(false);

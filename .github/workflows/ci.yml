@@ -1,20 +1,131 @@
+# Checks every push to main and to the v1/* track branches on three OSes and two Node versions (plan 7.4), then the
+# package, the production dependencies and the tree for secrets. Hardened per the audit's M15 (supply/10_ci_lint.mjs):
+# a read-only token, every action pinned by commit SHA, no credentials left in .git/config, a timeout on every job, and
+# pnpm fetched by pnpm/setup, which checks it against npm's signature. Publishing is release.yml's alone.
 name: CI
 on:
   push:
-    branches: [main]
-    tags: ["v*"]
+    branches: [main, "v1/**"]
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push to a track branch replaces its run; main keeps every run.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [24, 26]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 26
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
           package-manager-cache: false
-      - run: npm install -g pnpm@12.23.0
+      - uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
+        with:
+          install: false
+      - id: deps
+        run: pnpm install --frozen-lockfile
+      # Each check runs when what it needs passed, so one run shows every failure on every OS (a red test on
+      # Windows doesn't hide whether the package builds and installs there). Any failed step still fails the job.
+      - if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: pnpm typecheck
+      - if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: pnpm test
+      - id: build
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: pnpm build
+      - id: pack
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm pack:check
+      # Plan 7.1's packaging test: the tarball, installed the way npm installs it for a user, runs the demo.
+      - name: Install the packed tarball and run the demo
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        shell: bash
+        run: |
+          tmp="$RUNNER_TEMP"; if command -v cygpath >/dev/null; then tmp="$(cygpath -u "$RUNNER_TEMP")"; fi
+          mkdir -p "$tmp/pkg"
+          npm pack --ignore-scripts --pack-destination "$tmp/pkg"
+          npm install --global --prefix "$tmp/prefix" "$tmp"/pkg/skeinwise-*.tgz
+          export PATH="$tmp/prefix/bin:$tmp/prefix:$PATH" SKEINWISE_HOME="$tmp/record"
+          cd "$tmp"
+          skeinwise --version
+          skeinwise demo
+          skeinwise ask "what did we decide about sqlite" --engine none
+
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
+        with:
+          install: false
+      - run: pnpm audit --prod
+
+  # Plan 7.1: 80% of lines in importers, store, live, mcp, server and fsafe.ts, 70% over src/ (vitest.config.ts).
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
+        with:
+          install: false
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
+      - run: pnpm coverage
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      # From gitleaks_8.30.1_checksums.txt on the release page.
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch gitleaks and check its hash
+        run: |
+          curl -sSfL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf gitleaks.tar.gz -C "$RUNNER_TEMP/gitleaks" gitleaks
+          rm gitleaks.tar.gz
+      # Every committed file (git archive, so .git itself stays out), with .gitleaks.toml's allow-list. Findings print
+      # redacted.
+      - name: Scan the committed tree
+        run: |
+          mkdir -p "$RUNNER_TEMP/tree"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/tree"
+          cd "$RUNNER_TEMP/tree"
+          "$RUNNER_TEMP/gitleaks/gitleaks" dir . --config "$GITHUB_WORKSPACE/.gitleaks.toml" --redact --no-banner --verbose
