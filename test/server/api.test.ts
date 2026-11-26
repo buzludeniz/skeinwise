@@ -424,3 +424,17 @@ describe('the organiser', () => {
     expect((await api(`runs/${layer.id}/undo`, { body: {} })).status).toBe(400);
   });
 });
+
+describe("the assistant's routes, through the app (src/server/pa.ts)", () => {
+  it('adds a task and shows it in today and the list, behind the token and the lock', async () => {
+    const added = await api('pa/tasks', { body: { text: 'renew the van insurance', dueDay: '2030-01-02' } });
+    expect(added.status).toBe(200);
+    expect(added.body).toMatchObject({ title: 'Renew the van insurance', dueDay: '2030-01-02', status: 'open' });
+    expect((await api('pa/tasks')).body.map((t: { id: number }) => t.id)).toContain(added.body.id);
+    expect((await api('pa/today')).body).toMatchObject({ tasks: { open: 1 }, reminders: [] });
+    expect((await api('pa/today', { token: null })).status).toBe(401);
+    expect((await api('lock', { body: {} })).body).toEqual({ locked: true });
+    expect((await api('pa/reminders')).status).toBe(423);
+    expect((await api('unlock', { body: {} })).body).toEqual({ locked: false });
+  });
+});
