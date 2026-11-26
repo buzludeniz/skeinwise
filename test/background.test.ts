@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,10 +9,11 @@ import { DEMO_NOW, writeDemo } from '../src/demo/demo.ts';
 import { openHome } from '../src/home.ts';
 import { readImports } from '../src/importers/detect.ts';
 import { readStatus, statusLines } from '../src/live/capture.ts';
-import { Background, type BackgroundOptions, parsePmset } from '../src/live/organise.ts';
+import { Background, type BackgroundOptions, type Exec, parsePmset, PMSET, readBattery } from '../src/live/organise.ts';
 import { startLive } from '../src/live/run.ts';
 import { type PollReport, pollConnectors } from '../src/connectors/poll.ts';
 import { type RunOptions, runSteps, steps } from '../src/organiser/organise.ts';
+import { serverKeyPath } from '../src/organiser/model.ts';
 import { RecordView } from '../src/organiser/record.ts';
 import { listRuns } from '../src/organiser/runs.ts';
 import type { Store } from '../src/store/store.ts';
@@ -134,6 +136,26 @@ describe('background organising', () => {
   });
 });
 
+describe('the local model server', () => {
+  it('gets the key kept in this record folder, however bare the environment', async () => {
+    await runSteps(store, new RecordView(store), steps(store, 'all'), NONE);
+    addNote('crumb.md', 'Open crumb on the third bake.');
+    setConfigValue(home, 'engine', 'local');
+    setConfigValue(home, 'localUrl', 'http://127.0.0.1:9/v1'); // nothing is sent: the fetch below is a fake
+    const key = randomBytes(16).toString('hex');
+    mkdirSync(join(home, 'models'), { recursive: true });
+    writeFileSync(serverKeyPath(home), `${key}\n`, { mode: 0o600 });
+    const sent: (string | null)[] = [];
+    const locked = (async (_url: string | URL | Request, init?: RequestInit) => {
+      sent.push(new Headers(init?.headers).get('authorization'));
+      throw new TypeError('fetch failed');
+    }) as typeof fetch;
+    await background({ fetch: locked, env: {} }).pass();
+    expect(sent.length).toBeGreaterThan(0);
+    expect(new Set(sent)).toEqual(new Set([`Bearer ${key}`]));
+  });
+});
+
 describe('stopping live mid-run', () => {
   it('marks the cut-off run failed, so the next run is not blocked', async () => {
     await runSteps(store, new RecordView(store), steps(store, 'all'), NONE);
@@ -169,6 +191,22 @@ describe('the battery reading', () => {
       discharging: false,
     });
     expect(parsePmset("Now drawing from 'AC Power'")).toBeNull();
+  });
+
+  it('runs pmset by its absolute path with an empty environment, never one found on PATH (L15)', () => {
+    const calls: { file: string; env: Record<string, string> }[] = [];
+    const exec: Exec = (file, _args, options) => {
+      calls.push({ file, env: options.env });
+      return " -InternalBattery-0 (id=1)\t45%; discharging; 3:10 remaining present: true";
+    };
+    expect(readBattery('darwin', exec)).toEqual({ percent: 45, discharging: true });
+    expect(calls).toEqual([{ file: PMSET, env: {} }]);
+    expect(PMSET).toBe('/usr/bin/pmset');
+    expect(
+      readBattery('darwin', () => {
+        throw new Error('spawn /usr/bin/pmset ENOENT');
+      }),
+    ).toBeNull();
   });
 });
 
