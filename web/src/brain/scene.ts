@@ -17,7 +17,8 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { brainOutline, hash01, layoutFor, ringGuides, type Layout, type LayoutPoint } from '../layout.ts';
+import { hash01, layoutFor, ringGuides, type Layout, type LayoutPoint } from '../layout.ts';
+import { bodyOutline } from './bodyGeometry.ts';
 import { hexToRgb } from '../themes.ts';
 import type { SceneInput } from './input.ts';
 import { nearestPoint } from './pick.ts';
@@ -375,7 +376,7 @@ export class BrainScene {
     this.selectMat = lineMat(0.55);
     this.selectMat.blending = NormalBlending;
 
-    const { positions, shade } = brainOutline();
+    const { positions, shade } = bodyOutline();
     const g = new BufferGeometry();
     g.setAttribute('position', new BufferAttribute(positions, 3));
     g.setAttribute('shade', new BufferAttribute(shade, 1));
@@ -626,7 +627,7 @@ export class BrainScene {
   private layoutOf(layout: Layout): Float32Array {
     let pos = this.layouts.get(layout);
     if (!pos) {
-      pos = layoutFor(layout, this.input?.points ?? []);
+      pos = layoutFor(layout, this.input?.points ?? [], { sources: this.input?.sources ?? [], now: Date.now() });
       this.layouts.set(layout, pos);
     }
     return pos;

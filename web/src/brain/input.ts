@@ -9,6 +9,8 @@ import { hexToRgb, mix, type Palette, pointColors, type Theme } from '../themes.
 
 export interface SceneInput {
   points: LayoutPoint[];
+  /** The record's sources, in the order a point's `strand` indexes them: the body hangs each on its own nerve. */
+  sources: { id: number; kind: string }[];
   colors: Float32Array;
   sizes: Float32Array;
   threads: Uint32Array;
@@ -179,6 +181,7 @@ export function buildModel(record: BrainData, by: Grouping, pal: Palette, theme:
     legend: grouped.groups.map((g, i) => ({ label: g.label, count: g.count, color: hex[i]! })),
     input: {
       points,
+      sources: data.sources.map((s) => ({ id: s.id, kind: s.kind })),
       colors,
       sizes,
       threads: threadPairs(data),
