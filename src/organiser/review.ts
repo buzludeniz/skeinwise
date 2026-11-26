@@ -100,20 +100,24 @@ function reviewChecks(ctx: TaskContext): Check[] {
       hubsOf.has(e.id) &&
       (ctx.scope.kind === 'all' || scoped.has(e.id) || hubsOf.get(e.id)!.some((h) => touched.has(h))),
   );
+  // Each entry's time and body are read once, not once for every note: that took tens of minutes at 50,000 entries.
+  // Only the stems of note titles are kept from the bodies.
+  const yours = record.entries.flatMap((e) => (e.speaker === 'you' && vouched(e, ctx.now) ? [{ e, at: Date.parse(e.createdAt) }] : []));
+  const names = new Map(notes.map((n) => [n.id, titleStems(n)]));
+  const holding = bodiesHolding(yours.map((y) => y.e), new Set([...names.values()].flat()));
   return notes.map((note) => {
     const since = lastChanged(record.store, note);
     const held = heldEntries(db, note.id);
     const own = new Set(hubsOf.get(note.id));
-    const name = titleStems(note);
+    const name = names.get(note.id)!;
     const after = Date.parse(since) + MIN_GAP_MS;
-    const newer = record.entries.filter(
-      (e) =>
-        e.id !== note.id &&
-        e.speaker === 'you' &&
-        Date.parse(e.createdAt) >= after &&
-        vouched(e, ctx.now) &&
-        !held.has(e.id) &&
-        ((hubsOf.get(e.id) ?? []).some((h) => own.has(h)) || (name.length > 0 && hasAll(e, name))),
+    const newer = yours.flatMap(({ e, at }) =>
+      e.id !== note.id &&
+      at >= after &&
+      !held.has(e.id) &&
+      ((hubsOf.get(e.id) ?? []).some((h) => own.has(h)) || (name.length > 0 && name.every((s) => holding.get(s)?.has(e.id))))
+        ? [e]
+        : [],
     );
     return { note, since, newer, hubs: [...own] };
   });
@@ -150,9 +154,19 @@ function titleStems(note: Entry): string[] {
   return [...new Set(tokenize(note.title ?? ''))];
 }
 
-function hasAll(e: Entry, stems: string[]): boolean {
-  const set = new Set(tokenize(e.body));
-  return stems.every((s) => set.has(s));
+/** For each of these stems, the ids of the entries whose body holds it. */
+function bodiesHolding(entries: Entry[], stems: Set<string>): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  if (!stems.size) return out;
+  for (const e of entries) {
+    for (const s of tokenize(e.body)) {
+      if (!stems.has(s)) continue;
+      const ids = out.get(s);
+      if (ids) ids.add(e.id);
+      else out.set(s, new Set([e.id]));
+    }
+  }
+  return out;
 }
 
 /**
