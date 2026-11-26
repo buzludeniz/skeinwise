@@ -94,11 +94,27 @@ export interface IndexOptions {
   maxDfRatio?: number;
 }
 
+/** Which document frequencies keep a term, out of n documents (IndexOptions). */
+export function dfWindow(n: number, options: IndexOptions = {}): { minDf: number; maxDf: number } {
+  const minDf = options.minDf ?? (n >= 20 ? 2 : 1);
+  const maxDf = n >= 10 ? Math.max(minDf, Math.floor(n * (options.maxDfRatio ?? 0.5))) : n;
+  return { minDf, maxDf };
+}
+
+/** Smoothed inverse document frequency: a term in df of n documents. */
+export function idfOf(n: number, df: number): number {
+  return Math.log((1 + n) / (1 + df)) + 1;
+}
+
+/** A term's weight before normalising: sublinear in how often it occurs. */
+export function termWeight(count: number, idf: number): number {
+  return (1 + Math.log(count)) * idf;
+}
+
 /** Builds TF-IDF vectors (sublinear tf, smoothed idf, L2-normalised) for a list of texts. */
 export function buildIndex(texts: string[], options: IndexOptions = {}): TermIndex {
   const n = texts.length;
-  const minDf = options.minDf ?? (n >= 20 ? 2 : 1);
-  const maxDf = n >= 10 ? Math.max(minDf, Math.floor(n * (options.maxDfRatio ?? 0.5))) : n;
+  const { minDf, maxDf } = dfWindow(n, options);
   const counts: Map<string, number>[] = [];
   const df = new Map<string, number>();
   const forms = new Map<string, Map<string, number>>();
@@ -119,7 +135,7 @@ export function buildIndex(texts: string[], options: IndexOptions = {}): TermInd
   const terms = [...df.keys()].filter((t) => df.get(t)! >= minDf && df.get(t)! <= maxDf).sort();
   const termId = new Map(terms.map((t, i) => [t, i]));
   const idf = new Float64Array(terms.length);
-  terms.forEach((t, i) => (idf[i] = Math.log((1 + n) / (1 + df.get(t)!)) + 1));
+  terms.forEach((t, i) => (idf[i] = idfOf(n, df.get(t)!)));
   const vectors = counts.map((c) => weigh(c, termId, idf));
   const mean = new Float64Array(terms.length);
   for (const v of vectors) for (const [i, w] of v) mean[i]! += w / Math.max(1, n);
@@ -130,7 +146,7 @@ function weigh(counts: Map<string, number>, termId: Map<string, number>, idf: Fl
   const v: Vec = new Map();
   for (const [t, c] of counts) {
     const i = termId.get(t);
-    if (i !== undefined) v.set(i, (1 + Math.log(c)) * idf[i]!);
+    if (i !== undefined) v.set(i, termWeight(c, idf[i]!));
   }
   return normalise(v);
 }

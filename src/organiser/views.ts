@@ -191,8 +191,11 @@ export function liveLinks(db: DatabaseSync, entryId?: number): Link[] {
   return [...cross, ...(entryId === undefined ? written : written.filter((l) => l.from === entryId || l.to === entryId))];
 }
 
-/** Store.allEntries' rule (store.ts VISIBLE): an included source, and not in a thread marked not mine. */
-const VISIBLE_ENTRIES = `JOIN sources s ON s.id = e.source_id LEFT JOIN threads t ON t.id = e.thread_id
+/**
+ * Store.allEntries' rule (store.ts VISIBLE): an included source, and not in a thread marked not mine. The joins and the
+ * condition, for queries that read fewer columns than the store's own.
+ */
+export const VISIBLE_ENTRIES = `JOIN sources s ON s.id = e.source_id LEFT JOIN threads t ON t.id = e.thread_id
   WHERE s.status = 'in' AND COALESCE(t.not_mine, 0) = 0`;
 
 /**
