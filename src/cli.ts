@@ -16,8 +16,17 @@ import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP } from './mcp/commands.ts';
 import { MODEL_HELP } from './model-commands.ts';
 import { safeIo, safeJson } from './safe-text.ts';
 import { serveFromArgs } from './server/serve.ts';
+import { SETUP_COMMANDS, SETUP_FLAGS, SETUP_HELP } from './setup.ts';
 import type { Store } from './store/store.ts';
-import { SYNC_COMMANDS, SYNC_FLAGS, SYNC_HELP } from './sync/commands.ts';
+import { SYNC_COMMANDS } from './sync/commands.ts';
+
+// Sync is hidden in v1.0 (Deniz, Nov 25: hide it entirely, in place of an --experimental flag). Only export is
+// reachable; src/sync/** stays in the tree with its tests, and the sync command, its flags and its help are left out.
+const EXPORT_COMMANDS: typeof SYNC_COMMANDS = { export: SYNC_COMMANDS.export! };
+const EXPORT_HELP = `Export (a plain zip on this computer; nothing goes to any server):
+  export [<file>]           Write a zip of the record: chats, entries and notes as Markdown, and
+                            the tags, folders, hubs and runs as JSON (--force to replace the file)
+`;
 
 /** package.json sits one level up from src/ and two from dist/src/. */
 function readPackage(): { version: string } {
@@ -36,6 +45,8 @@ Usage: skeinwise <command> [options]
 
 The record lives in $SKEINWISE_HOME, or ~/.skeinwise when that is not set.
 
+Start here:
+${SETUP_HELP}
 Your record:
   init                      Create the record folder
   import <path>...          Import exports, history folders, note folders or zips
@@ -102,7 +113,7 @@ Corrections (each is a run you can undo):
 The local model:
 ${MODEL_HELP}
 
-${SYNC_HELP}
+${EXPORT_HELP}
 Agents (MCP):
 ${MCP_HELP}
 Settings:
@@ -174,15 +185,15 @@ async function run(argv: string[], io: Io): Promise<number> {
       engine: { type: 'string' },
       scope: { type: 'string' },
       schema: { type: 'string' },
-      yes: { type: 'boolean' },
       preview: { type: 'boolean' },
       layer: { type: 'string' },
       resolve: { type: 'string' },
       unset: { type: 'boolean' },
       remove: { type: 'boolean' },
       run: { type: 'boolean' },
-      ...SYNC_FLAGS,
       ...MCP_FLAGS,
+      // --yes (and --write, also in MCP_FLAGS) come from here; every command reads them the same way.
+      ...SETUP_FLAGS,
     },
   });
   const json = (v: unknown) => io.out(`${safeJson(v, 2)}\n`);
@@ -338,8 +349,8 @@ async function run(argv: string[], io: Io): Promise<number> {
         const busiest = [...s.byMonth].sort((a, b) => b.entries - a.entries).slice(0, 5);
         if (busiest.length) {
           io.out('\nBusiest months:\n');
-          const max = busiest[0]!.entries;
-          for (const m of busiest) io.out(`  ${m.month}  ${'█'.repeat(Math.max(1, Math.round((m.entries / max) * 24)))} ${m.entries}\n`);
+          // Plain text, no bar glyphs: it reads the same with NO_COLOR, in a pipe and to a screen reader (plan 7.3).
+          for (const m of busiest) io.out(`  ${m.month}  ${m.entries} ${m.entries === 1 ? 'entry' : 'entries'}\n`);
         }
         return 0;
       });
@@ -404,9 +415,12 @@ async function run(argv: string[], io: Io): Promise<number> {
     }
 
     default: {
+      // setup, connect and doctor run before the record is opened: doctor must see a missing record as missing.
+      const setupCommand = SETUP_COMMANDS[command];
+      if (setupCommand) return setupCommand({ io, home: homeDir(io.env), values, args: positionals, json });
       // The connectors' commands (src/connectors/commands.ts) are left out: connectors are off in v1.0 and ship in v1.1
-      // behind their own consent screen (Deniz, Nov 25).
-      const organiser = ORGANISER_COMMANDS[command] ?? SYNC_COMMANDS[command] ?? MCP_COMMANDS[command];
+      // behind their own consent screen (Deniz, Nov 25). Of the sync module only export is wired (see EXPORT_COMMANDS).
+      const organiser = ORGANISER_COMMANDS[command] ?? EXPORT_COMMANDS[command] ?? MCP_COMMANDS[command];
       if (!organiser) throw new UsageError(`Unknown command: ${command}. Run "skeinwise help" for the list.`);
       const home = homeDir(io.env);
       return withStore(io, (store) => organiser({ io, home, store, values, args: positionals, json }));

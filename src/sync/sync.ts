@@ -21,7 +21,8 @@ export interface SyncState {
   format: 1;
   folder: string;
   keyId: string;
-  /** The sync key in base64. It sits next to the record it encrypts; see docs/sync.md. */
+  /** The sync key in base64. It sits next to the record it encrypts. v1.0 hides sync; the key scheme's
+   * write-up is in git history (`git log -- docs/sync.md`). */
   key: string;
   /** A random id for this computer, written into each bundle it pushes. */
   computer: string;
