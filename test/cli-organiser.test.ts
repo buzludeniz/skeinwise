@@ -86,16 +86,16 @@ describe('organising the demo record from the command line', () => {
   it('run all prints each run as it finishes and makes hubs for Plotline, sourdough and the river thesis', async () => {
     expect(ran.code).toBe(0);
     expect(ran.out).toContain('Run 1: tag Topics · No-AI · scope all · done');
-    expect(ran.out).toMatch(/Run 6: hub · No-AI · scope all · done · .*hubs 8/);
+    expect(ran.out).toMatch(/Run 7: hub · No-AI · scope all · done · .*hubs 8/);
     expect(ran.out).toContain('Undo a run with: skeinwise undo <run>');
     const runs = parsed<RunJson[]>(await sw('runs', '--json'));
-    expect(runs.map((r) => r.task).reverse()).toEqual(['tag', 'tag', 'tag', 'file', 'link', 'hub', 'layer', 'review']);
+    expect(runs.map((r) => r.task).reverse()).toEqual(['tag', 'tag', 'tag', 'tag', 'file', 'link', 'hub', 'layer', 'review']);
     expect(runs.every((r) => r.engine === 'none' && r.status === 'done' && r.tokensIn === 0)).toBe(true);
     const names = parsed<HubJson[]>(await sw('hubs', '--json')).map((h) => h.name);
     expect(names.some((n) => /Plotline/.test(n))).toBe(true);
     expect(names.some((n) => /sourdough/i.test(n))).toBe(true);
     expect(names.some((n) => /nitrate|samples|river|thesis/i.test(n))).toBe(true);
-    expect((await sw('runs')).out).toMatch(/^2026-11-20 18:00 {2}Run 8: review · No-AI/m);
+    expect((await sw('runs')).out).toMatch(/^2026-11-20 18:00 {2}Run 9: review · No-AI/m);
   });
 
   it('hub shows its three sections, cited by entry and date, then its entries', async () => {
