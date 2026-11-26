@@ -225,6 +225,13 @@ export function checkUndo(store: Store, agent: string, runId: number): void {
     throw new UsageError(`Run ${runId} wasn't made by ${agent}, so ${agent} can't undo it.`);
   }
   if (run.status === 'undone') throw new UsageError(`Run ${runId} is already undone.`);
+  // A note run whose text the record read in as the user's own (another reader took in the file before the run saved
+  // it) holds no version: its undo would mark it undone and leave the text, so say so and change nothing.
+  if (run.task === 'note' && !store.db.prepare('SELECT 1 FROM versions WHERE run_id = ? LIMIT 1').get(runId)) {
+    throw new UsageError(
+      `Run ${runId} holds no version of a note, so undoing it would put back or remove nothing, and nothing changed. If the note still holds what ${agent} wrote, the record has it as your own edit: change the note itself.`,
+    );
+  }
 }
 
 export interface Confirmed {

@@ -147,6 +147,23 @@ describe("an agent's save is a run of its own", () => {
     expect(readFileSync(first.file, 'utf8')).toContain('70%');
   });
 
+  it('undo_run on a note run that holds no version says so, and changes nothing', async () => {
+    const note = await writeNote('Rye plan', 'Try 80% hydration.');
+    expect((await call(server, 'undo_run', { run_id: note.runId })).json).toMatchObject({ status: 'waiting for confirm', request: 1 });
+    // The agent's text read in as yours, as when another reader takes in the file before the run saves it.
+    store.db.prepare("UPDATE versions SET run_id = NULL, editor = 'you' WHERE run_id = ?").run(note.runId);
+    const written = readFileSync(note.file, 'utf8');
+
+    const asked = await call(server, 'undo_run', { run_id: note.runId });
+    expect(asked.isError).toBe(true);
+    expect(asked.text).toBe(
+      `Run ${note.runId} holds no version of a note, so undoing it would put back or remove nothing, and nothing changed. If the note still holds what claude-code wrote, the record has it as your own edit: change the note itself.`,
+    );
+    expect(() => confirmRequest(home, store, 1, LATER)).toThrow(`Run ${note.runId} holds no version of a note`);
+    expect(kept(note)).toEqual({ entry: true, file: true, status: 'done' });
+    expect(readFileSync(note.file, 'utf8')).toBe(written);
+  });
+
   it("counts an agent's saves from before runs, which name it without agent:, as its own", () => {
     const now = new Date(LATER);
     const made = writeAgentNote(store, home, 'claude-code', 'Rye notes', 'Hydration 75%', now);
