@@ -127,7 +127,7 @@ describe('one bad file', () => {
     expect(first.out).not.toContain('failed');
     expect(withStore((s) => s.search('shed rota'))).toHaveLength(1);
     expect(withStore((s) => s.allEntries())).toHaveLength(51);
-  });
+  }, 30_000); // 51 files through a live pass: past 5 s on a loaded Windows runner (Node 24, e579ecf)
 
   it('in a Codex session, a line with a bad time is saved and named; the file never fails', () => {
     const sessions = join(userHome, '.codex', 'sessions');
