@@ -75,6 +75,27 @@ const COMMAND_BAR: Screen = {
   },
 };
 
+/** The Views page, empty, then a line chart, a heatmap and a list from its built-in views. */
+const VIEWS: Screen = {
+  name: 'views',
+  run: async (page, scan) => {
+    await open(page, 'views');
+    await expect(heading('Views')(page)).toBeVisible();
+    await scan('views');
+    const views = page.getByRole('region', { name: 'Views', exact: true });
+    const builtIn = views.getByRole('list', { name: 'Built in' });
+    for (const [title, part] of [
+      ['Each source by month', 'img'],
+      ['Projects over time', 'table'],
+      ['Newest entries', 'listitem'],
+    ] as const) {
+      await builtIn.getByRole('button', { name: title }).click();
+      await expect(views.getByRole('region', { name: `View: ${title}` }).getByRole(part).first()).toBeVisible();
+      await scan(`views, ${title}`);
+    }
+  },
+};
+
 const WIDE: Screen[] = [
   {
     name: 'first run',
@@ -116,6 +137,7 @@ const WIDE: Screen[] = [
   simple('profile', 'profile', heading('Profile')),
   simple('workbench', 'workbench', heading('Workbench')),
   simple('activity', 'activity', heading('Workbench')),
+  VIEWS,
   simple('guide', 'guide', panel('Reading your brain')),
   simple('add', 'add', panel('Add')),
   simple('reader', 'reader', (page) => panel('Reader')(page).getByRole('article')),
@@ -174,6 +196,7 @@ const COMPACT: Screen[] = [
     },
   },
   simple('threads', 'threads', (page) => page.getByRole('navigation', { name: 'Views' })),
+  VIEWS,
   simple('reader', 'reader', (page) => panel('Reader')(page).getByRole('article')),
   simple('editor', 'editor', (page) => page.getByRole('dialog', { name: /^Edit / })),
   simple('add', 'add', panel('Add')),
