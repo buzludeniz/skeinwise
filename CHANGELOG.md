@@ -10,8 +10,8 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
 ### Added
 
 - **The app.** `skeinwise serve` opens Skeinwise in your browser, on this computer only (127.0.0.1, with a token).
-  It includes the 3D brain, Navigator, the reader, concept hubs, the runs and their undo, the command bar, settings,
-  and light and dark themes.
+  It includes the 3D brain, Threads, Stats, the timeline, Profile, the Workbench, the reader, concept hubs, the runs
+  and their undo, the command bar, settings, and light and dark themes.
 - **Agent memory over MCP.** `skeinwise mcp` serves your record to Claude Code, Codex, Cursor, Claude desktop and
   other MCP clients:
   - seven read tools, plus five write tools for an agent you give write scope;

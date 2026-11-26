@@ -140,9 +140,9 @@ suggested one.
 
 The record keeps itself current without you running anything.
 
-1. **Live capture.** With **Record live** on (`skeinwise live` on the command line), Skeinwise watches Claude Code
-   and Codex history and the note folders and vaults you chose (`liveFolders`). New and changed entries are imported
-   within seconds, through the same importers as a manual import, so dedupe and versions work the same way. On
+1. **Live capture.** With **Live capture** on in the app menu (`skeinwise live` on the command line), Skeinwise watches
+   Claude Code and Codex history and the note folders and vaults you chose (`liveFolders`). New and changed entries are
+   imported within seconds, through the same importers as a manual import, so dedupe and versions work the same way. On
    start-up it catches up on whatever changed while it was off. Downloads is watched only when you ask (below).
 2. **Background organising.** After each capture, the organiser runs over the new entries only (`--scope new`:
    entries added or changed since that task's last run): tag, file, link, then the summaries of the hubs those entries
