@@ -1,4 +1,5 @@
 import type { EntryInput } from '../store/store.ts';
+import { withoutNoteExt } from './note-ext.ts';
 import { firstLine, toIso } from './util.ts';
 
 export interface ParsedNote {
@@ -124,7 +125,7 @@ const DATE_IN_NAME = /(\d{4})-(\d{2})-(\d{2})/;
 export function parseNote(fileName: string, text: string, modifiedAt: Date): ParsedNote {
   const { meta, properties, body } = parseFrontMatter(text);
   const heading = /^#\s+(.+)$/m.exec(body)?.[1]?.trim();
-  const baseName = fileName.replace(/\.(md|markdown|txt)$/i, '');
+  const baseName = withoutNoteExt(fileName);
   const metaTitle = typeof meta.title === 'string' ? meta.title : undefined;
   const title = metaTitle || heading || baseName || firstLine(body);
 
