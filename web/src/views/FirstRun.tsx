@@ -116,7 +116,7 @@ function SetUp({ onNext }: { onNext: () => void }) {
         <li>
           <Mark state={lines.servers!} />
           <span>
-            Two MCP servers for your AI agents: memory over your record, and a way to steer this app's view
+            An MCP server for your AI agents, with your record as their memory
             <span class="soft block">
               To give an agent your record as its memory, run <code>skeinwise connect claude-code</code> in a terminal,
               with codex, cursor or claude-desktop in place of claude-code for the others.
