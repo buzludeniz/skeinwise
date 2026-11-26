@@ -12,8 +12,116 @@ export interface DemoTopic {
   assistant: string[];
   /** Dated decisions, in order; each lands in its own thread near that month. */
   decisions: { month: string; text: string }[];
-  notes: { title: string; tags: string[]; body: string }[];
+  /**
+   * Notes, each dated early in the window unless `created` (YYYY-MM-DD) says when. A note written after the decisions
+   * it already holds isn't overtaken by them, so review leaves it alone.
+   */
+  notes: { title: string; tags: string[]; body: string; created?: string }[];
 }
+
+/** A thread written out in full, for the parts of the story a seeded draw would blur. */
+export interface ScriptedThread {
+  source: 'chatgpt' | 'claude' | 'claude-code';
+  /** When it starts, as an ISO time. */
+  at: string;
+  title: string;
+  /** The messages in order, yours first, then the assistant's, and so on. */
+  turns: string[];
+}
+
+/**
+ * Plotline's development across three tools: four long working sessions, and the story of one decision. In August,
+ * in ChatGPT, the waiting list stays in SQLite on the shed laptop; in October, in Claude Code, after a plot is offered
+ * twice, it joins the rest of Plotline in Postgres. The sessions' lines carry no change cue, so only the story moves
+ * the review. Few threads, many turns: the organiser's group count grows with the number of threads, and the demo
+ * keeps 8 hubs.
+ */
+export const PLOTLINE_DEV = {
+  key: 'plotline',
+  window: ['2026-05', '2026-11'] as [string, string],
+  /** One session per source listed; each takes `turns` exchanges from `pairs`, in a seeded order. */
+  sessions: ['claude-code', 'chatgpt', 'claude-code', 'claude'] as ('chatgpt' | 'claude' | 'claude-code')[],
+  turns: [18, 22] as [number, number],
+  titles: ['Plotline: offer expiry and emails', 'Plotline: tests and CI', 'Plotline: committee pages', 'Plotline: three sites'],
+  /** What you asked, and what came back. */
+  pairs: [
+    ['The offer expiry job should run every hour, not once a night, so nobody waits a whole day for the next offer.', 'An hourly job that closes expired offers and sends the next one keeps the wait under an hour. Lock the plot row so two runs never send the same offer.'],
+    ['CI takes nine minutes now. Most of it is the browser tests for the booking form.', 'Running the browser tests only when the booking form changes cuts CI to about three minutes; the rest of the suite still runs on every push.'],
+    ['Can a screen reader get through the booking form? Two people on the committee use one.', 'Give every field a visible label and put each error next to its field; then the form reads well with a screen reader.'],
+    ['Write the deploy checklist for Plotline: backup first, run the migrations, then restart the web server.', 'Here is the checklist: take a backup and check that it restores, run the migrations, restart the web server, then open the waiting list page.'],
+    ['The council pays the hosting bill: 12 a month for the server, and the backups cost 2 more.', 'That covers one small server and its backups. Put the bill in the committee report once a year.'],
+    ['Give me test data for Plotline: 64 plots, 41 people on the waiting list, and three shared plots.', 'Here is a seed script: 64 plots, 41 people waiting, three shared plots and a year of offers.'],
+    ['When an offer expires, the email to the next person should say how long they have to answer.', "The offer email now says when the offer ends, in the reader's own time, with links to accept or decline."],
+    ['Show the history of a plot: who held it, for how long, and what they noted about the soil.', 'The plot history page reads from the offer log and the soil notes, newest first.'],
+    ['The waiting list page is slow with 41 names. Is it the query or the template?', 'It is the query: it loads every offer for every person. An index on offers by plot and status makes the page fast again.'],
+    ['Plotline should keep a log of every offer: sent, accepted, expired or declined.', 'One table of offer events gives you the log, the plot history and the weekly email from the same rows.'],
+    ['How do I test the 48 hour window without waiting 48 hours?', 'A fake clock in the tests moves time forward 48 hours in one line, so the expiry test runs in milliseconds.'],
+    ['The three allotment sites need separate waiting lists but one login for the committee.', 'Each site gets its own waiting list, and committee members get a role per site under one login.'],
+    ['Add a weekly email to the committee with the plots offered, accepted and still open.', 'The weekly email lists offers sent, accepted and still open, one section per site, every Monday at 07:00.'],
+    ['The plot rent goes up in April. Can the renewal reminder show the new rent?', 'The renewal reminder can read the new rent from the plots table, with the date it starts.'],
+    ['Someone accepted plot 9 twice by double-clicking the button.', 'The accept button turns off after the first click now, and the server ignores a second accept for an offer that is already taken.'],
+    ['The printable map cuts off plot 64 on A4.', 'The map scales to the page now: A4 fits all 64 plots in two columns, and A3 keeps one row per bed.'],
+    ['Can the watering rota skip a holder who is away?', 'A holder can mark days away; the rota passes their turn to the next neighbour and tells both of them.'],
+    ['Write a test for a shared plot where one holder gives it up.', 'Here is the test: the plot stays with the other holder, and nobody on the waiting list gets an offer.'],
+    ['The reminder emails land in spam for two holders.', "Sending from the allotment's own domain with SPF and DKIM keeps them out of spam; here are the two DNS records."],
+    ['Add a page for the committee to see who has not answered an offer yet.', 'The open offers page lists each offer with the person, the plot and the hours left, soonest first.'],
+    ['Plotline crashed last night when the backup ran during the offer job.', 'The backup locked a table the job needed. Run the backup at 03:00 and the job at five past each hour, and give the job a short timeout.'],
+    ['Review this migration before I run it on the live database.', 'It is safe to run: it adds a column with a default and an index, and it can be undone. Run it after the 03:00 backup.'],
+    ['How many people got a plot from the waiting list this year?', 'Nineteen offers were accepted this year, out of 31 sent; the rest expired or were declined.'],
+    ['Plot holders want a reminder the day before their watering turn.', 'A daily job at 18:00 emails everyone whose turn is tomorrow, with the plot number and the tap code.'],
+    ['Make the booking form work on a phone in the sun: big buttons, high contrast.', 'Buttons are 48 pixels tall now, the text is dark on white, and the form fits a phone screen without zooming.'],
+    ['Explain the offer job to me as if I will look after it alone next year.', "Every hour it finds offers past their 48 hours, marks them expired, offers the plot to the next person on that site's list, and logs each step."],
+    ['Can Plotline export the plot register for the council as a spreadsheet?', 'The register export writes one row per plot with the holder, the start date and the rent, as a CSV the council can open.'],
+    ['The soil notes should stay when a plot changes hands.', 'Soil notes belong to the plot now, not the holder, so they stay when the plot changes hands.'],
+    ['Write the README section on how to run Plotline on a new laptop.', 'Here is the section: install Postgres, copy the example settings, load the seed data, and start the server with one command.'],
+    ['What would break if the server lost power during an offer?', 'Nothing is lost: each offer change is one transaction, so a half-done change is rolled back and the next run picks it up.'],
+  ] as [string, string][],
+  story: [
+    {
+      source: 'chatgpt',
+      at: '2026-08-11T19:20:00.000Z',
+      title: 'Postgres or SQLite for the waiting list?',
+      turns: [
+        'Postgres or SQLite for the waiting list? Plotline has been on Postgres since April, but the waiting list runs on the laptop in the shed at Wend Lane, and the shed is offline half the time.',
+        'If the shed is often offline, a SQLite file on the laptop keeps the waiting list working there. Copy new offers to Postgres once a night, and let the laptop be the one place the list changes.',
+        'Decided: the waiting list stays in SQLite on the shed laptop, copied to Postgres every night.',
+        'Then make the nightly copy safe to run twice: write offers by their id, and never delete anything on the Postgres side.',
+      ],
+    },
+    {
+      source: 'claude',
+      at: '2026-09-29T07:45:00.000Z',
+      title: 'Plot 17 offered twice',
+      turns: [
+        'Two households got an offer for plot 17 on the same morning. The shed laptop had passed the offer on, and the nightly copy brought the old one back.',
+        'That is the price of two copies of the list: each side can change an offer while the other can not see it. Either one side owns offers outright, or both live in one database.',
+      ],
+    },
+    {
+      source: 'claude-code',
+      at: '2026-10-14T20:05:00.000Z',
+      title: 'Waiting list into Postgres',
+      turns: [
+        'Changing my mind on the waiting list: after plot 17 was offered twice, it moves out of SQLite on the shed laptop and into Postgres with the rest of Plotline.',
+        "Plan: a migration that adds the waiting list and offers tables to Postgres, a one-off import from the laptop's SQLite file, and the expiry job reading and writing both in one transaction.",
+        'The shed laptop gets a read-only waiting list page, kept for when the network drops.',
+        'Done: the migration, the import, and a test that two open offers for the same plot are refused. All 212 tests pass.',
+        'Now remove the nightly copy job and its schedule.',
+        'Removed the nightly copy job, its schedule and its two tests. Nothing else read from it.',
+      ],
+    },
+  ] as ScriptedThread[],
+};
+
+/**
+ * The invented person's own tag list. Words from a description tag an entry when two of them are in it, so the No-AI
+ * tagger is sure that "Sourdough schedule" is about finance: the starter's feeding rate and the dough's rise. That is
+ * the wrong tag the demo keeps on purpose, for showing how undo takes back a run.
+ */
+export const DEMO_TAGS = [
+  { schema: 'Areas', tag: 'finance', words: 'money budget bank savings bills rent rate rise interest loan cost costs' },
+  { schema: 'Areas', tag: 'fitness', words: 'ride riding training km climbing legs rest stretch' },
+];
 
 export const TOPICS: DemoTopic[] = [
   {
@@ -65,6 +173,7 @@ export const TOPICS: DemoTopic[] = [
       },
       {
         title: 'Allotment committee',
+        created: '2026-11-02',
         tags: ['plotline', 'people'],
         body: 'Meets the first Tuesday of the month. Jun keeps the plot register; Mara runs the seed swap.\n\nThey asked for a printable map of the plots for the shed door. See [[Plotline]].',
       },
@@ -99,11 +208,13 @@ export const TOPICS: DemoTopic[] = [
     notes: [
       {
         title: 'Sourdough schedule',
+        created: '2024-12-06',
         tags: ['baking'],
-        body: 'Friday 18:00 feed starter. Saturday 08:00 mix, bulk until 50 percent bigger, shape, fridge overnight. Sunday bake from cold at 250 then 230.\n\nWinter: put the starter in the oven with the light on. See [[Market stall]].',
+        body: 'Friday 18:00 feed the starter, 1:5:5 by weight; in winter, raise the feeding rate to twice a day. Saturday 08:00 mix, let the dough rise until it is 50 percent bigger, shape, fridge overnight. Sunday bake from cold at 250 then 230.\n\nWinter: put the starter in the oven with the light on. See [[Market stall]].',
       },
       {
         title: 'Market stall',
+        created: '2024-12-07',
         tags: ['baking', 'stall'],
         body: 'Saturday market, Wend Lane. Two loaves only: white sourdough and rye.\n\nTwelve loaves sells out by 11. Stagger shaping by 45 minutes.',
       },
@@ -138,11 +249,13 @@ export const TOPICS: DemoTopic[] = [
     notes: [
       {
         title: 'Wend river survey',
+        created: '2025-03-04',
         tags: ['thesis', 'river'],
         body: 'Six sites, three above and three below the farm outflow. Samples every Tuesday, plus after storms.\n\nQuestion: does the outflow raise nitrate? See [[Chapter 3 plan]].',
       },
       {
         title: 'Chapter 3 plan',
+        created: '2025-03-11',
         tags: ['thesis'],
         body: 'Compare upstream and downstream month by month. Mixed model, site as random effect, rainfall as covariate.\n\nMarch samples: flagged, analysis both ways. Supervisor: Dr Okafor.',
       },
@@ -171,6 +284,7 @@ export const TOPICS: DemoTopic[] = [
     notes: [
       {
         title: 'Learning Rust',
+        created: '2025-01-15',
         tags: ['rust', 'learning'],
         body: 'Ownership: one owner, many readers or one writer. Pushing to a Vec can move it.\n\nProject: rewrite the [[Wend river survey]] data cleaner. 14 s in Python, 0.3 s in Rust.',
       },
@@ -202,6 +316,7 @@ export const TOPICS: DemoTopic[] = [
     notes: [
       {
         title: 'Coast to coast ride',
+        created: '2025-08-03',
         tags: ['cycling', 'travel'],
         body: 'With Mara, July 2025. 220 km, four days, camping. Split at the reservoir.\n\nPacking: tent, two mats, stove, one pot, repair kit, two tubes, layers.',
       },
@@ -230,6 +345,7 @@ export const TOPICS: DemoTopic[] = [
     notes: [
       {
         title: 'Band demo',
+        created: '2025-02-08',
         tags: ['music', 'band'],
         body: 'Four songs with Theo, recorded live in the spare room.\n\nKick and bass: cut bass at 60 to 80 Hz. Vocals: duvet behind the singer.',
       },
@@ -246,7 +362,7 @@ export const TOPICS: DemoTopic[] = [
       'Interview on Thursday for a data analyst role at the water trust. What will they ask?',
       'The council offered me a job maintaining their planning data. It pays less but it is close to home.',
       'Help me describe Plotline on my CV without making it sound bigger than it is.',
-      'They asked for an example of a time I changed my mind because of data.',
+      'They asked for an example of a time the data showed me I was wrong.',
     ],
     assistant: [
       'Lead with the analysis: 18 months of samples from six sites, a mixed model, and a result the supervisor used.',
@@ -258,8 +374,9 @@ export const TOPICS: DemoTopic[] = [
     notes: [
       {
         title: 'Job search',
+        created: '2026-05-12',
         tags: ['career'],
-        body: 'Goal: move from lab work to data analysis.\n\nStories: the [[Wend river survey]] analysis; [[Plotline]] with 64 users; keeping the March samples.',
+        body: 'Goal: move from lab work to data analysis.\n\nStories: the [[Wend river survey]] analysis; [[Plotline]] with 64 users; keeping the March samples.\n\nMay: took the data analyst job at the water trust, starting in June.',
       },
     ],
   },
@@ -285,6 +402,7 @@ export const TOPICS: DemoTopic[] = [
     notes: [
       {
         title: 'On attention',
+        created: '2025-02-16',
         tags: ['reading', 'ideas'],
         body: 'Fewer projects at once. One long morning block. Write the next step before stopping.\n\nTwo projects now: [[Wend river survey]] and [[Plotline]].',
       },

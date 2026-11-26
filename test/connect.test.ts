@@ -175,6 +175,20 @@ describe('skeinwise connect', () => {
     expect(readAccess(home).agents['claude-code']).toBeUndefined();
   });
 
+  it('prints the Claude Code command on Windows but never runs it there', async () => {
+    fakeClaude();
+    const win = { ...DEPS, platform: 'win32' as const };
+    await expect(connect(setupCtx(['claude-code'], { yes: true }).ctx, win)).rejects.toThrow(/On Windows, Skeinwise doesn't run claude mcp add for you/);
+    expect(readAccess(home).agents['claude-code']).toBeUndefined();
+
+    const asked = setupCtx(['claude-code'], {}, async () => 'y');
+    expect(await connect(asked.ctx, win)).toBe(0);
+    expect(asked.output.asked).toEqual([]);
+    expect(asked.output.out).toContain('  claude mcp add --scope user skeinwise -e SKEINWISE_AGENT_TOKEN=swa_');
+    expect(asked.output.out).toContain("On Windows, Skeinwise doesn't run claude mcp add for you.");
+    expect(existsSync(calls)).toBe(false);
+  });
+
   it('adds itself to Cursor next to the servers already there, owner-only', async () => {
     const file = join(user, '.cursor', 'mcp.json');
     mkdirSync(join(user, '.cursor'));

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { ORGANISER_COMMANDS } from './cli-organiser.ts';
-import { writeDemo } from './demo/demo.ts';
+import { importDemo } from './demo/demo.ts';
 import { needId, UsageError } from './errors.ts';
 import { day, entryHeader, indent, minute, speakerLabel } from './format.ts';
 import { homeDir, openHome } from './home.ts';
@@ -18,7 +18,7 @@ import { MODEL_HELP } from './model-commands.ts';
 import { safeIo, safeJson } from './safe-text.ts';
 import { serveFromArgs } from './server/serve.ts';
 import { SETUP_COMMANDS, SETUP_FLAGS, SETUP_HELP } from './setup.ts';
-import { STORE_COMMANDS, STORE_FLAGS, STORE_HELP } from './store/commands.ts';
+import { STORE_COMMANDS, STORE_FLAGS, STORE_HELP, STORE_SEARCH_HELP } from './store/commands.ts';
 import type { ImportBatch, IngestResult, Store } from './store/store.ts';
 import { SYNC_COMMANDS } from './sync/commands.ts';
 
@@ -59,7 +59,7 @@ Your record:
       --source <kind>       chatgpt, claude, gemini, claude-code, codex or notes
       --from <date>         Only entries on or after this date (YYYY-MM-DD)
       --to <date>           Only entries on or before this date
-  show <entry>              Print one entry
+${STORE_SEARCH_HELP}  show <entry>              Print one entry
   thread <thread>           Print a whole thread
   history <entry>           List an entry's versions
 ${STORE_HELP}  stats                    Counts and the busiest months
@@ -271,6 +271,7 @@ async function run(argv: string[], io: Io): Promise<number> {
           sourceKind: values.source,
           from: values.from,
           to: values.to ? `${values.to}\uffff` : undefined,
+          project: values.project,
         });
         if (values.json) json(hits);
         else if (!hits.length) io.out(`Nothing found for "${query}".\n`);
@@ -423,11 +424,8 @@ async function run(argv: string[], io: Io): Promise<number> {
             `The record in ${home} is not empty. Run the demo in its own folder, for example:\n  SKEINWISE_HOME=~/skeinwise-demo skeinwise demo\nor pass --force to add it anyway.`,
           );
         }
-        const summary = writeDemo(out);
-        const results = [];
-        for (const part of ['chatgpt', 'claude', 'claude-code', 'notes']) {
-          for (const batch of readImports(join(out, part))) results.push({ source: batch.source.label, ...store.ingest(batch) });
-        }
+        // Writes the invented exports, imports them, and defines the demo person's own tags.
+        const { summary, results } = importDemo(store, out);
         if (values.json) json({ ...summary, files: summary.files.length, results });
         else {
           io.out(`Wrote invented exports to ${out}: ${summary.threads} chats, ${summary.notes} notes.\n`);

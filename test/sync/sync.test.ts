@@ -76,7 +76,7 @@ describe('sync init', () => {
     expect(() => startSync(a.store, a.home, join(dir, 'elsewhere'), PASS, LIGHT)).toThrow(/already syncs with/);
     const b = computer();
     expect(() => startSync(b.store, b.home, folder, PASS, LIGHT)).toThrow(/already holds a Skeinwise sync/);
-    expect(() => startSync(b.store, b.home, join(dir, 'x'), 'too short', LIGHT)).toThrow(/at least 12/);
+    expect(() => startSync(b.store, b.home, join(dir, 'x'), 'too short', LIGHT)).toThrow(/at least 14/);
     expect(existsSync(join(dir, 'x'))).toBe(false);
     expect(() => startSync(b.store, b.home, join(b.home, 'notes', 'sync'), PASS, LIGHT)).toThrow(/inside the record folder/);
     expect(() => startSync(b.store, b.home, b.home, PASS, LIGHT)).toThrow(/inside the record folder/);

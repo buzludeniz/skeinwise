@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -6,7 +6,8 @@ import type { Ctx, Values } from '../../src/cli-organiser.ts';
 import { DEMO_NOW } from '../../src/demo/demo.ts';
 import { openHome } from '../../src/home.ts';
 import { newNote } from '../../src/notes.ts';
-import { phraseGrid, type SecretIo, SYNC_COMMANDS, SYNC_FLAGS, SYNC_HELP } from '../../src/sync/commands.ts';
+import { main } from '../../src/cli.ts';
+import { EXPORT_PLAIN_TEXT, phraseGrid, type SecretIo, SYNC_COMMANDS, SYNC_EXPERIMENTAL, SYNC_FLAGS, SYNC_HELP } from '../../src/sync/commands.ts';
 import { readState } from '../../src/sync/sync.ts';
 
 // The export and sync commands as the CLI will call them, with a Ctx built here and a fake hidden prompt. These run
@@ -25,6 +26,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 interface Run {
   code: number;
   out: string;
+  err: string;
   json: unknown;
   asked: string[];
 }
@@ -35,10 +37,11 @@ function computer(name = `c${++n}`) {
   const store = openHome(home, () => DEMO_NOW);
   const run = async (args: string[], values: Values & Record<string, unknown> = {}, answers: (string | null)[] = [], asked: string[] = []): Promise<Run> => {
     let out = '';
+    let err = '';
     let json: unknown;
     const io: SecretIo = {
       out: (t) => (out += t),
-      err: () => {},
+      err: (t) => (err += t),
       env: {},
       askSecret: async (prompt) => {
         asked.push(prompt);
@@ -46,9 +49,11 @@ function computer(name = `c${++n}`) {
       },
     };
     const [command, ...rest] = args;
-    const ctx: Ctx = { io, home, store, values, args: rest, json: (v) => (json = v) };
+    // Sync is experimental: every run here says --experimental unless the test says otherwise.
+    const flags: Values & Record<string, unknown> = { experimental: true, ...values };
+    const ctx: Ctx = { io, home, store, values: flags, args: rest, json: (v) => (json = v) };
     const code = await SYNC_COMMANDS[command!]!(ctx);
-    return { code, out, json, asked };
+    return { code, out, err, json, asked };
   };
   return { home, store, run };
 }
@@ -61,7 +66,7 @@ describe('the sync commands', () => {
 
     const init = await a.run(['sync', 'init', folder], {}, [PASS, PASS]);
     expect(init.code).toBe(0);
-    expect(init.asked).toEqual(['Passphrase for the sync (at least 12 characters): ', 'The same passphrase again: ']);
+    expect(init.asked).toEqual(['Passphrase for the sync (14 or more characters, or 5 or more words): ', 'The same passphrase again: ']);
     expect(init.out).toMatch(/Syncing through .*cloud\. The first bundle holds 1 entries/);
     expect(init.out).toMatch(/shown only this once/);
     const grid = init.out.match(/^ {2}( ?\d{1,2} [a-z]+ *)+$/gm)!;
@@ -104,11 +109,11 @@ describe('the sync commands', () => {
     const a = computer();
     await expect(a.run(['sync', 'init', join(dir, 'x1')], {}, [PASS, `${PASS}!`])).rejects.toThrow(/two passphrases differ/);
     await expect(a.run(['sync', 'init', join(dir, 'x2')], {}, [])).rejects.toThrow(/no terminal.*--passphrase-file/);
-    await expect(a.run(['sync', 'init', join(dir, 'x3')], {}, ['short'])).rejects.toThrow(/at least 12/);
+    await expect(a.run(['sync', 'init', join(dir, 'x3')], {}, ['short'])).rejects.toThrow(/at least 14 characters, or 5 or more words/);
     for (const x of ['x1', 'x2', 'x3']) expect(existsSync(join(dir, x))).toBe(false);
     await expect(a.run(['sync', 'join', join(dir, 'cloud')], { 'phrase-file': 'f' })).rejects.toThrow(/sync join doesn't take --phrase-file.*sync restore/);
     await expect(a.run(['sync', 'push'], { 'passphrase-file': 'f' })).rejects.toThrow(/doesn't take --passphrase-file/);
-    await expect(a.run(['sync'])).rejects.toThrow(/Give one of: skeinwise sync init/);
+    await expect(a.run(['sync'])).rejects.toThrow(/Give one of, each with --experimental: skeinwise sync init/);
     await expect(a.run(['sync', 'init'])).rejects.toThrow(/Give one folder/);
     await expect(a.run(['sync', 'push', 'extra'])).rejects.toThrow(/takes no more words/);
     await expect(a.run(['sync', 'push'])).rejects.toThrow(/does not sync yet/);
@@ -127,14 +132,59 @@ describe('the sync commands', () => {
     const file = join(dir, 'e.zip');
     const r = await a.run(['export', file]);
     expect(r.out).toMatch(new RegExp(`Wrote ${file} .*0 chats, 0 other entries and 1 notes as Markdown`));
+    // L18: every export says it is plain text, on stderr so --json output stays one JSON value. The zip is owner-only.
+    expect(r.err).toBe(`${EXPORT_PLAIN_TEXT}\n`);
+    expect(EXPORT_PLAIN_TEXT).toMatch(/plain text, not encrypted/);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    const asJson = await a.run(['export', join(dir, 'e2.zip')], { json: true });
+    expect(asJson.out).toBe('');
+    expect(asJson.err).toContain('not encrypted');
+    expect(asJson.json).toMatchObject({ file: join(dir, 'e2.zip') });
     await expect(a.run(['export', file])).rejects.toThrow(/already exists/);
     expect((await a.run(['export', file], { force: true })).code).toBe(0);
     await expect(a.run(['export', 'one', 'two'])).rejects.toThrow(/at most one file/);
   });
 
   it('exports its flags and help for the CLI', () => {
-    expect(SYNC_FLAGS).toEqual({ 'passphrase-file': { type: 'string' }, 'phrase-file': { type: 'string' } });
+    expect(SYNC_FLAGS).toEqual({ 'passphrase-file': { type: 'string' }, 'phrase-file': { type: 'string' }, experimental: { type: 'boolean' } });
+    expect(SYNC_HELP).toContain('every sync command needs --experimental');
     for (const c of ['export [<file>]', 'sync init <folder>', 'sync push', 'sync join <folder>', 'sync restore <folder>', 'sync status']) expect(SYNC_HELP).toContain(c);
     expect(phraseGrid(Array.from({ length: 24 }, (_, i) => `w${i + 1}`).join(' ')).split('\n')[0]).toBe('   1 w1          7 w7         13 w13        19 w19');
+  });
+});
+
+// M16 / LS-28: sync stays in v1 as an experiment. It says so and why before it does anything, and a new sync needs a
+// passphrase that can hold out against offline guessing at the key file beside the bundle.
+describe('sync as an experiment', () => {
+  it('refuses every sync command without --experimental, says why, and writes nothing', async () => {
+    const a = computer();
+    const folder = join(dir, 'gated');
+    for (const args of [['sync', 'init', folder], ['sync', 'push'], ['sync', 'join', folder], ['sync', 'restore', folder], ['sync', 'status'], ['sync']]) {
+      await expect(a.run(args, { experimental: false }, [PASS, PASS])).rejects.toThrow(/experimental in this version, so it runs only with --experimental/);
+    }
+    expect(existsSync(folder)).toBe(false);
+    for (const limit of ['one sync key for good', 'beside the bundle', 'guess', 'built in memory', 'docs/sync.md']) expect(SYNC_EXPERIMENTAL).toContain(limit);
+    // Export is not sync: it needs no flag.
+    expect((await a.run(['export', join(dir, 'gated.zip')], { experimental: false })).code).toBe(0);
+  });
+
+  it('is not on the command line in 1.0 at all (ruling 5a), so nothing is made', async () => {
+    let err = '';
+    const io = { out: () => {}, err: (t: string) => void (err += t), env: { SKEINWISE_HOME: join(dir, 'gated-cli') } };
+    expect(await main(['sync', 'init', join(dir, 'gated-cli-folder')], io)).toBe(2);
+    expect(err).toMatch(/^skeinwise: Unknown command: sync\./);
+    expect(existsSync(join(dir, 'gated-cli-folder'))).toBe(false);
+  });
+
+  it('refuses a passphrase of 10 or 13 characters, and takes 14 characters or 5 words', async () => {
+    const a = computer();
+    const file = join(dir, 'short-pass.txt');
+    for (const short of ['ten chars!', 'thirteen char']) {
+      writeFileSync(file, `${short}\n`);
+      await expect(a.run(['sync', 'init', join(dir, `short-${short.length}`)], { 'passphrase-file': file })).rejects.toThrow(/at least 14 characters/);
+      expect(existsSync(join(dir, `short-${short.length}`))).toBe(false);
+    }
+    writeFileSync(file, 'fourteen chars');
+    expect((await a.run(['sync', 'init', join(dir, 'fourteen')], { 'passphrase-file': file })).code).toBe(0);
   });
 });

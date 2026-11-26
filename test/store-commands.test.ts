@@ -52,8 +52,8 @@ describe('restore', () => {
     expect(store.history(1)).toHaveLength(3);
   });
 
-  it('exports its help line and no flags of its own', () => {
-    expect(STORE_FLAGS).toEqual({});
+  it('exports its help line and the --project flag', () => {
+    expect(STORE_FLAGS).toEqual({ project: { type: 'string' } });
     expect(STORE_HELP).toMatch(/^ {2}restore <entry> <version> +Bring back an old version/);
     expect(Object.keys(STORE_COMMANDS)).toEqual(['restore']);
   });
