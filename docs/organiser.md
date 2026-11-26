@@ -164,8 +164,16 @@ refuses when a later run or correction built on the run (a hub correction, say):
 A schema is a named list of tags. Three are built in:
 
 - **Topics:** what entries are about, from groups of related entries.
-- **Projects:** notes you link to from two or more other notes, and the entries that share their words.
+- **Projects:** notes you link to from two or more other notes.
 - **Moods:** how you sound in your own words, from six tags with describing words.
+
+A project's tag goes on its note and on every entry that links to it. An entry that names the project without a link
+gets the tag only when the name's words appear side by side and in the same order, and only when the name stands out
+in your record. It stands out when it is rare, in no more than 1 entry in 200 outside its links. It also stands out
+when you write it as a name: in at least 4 of every 5 uses in the middle of a sentence, and at least 3 such uses, you
+capitalise it the way the note's title does. The first word of a sentence or a line doesn't count toward that, since
+everything is capitalised there. So a note called "Work" tags only itself and the entries that link to it, while a
+note called "Plotline", written that way every time, also tags the entries that mention Plotline.
 
 Moods and your own schemas tag an entry when its words match a tag's name or its describing words. No-AI tags an
 entry only when at least two of the words match; with a model, the model settles the entries that match by one word
