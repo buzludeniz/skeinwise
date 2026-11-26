@@ -31,9 +31,9 @@ The record is one SQLite file, `~/.skeinwise/record.db`, plus Markdown notes in 
 | Gemini (Google Takeout) | `MyActivity.json`; prompts are grouped into threads by 30-minute gaps |
 | Claude Code history | `~/.claude/projects/*/*.jsonl`; text only: tool calls and their results, system reminders and compaction summaries are left out; each entry keeps its project folder and git branch |
 | Codex history | `~/.codex/sessions/**/*.jsonl`; keeps its project folder and git branch |
-| Markdown folders and Obsidian vaults | Front matter, `[[links]]` and `#tags`; the date comes from front matter, the file name or the modified time. Aliases and folder links (`[[Note\|alias]]`, `[[Folder/Note]]`) are *(1.1)* |
-| Plain text | `.txt` files as notes |
-| Word | `.docx` files as notes |
+| Markdown folders and Obsidian vaults | Front matter, kept with the note as its properties, tags included; `[[links]]`; the date comes from front matter, the file name or the modified time; a folder named `Templates` is skipped. Aliases and folder links (`[[Note\|alias]]`, `[[Folder/Note]]`) are *(1.1)* |
+| Plain text | `.txt` files as notes: UTF-8 or UTF-16, with or without a byte order mark; up to 16 MiB a note |
+| Word | `.docx` files, read on this computer: headings, lists and tables become Markdown; the title comes from the document, its first heading or its file name. A .docx inside a zip is skipped and named |
 
 Other document types, PDF, RTF, HTML and ODT, are *(1.1)*.
 
@@ -141,9 +141,10 @@ suggested one.
 The record keeps itself current without you running anything.
 
 1. **Live capture.** With **Live capture** on in the app menu (`skeinwise live` on the command line), Skeinwise watches
-   Claude Code and Codex history and the note folders and vaults you chose (`liveFolders`). New and changed entries are
-   imported within seconds, through the same importers as a manual import, so dedupe and versions work the same way. On
-   start-up it catches up on whatever changed while it was off. Downloads is watched only when you ask (below).
+   Claude Code and Codex history and the Markdown, text and Word (.docx) files in the note folders and vaults you chose
+   (`liveFolders`), leaving out Word's `~$` lock files. New and changed entries are imported within seconds, through
+   the same importers as a manual import, so dedupe and versions work the same way. On start-up it catches up on
+   whatever changed while it was off. Downloads is watched only when you ask (below).
 2. **Background organising.** After each capture, the organiser runs over the new entries only (`--scope new`:
    entries added or changed since that task's last run): tag, file, link, then the summaries of the hubs those entries
    joined, then a staleness check of the notes on those hubs. One pass runs at a time; captures that arrive during a

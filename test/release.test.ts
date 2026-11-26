@@ -154,6 +154,15 @@ describe('the workflows', () => {
     expect(bench).not.toMatch(/model serve|llama|ollama|localUrl|:8731|:8741|engine (local|remote)/i);
   });
 
+  it('run the axe gate on every push, failing on a serious or critical WCAG 2.1 A/AA violation', () => {
+    const ci = workflow('ci.yml');
+    const axe = ci.slice(ci.indexOf('\n  axe:'));
+    expect(axe).toContain('pnpm exec playwright test -c e2e/playwright.config.ts axe');
+    const test = readFileSync(join(root, 'e2e/axe.e2e.ts'), 'utf8');
+    expect(test).toContain("const FAILS = new Set(['serious', 'critical']);");
+    expect(test).toContain("const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];");
+  });
+
   it('publish over OIDC from the publish job alone, with no token and no --provenance flag', () => {
     expect(release).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|_authToken|--provenance|registry-url/);
     expect(release.match(/id-token: write/g)).toHaveLength(1);
