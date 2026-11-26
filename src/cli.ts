@@ -18,7 +18,7 @@ import { MODEL_HELP } from './model-commands.ts';
 import { safeIo, safeJson } from './safe-text.ts';
 import { serveFromArgs } from './server/serve.ts';
 import { SETUP_COMMANDS, SETUP_FLAGS, SETUP_HELP } from './setup.ts';
-import { STORE_COMMANDS, STORE_FLAGS, STORE_HELP } from './store/commands.ts';
+import { STORE_COMMANDS, STORE_FLAGS, STORE_HELP, STORE_SEARCH_HELP } from './store/commands.ts';
 import type { ImportBatch, IngestResult, Store } from './store/store.ts';
 import { SYNC_COMMANDS } from './sync/commands.ts';
 
@@ -59,7 +59,7 @@ Your record:
       --source <kind>       chatgpt, claude, gemini, claude-code, codex or notes
       --from <date>         Only entries on or after this date (YYYY-MM-DD)
       --to <date>           Only entries on or before this date
-  show <entry>              Print one entry
+${STORE_SEARCH_HELP}  show <entry>              Print one entry
   thread <thread>           Print a whole thread
   history <entry>           List an entry's versions
 ${STORE_HELP}  stats                    Counts and the busiest months
@@ -271,6 +271,7 @@ async function run(argv: string[], io: Io): Promise<number> {
           sourceKind: values.source,
           from: values.from,
           to: values.to ? `${values.to}\uffff` : undefined,
+          project: values.project,
         });
         if (values.json) json(hits);
         else if (!hits.length) io.out(`Nothing found for "${query}".\n`);
