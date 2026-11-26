@@ -158,15 +158,24 @@ export function liveTags(db: DatabaseSync, schemaId: number): TagView[] {
        ORDER BY et.entry_id`,
     )
     .all(schemaId) as { id: number; name: string; entryId: number }[];
-  const byName = new Map<string, TagView>();
+  // Repeats are found in Sets kept beside the arrays, so a tag of n entries takes n checks, not n². On the 50,000-entry
+  // record the rows come in entry order and scanning the arrays was cheap, so this bounds the worst case rather than
+  // saving time there. The arrays keep the order rows first give them.
+  const byName = new Map<string, { tag: TagView; ids: Set<number>; entryIds: Set<number> }>();
   for (const r of rows) {
     const key = r.name.toLowerCase();
-    let tag = byName.get(key);
-    if (!tag) byName.set(key, (tag = { ids: [], name: r.name, entryIds: [] }));
-    if (!tag.ids.includes(r.id)) tag.ids.push(r.id);
-    if (!tag.entryIds.includes(r.entryId)) tag.entryIds.push(r.entryId);
+    let seen = byName.get(key);
+    if (!seen) byName.set(key, (seen = { tag: { ids: [], name: r.name, entryIds: [] }, ids: new Set(), entryIds: new Set() }));
+    if (!seen.ids.has(r.id)) {
+      seen.ids.add(r.id);
+      seen.tag.ids.push(r.id);
+    }
+    if (!seen.entryIds.has(r.entryId)) {
+      seen.entryIds.add(r.entryId);
+      seen.tag.entryIds.push(r.entryId);
+    }
   }
-  return [...byName.values()].sort((a, b) => b.entryIds.length - a.entryIds.length || a.name.localeCompare(b.name));
+  return [...byName.values()].map((s) => s.tag).sort((a, b) => b.entryIds.length - a.entryIds.length || a.name.localeCompare(b.name));
 }
 
 export interface Link {
