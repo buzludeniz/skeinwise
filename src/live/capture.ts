@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { basename, extname, join, relative, resolve } from 'node:path';
 import { openSafe, readRange, readSafe, UnsafeFileError } from '../fsafe.ts';
 import { parseClaudeCodeSession } from '../importers/chats.ts';
-import { readFilesUnder, readImports, sniffSession } from '../importers/detect.ts';
+import { pathInside, readFilesUnder, readImports, sniffSession } from '../importers/detect.ts';
 import { NOTE_FILE_EXT } from '../importers/note-ext.ts';
 import { FileReport } from '../importers/util.ts';
 import type { ImportBatch, ImportResult, Store } from '../store/store.ts';
@@ -439,7 +439,7 @@ export class LiveCapture {
       const text = bytes.toString('utf8');
       if (sniffSession(text) !== 'claude-code') return null;
       // Named as the importer names them: relative to the watched folder.
-      const report = new FileReport(relative(target.path, file), this.warn);
+      const report = new FileReport(pathInside(target.path, file), this.warn);
       const thread = parseClaudeCodeSession(text, id, report);
       report.done();
       const { offset = 0, ...extra } = stateAfterWholeRead(bytes, thread) ?? {};

@@ -13,6 +13,31 @@ export function fmtDate(at: string | number | Date): string {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** A title that is only a date, as a daily note's file name gives it: "2024-11-24". */
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** The text of a note's first Markdown heading, any level. */
+const FIRST_HEADING = /^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/m;
+
+/**
+ * The title to show for an entry. A daily note titled only by its date takes its first heading when it has one, else
+ * reads "Daily note · Sun 24 Nov 2024". Any other title shows as it is, and an entry without one shows `untitled`.
+ */
+export function entryTitle(e: { title?: string | null; body?: string | null }, untitled = 'Untitled'): string {
+  const title = e.title?.trim() ?? '';
+  const date = DATE_ONLY.exec(title);
+  if (!date) return title || untitled;
+  const heading = e.body ? FIRST_HEADING.exec(e.body)?.[1]?.trim() : undefined;
+  if (heading && !DATE_ONLY.test(heading)) return heading;
+  const [y, m, d] = [Number(date[1]), Number(date[2]) - 1, Number(date[3])];
+  const day = new Date(Date.UTC(y, m, d));
+  // "2024-13-45" is not a day: it stays as it was written.
+  if (day.getUTCMonth() !== m || day.getUTCDate() !== d) return title;
+  return `Daily note · ${DAYS[day.getUTCDay()]} ${fmtDate(day)}`;
+}
+
 /** "Nov 2026" from "2026-11" or a date. */
 export function fmtMonth(at: string | number | Date): string {
   if (typeof at === 'string' && /^\d{4}-\d{2}$/.test(at)) {

@@ -8,7 +8,7 @@ const ROOT = join(import.meta.dirname, '..', '..');
 
 function files(dir: string): string[] {
   return readdirSync(join(ROOT, dir)).flatMap((name) => {
-    const path = join(dir, name);
+    const path = `${dir}/${name}`; // '/' on every OS, as the paths these tests expect
     return statSync(join(ROOT, path)).isDirectory() ? files(path) : /\.tsx?$/.test(name) ? [path] : [];
   });
 }

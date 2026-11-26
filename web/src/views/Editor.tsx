@@ -1,13 +1,14 @@
 // The notes editor: plain Markdown beside a preview. Typing [[ suggests note names; ⌘S saves.
 
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useMemo, useRef, useState } from 'preact/hooks';
 import { Save, X } from 'lucide-preact';
 import { changed, closeEditor, loadRecord, message, openEntry, toast } from '../actions.ts';
 import { api } from '../api.ts';
 import { openLink, renderMarkdown } from '../markdown.ts';
 import { useApp } from '../store.ts';
 import type { EntryDetail } from '../types.ts';
-import { Button, MOD } from '../ui/common.tsx';
+import { Button, MOD, TabList } from '../ui/common.tsx';
+import { tabPanel } from '../ui/tabs.ts';
 
 export function Editor({ id, title: initialTitle }: { id: number | null; title: string }) {
   const compact = useApp((s) => s.compact);
@@ -18,6 +19,7 @@ export function Editor({ id, title: initialTitle }: { id: number | null; title: 
   const [notes, setNotes] = useState<{ id: number; title: string }[]>([]);
   const [suggest, setSuggest] = useState<{ start: number; typed: string; at: number } | null>(null);
   const [tab, setTab] = useState<'write' | 'preview'>('write');
+  const tabsId = useId();
   const [confirmClose, setConfirmClose] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
 
@@ -166,16 +168,18 @@ export function Editor({ id, title: initialTitle }: { id: number | null; title: 
         <p class="band">Saving adds a new version in the record. The original file stays as it was.</p>
       )}
       {compact && (
-        <div class="tabs" role="tablist" aria-label="Editor">
-          <button type="button" role="tab" aria-selected={tab === 'write'} class={tab === 'write' ? 'on' : ''} onClick={() => setTab('write')}>
-            Write
-          </button>
-          <button type="button" role="tab" aria-selected={tab === 'preview'} class={tab === 'preview' ? 'on' : ''} onClick={() => setTab('preview')}>
-            Preview
-          </button>
-        </div>
+        <TabList
+          id={tabsId}
+          label="Editor"
+          tabs={[
+            ['write', 'Write'],
+            ['preview', 'Preview'],
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
       )}
-      <div class="editor-panes">
+      <div class="editor-panes" {...(compact ? tabPanel(tabsId, tab) : {})}>
         {(!compact || tab === 'write') && (
           <div class="editor-write">
             <textarea

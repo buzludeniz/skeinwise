@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { BrainData, BrainPoint } from '../../src/server/queries.ts';
 import { niceMax, scale, smooth, sparseLabels } from '../../web/src/chart.ts';
+import { entryTitle } from '../../web/src/format.ts';
 import { openLink } from '../../web/src/markdown.ts';
 import { folderCounts, navItems, sourceCounts } from '../../web/src/nav.ts';
-import { batchId, importSummary, LOOSE_FOLDER, uploadPath, usable } from '../../web/src/upload.ts';
+import { anyHeldBack, batchId, importSummary, LOOSE_FOLDER, uploadPath, usable } from '../../web/src/upload.ts';
 
 const t = (iso: string) => Date.parse(iso);
 
@@ -112,6 +113,22 @@ describe('upload helpers', () => {
     expect(importSummary([r('ChatGPT', 1)])).toBe('Brought in 1 new entry from ChatGPT.');
     expect(importSummary([r('ChatGPT', 3, 2), r('Claude', 1)])).toBe('Brought in 4 new entries and 2 updated from 2 sources.');
   });
+
+  it('says where a held-back import waits, never "nothing new"', () => {
+    const held = (source: string, proposed: number, pendingId: number | null) => ({ ...r0(source), proposed, pendingId });
+    const r0 = (source: string) => ({ source, kind: 'x', added: 0, versioned: 0, unchanged: 0, threads: 0 });
+    expect(importSummary([held('ChatGPT', 12, 7)])).toBe('ChatGPT: 12 changes from another account wait for your yes as #7: skeinwise live pending.');
+    expect(importSummary([held('ChatGPT', 1, 7)])).toBe('ChatGPT: 1 change from another account waits for your yes as #7: skeinwise live pending.');
+    expect(importSummary([held('ChatGPT', 12, null)])).toBe('ChatGPT: nothing brought in; this export from another account was proposed before.');
+    // A batch with nothing to propose reads as any other import.
+    expect(importSummary([held('ChatGPT', 0, null)])).toBe('Already in the record: nothing new from ChatGPT.');
+    expect(importSummary([{ ...r0('Claude'), added: 3 }, held('ChatGPT', 2, 9)])).toBe(
+      'Brought in 3 new entries from Claude. ChatGPT: 2 changes from another account wait for your yes as #9: skeinwise live pending.',
+    );
+    expect(anyHeldBack([held('ChatGPT', 2, 9)])).toBe(true);
+    expect(anyHeldBack([held('ChatGPT', 2, null)])).toBe(true);
+    expect(anyHeldBack([held('ChatGPT', 0, null), r0('Claude')])).toBe(false);
+  });
 });
 
 describe('open wiki link', () => {
@@ -120,5 +137,32 @@ describe('open wiki link', () => {
     expect(openLink(text, text.length)).toEqual({ start: 6, typed: 'Garden pl' });
     expect(openLink('See [[Beans]] now', 17)).toBeNull();
     expect(openLink('no link', 7)).toBeNull();
+  });
+});
+
+describe('entryTitle', () => {
+  it('names a daily note by its day', () => {
+    expect(entryTitle({ title: '2024-11-24' })).toBe('Daily note · Sun 24 Nov 2024');
+    expect(entryTitle({ title: ' 2026-02-28 ', body: 'Pruned the apple trees.' })).toBe('Daily note · Sat 28 Feb 2026');
+  });
+
+  it("takes a daily note's first heading when it has one", () => {
+    expect(entryTitle({ title: '2024-11-24', body: 'Notes\n## Shed laptop backup ##\nCopied the list.' })).toBe('Shed laptop backup');
+    // A heading that is the date again says nothing more.
+    expect(entryTitle({ title: '2024-11-24', body: '# 2024-11-24\nCopied the list.' })).toBe('Daily note · Sun 24 Nov 2024');
+    // A tag is not a heading.
+    expect(entryTitle({ title: '2024-11-24', body: '#garden pruning' })).toBe('Daily note · Sun 24 Nov 2024');
+  });
+
+  it('leaves every other title as it is', () => {
+    expect(entryTitle({ title: 'Postgres or SQLite for the waiting list?' })).toBe('Postgres or SQLite for the waiting list?');
+    expect(entryTitle({ title: 'Meeting 2024-11-24' })).toBe('Meeting 2024-11-24');
+    expect(entryTitle({ title: '2024-13-45' })).toBe('2024-13-45');
+  });
+
+  it('falls back when there is no title', () => {
+    expect(entryTitle({ title: '' })).toBe('Untitled');
+    expect(entryTitle({ title: null }, 'Plot offers')).toBe('Plot offers');
+    expect(entryTitle({ title: '   ' }, 'Plot offers')).toBe('Plot offers');
   });
 });
