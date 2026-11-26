@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { UsageError } from '../errors.ts';
-import { homeNoteFile, notesDir, readNotes, removeNoteFile, rewriteNoteFile, startedNoteFile } from '../notes.ts';
+import { homeNoteFile, notesDir, readNotes, removeNoteFile, rewriteNoteFile, startedNoteFile, wordNoteFile } from '../notes.ts';
 import { inTransaction } from '../store/db.ts';
 import { type Entry, Store } from '../store/store.ts';
 import type { RecordView } from './record.ts';
@@ -255,12 +255,15 @@ export interface UndoResult {
   removed: Record<string, number>;
   /** Notes whose text came back: a review run's accepted updates, each put back as a new version. */
   restored: number[];
+  /** Files of restored notes that are Word documents, by path in the record folder: each was left as it is. */
+  word: string[];
 }
 
 /** What undoing a run did to notes before its transaction: the text put back, and the notes the run started removed. */
 interface NoteUndo {
   restored: number[];
   purged: number[];
+  word: string[];
 }
 
 /**
@@ -273,7 +276,7 @@ interface NoteUndo {
 export function undoRun(db: DatabaseSync, id: number, home?: string, now?: () => string): UndoResult {
   const before = getRun(db, id);
   const undoable = before?.status === 'done' && before.task !== 'correction' && before.task !== 'ask' && !dependents(db, id).length;
-  const { restored, purged } = undoable ? restoreEdits(db, before, home, now) : { restored: [], purged: [] };
+  const { restored, purged, word } = undoable ? restoreEdits(db, before, home, now) : { restored: [], purged: [], word: [] };
   return inTransaction(db, () => {
     const run = getRun(db, id);
     if (!run) throw new UsageError(`No run ${id}. Run "skeinwise runs" for the list.`);
@@ -297,16 +300,17 @@ export function undoRun(db: DatabaseSync, id: number, home?: string, now?: () =>
       if (purged.length) removed.notes = purged.length;
     }
     db.prepare("UPDATE runs SET status = 'undone' WHERE id = ?").run(id);
-    return { run: { ...run, status: 'undone' }, removed, restored };
+    return { run: { ...run, status: 'undone' }, removed, restored, word };
   });
 }
 
 /**
  * Puts back the text each note had before the run updated it (an accepted review update, saved with the run's id), as a
- * new version, so the update stays in history, and its file when it is kept in the record folder. Everything is
- * checked before anything changes: a note changed again since is refused, unless it already reads as before. The notes
- * folder is read first, so an edit made in a file that the record hasn't seen yet counts as a change and is never
- * written over. Returns the notes put back.
+ * new version, so the update stays in history. A note kept in the record folder has its file written back first, even
+ * when the record already reads as before; a Word document is the exception, left as it is (wordNoteFile). Everything
+ * is checked before anything changes: a note changed again since is refused, unless it already reads as before. The
+ * notes folder is read first, so an edit made in a file that the record hasn't seen yet counts as a change and is never
+ * written over. Returns the notes put back, and the Word documents among their files.
  *
  * A note an agent's run started (task 'note', its first version the run's) is removed, file and entry, while it still
  * reads as the run left it. Its file goes only when it is the one the run recorded, in the notes folder, not a link,
@@ -358,18 +362,21 @@ function restoreEdits(db: DatabaseSync, run: Run, home: string | undefined, now:
     purged.push(entryId);
   }
   const restored: number[] = [];
+  const word: string[] = [];
   for (const { entryId, before, back } of plans) {
     // The file goes first, as in resolveReview: if it can't be written, this note is as the run left it, and running
-    // the undo again does the whole of it. A note that already reads as before in the record (`skeinwise restore`, which
-    // leaves files alone) still has its file put back: the read above found nothing in it the history lacks. A file
-    // that is gone has nothing to put back.
+    // the undo again does the whole of it. A note that already reads as before in the record still has its file put
+    // back: the read above found nothing in it the history lacks. A file that is gone has nothing to put back, and a
+    // Word document is never written: accepting the update left it as it was, and so does this.
     const file = homeNoteFile(store, home, store.getEntry(entryId)!);
-    if (file && existsSync(file)) rewriteNoteFile(file, before.body);
+    const kept = file && existsSync(file) ? wordNoteFile(home, file) : null;
+    if (file && !kept && existsSync(file)) rewriteNoteFile(file, before.body);
     if (back) continue;
     store.restoreVersion(entryId, before.version, { editor: 'you' });
     restored.push(entryId);
+    if (kept) word.push(kept);
   }
-  return { restored, purged };
+  return { restored, purged, word };
 }
 
 function reverseCorrection(db: DatabaseSync, run: Run): void {

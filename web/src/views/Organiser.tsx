@@ -15,6 +15,8 @@ interface Resolution {
   item: ReviewItem;
   diff: string[];
   saved: boolean;
+  /** The note's file when it is a Word document, which the update left as it was. */
+  word: string | null;
 }
 
 /** Takes back a correction (a rename, a merge, a hub marked not useful): it is a run like any other. */
@@ -98,6 +100,7 @@ function ReviewCard({ item, title }: { item: ReviewItem; title: string }) {
           await api.put(`entries/${item.noteEntry}`, { body: before });
           await loadRecord();
         });
+        if (done.word) toast(`${done.word} is a Word document, which Skeinwise doesn’t write, so it doesn’t have this update.`);
       } else toast(action === 'holds' ? `“${title}” still holds. Those entries won’t flag it again.` : `Skipped “${title}” until the next review run.`);
     } catch (error) {
       toast(message(error), { tone: 'error' });

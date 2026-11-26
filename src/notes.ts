@@ -22,7 +22,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { UsageError } from './errors.ts';
 import { readImports } from './importers/detect.ts';
 import { parseFrontMatter } from './importers/notes.ts';
@@ -364,10 +364,21 @@ export function homeNoteFile(store: Store, home: string, entry: Entry): string |
 }
 
 /**
+ * The path in the record folder of a note file that is a Word document, or null for any other file. Skeinwise only
+ * reads a Word document, so whatever changes the note's text in the record leaves the file as it is and tells the
+ * person: rewriteNoteFile would write Markdown over it and ruin it.
+ */
+export function wordNoteFile(home: string, file: string): string | null {
+  return extname(file).toLowerCase() === '.docx' ? relative(home, file) : null;
+}
+
+/**
  * Replaces a note file's text below its front matter, which stays as it was. The path comes from homeNoteFile or
- * notePath, which keep it in the notes folder; a link at the file itself is refused here.
+ * notePath, which keep it in the notes folder; a link at the file itself is refused here, and so is a Word document
+ * (wordNoteFile), which this would ruin.
  */
 export function rewriteNoteFile(path: string, body: string): void {
+  if (extname(path).toLowerCase() === '.docx') throw new Error(`${path} is a Word document, which Skeinwise doesn't write. Nothing was saved.`);
   if (!present(path)) throw new Error(`The note file ${path} is gone, so it can't be updated. Nothing was saved.`);
   const front = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(readNoteFile(path))?.[0];
   // Truncated after the open, not with O_TRUNC: Windows refuses O_TRUNC without O_CREAT (EINVAL).

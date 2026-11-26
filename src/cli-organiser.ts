@@ -226,6 +226,7 @@ const undo: Command = (ctx) => {
     const removed = Object.entries(result.removed).map(([table, n]) => `${n} ${MADE[table] ?? table}`);
     const back = result.restored.length ? ` Put back the text of ${result.restored.map((n) => `#${n}`).join(', ')}.` : '';
     say(ctx, `Undid run ${id} (${runWhat(result.run, schemaNames(ctx.store))}). Removed ${removed.length ? removed.join(', ') : 'nothing'}.${back}`);
+    for (const file of result.word) say(ctx, `${file} is a Word document, which Skeinwise doesn't write, so it was left as it is.`);
   }
   return 0;
 };
@@ -475,6 +476,7 @@ const review: Command = (ctx) => {
       say(ctx, `Note #${note}, as the update would change it:\n${res.diff.join('\n')}\n`);
       if (!res.saved) say(ctx, `Nothing is saved yet. Save it with: skeinwise review --resolve ${id} update --yes`);
       else say(ctx, `Saved note #${note} as version ${res.version}${res.file ? `, and wrote ${res.file}` : ''}. The text before stays in its history: skeinwise history ${note}`);
+      if (res.saved && res.word) say(ctx, `${res.word} is a Word document, which Skeinwise doesn't write, so it doesn't have this update.`);
     }
     return 0;
   }
