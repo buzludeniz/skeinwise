@@ -31,49 +31,28 @@ export interface NoteName {
   externalId: string;
 }
 
-/** A path as [[links]] write it: `/` between folders, no extension, lowercase. A table's `[[Note\|alias]]` leaves a `\`. */
-function linkPath(text: string): string {
-  return text
-    .trim()
-    .replace(/\\+$/, '')
-    .replaceAll('\\', '/')
-    .replace(/^\.?\//, '')
-    .replace(/\.(md|markdown|txt)$/i, '')
-    .trim()
-    .toLowerCase();
-}
-
 /**
- * Which note a [[link]] names, read the way Obsidian writes links (LS-19). The alias and heading are gone already
- * (`linkTargets`). In order: the note at that path in the vault (`[[Garden/Plan]]`, and `[[Plan]]` for one at the
- * root); a note whose path ends in it, by whole folders (`[[Plotline/Plan]]` for Projects/Plotline/Plan.md); then a
- * note by file name or title. Where two share a name, the first in the record wins. A path that names no note names
- * none, even when its file name matches one: Obsidian would make a new note there.
+ * Which note a [[link]] names: a note whose title, or file name without its folder and extension, is the link's text
+ * (any case). The alias and heading are gone already (`linkTargets`). Where two share a name, the first in the record
+ * wins. Folder links (`[[Garden/Plan]]`) and a table's escaped `[[Note\|alias]]` wait for 1.1 (LS-19's link part, cut
+ * by Deniz on Nov 25; bd66d5d has it), so they match only a title written the same way.
  */
 export class NoteNames<T extends NoteName> {
-  private readonly byPath = new Map<string, T>();
-  private readonly byBase = new Map<string, T[]>();
   private readonly byName = new Map<string, T>();
 
   constructor(entries: Iterable<T>) {
     for (const e of entries) {
       if (e.kind !== 'note') continue;
-      const path = linkPath(e.externalId);
-      const base = path.split('/').pop()!;
-      if (!this.byPath.has(path)) this.byPath.set(path, e);
-      this.byBase.set(base, [...(this.byBase.get(base) ?? []), e]);
-      for (const name of [base, (e.title ?? '').trim().toLowerCase()]) if (name && !this.byName.has(name)) this.byName.set(name, e);
+      const base = e.externalId.split('/').pop()!.replace(/\.(md|markdown|txt)$/i, '');
+      for (const name of [base, e.title ?? '']) {
+        const key = name.trim().toLowerCase();
+        if (key && !this.byName.has(key)) this.byName.set(key, e);
+      }
     }
   }
 
   resolve(target: string): T | undefined {
-    const path = linkPath(target);
-    if (!path) return undefined;
-    const exact = this.byPath.get(path);
-    if (exact) return exact;
-    if (!path.includes('/')) return this.byName.get(path);
-    const base = path.split('/').pop()!;
-    return this.byBase.get(base)?.find((e) => linkPath(e.externalId).endsWith(`/${path}`)) ?? this.byName.get(path);
+    return this.byName.get(target.trim().toLowerCase());
   }
 }
 

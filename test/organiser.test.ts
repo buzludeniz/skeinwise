@@ -278,7 +278,8 @@ describe('a quieter review (LS-14)', () => {
   });
 });
 
-describe('[[links]] the way Obsidian writes them (LS-19)', () => {
+// LS-19's folder links and the escaped pipe wait for 1.1 (cut by Deniz on Nov 25). bd66d5d has them and their tests.
+describe('[[links]] by file name or title', () => {
   let store: Store;
   let record: RecordView;
   const note = (externalId: string, title: string, i: number, body = `About ${title}.`): EntryInput => ({
@@ -298,39 +299,26 @@ describe('[[links]] the way Obsidian writes them (LS-19)', () => {
       entries: [
         note('Projects/Plotline/Plan.md', 'Plan', 1),
         note('Garden/Plan.md', 'Plan', 2),
-        note('Plan.md', 'Plan', 3),
-        note('Recipes\\Rye loaf.md', 'Rye loaf', 4),
-        note('Inbox/Meeting notes.markdown', 'Standup 3 March', 5),
-        note('Index.md', 'Index', 6, 'See [[Garden/Plan|the garden plan]], [[Plotline/Plan#Week 2]] and | [[Rye loaf\\|rye]] |, and [[Nowhere/Plan]].'),
+        note('Inbox/Meeting notes.markdown', 'Standup 3 March', 3),
+        note('Index.md', 'Index', 4, 'See [[plan|the plan]], [[Meeting notes#Week 2]], [[Standup 3 March]] and [[Garden/Plan]].'),
       ],
     });
     record = new RecordView(store);
   });
   const at = (target: string) => record.resolveLink(target)?.externalId;
 
-  it('finds a note by its path in the vault, or by the end of it', () => {
-    expect(at('Garden/Plan')).toBe('Garden/Plan.md');
-    expect(at('Projects/Plotline/Plan')).toBe('Projects/Plotline/Plan.md');
-    expect(at('Plotline/Plan')).toBe('Projects/Plotline/Plan.md');
-    expect(at('garden/plan.md')).toBe('Garden/Plan.md');
-    expect(at('Recipes/Rye loaf')).toBe('Recipes\\Rye loaf.md');
-    // The end of a path is whole folders, and a path that names no note names none, even when its file name does.
-    expect(at('lotline/Plan')).toBeUndefined();
-    expect(at('Nowhere/Plan')).toBeUndefined();
-  });
-
-  it('finds a note by file name or title, the vault root first when names are shared', () => {
-    expect(at('Plan')).toBe('Plan.md');
-    expect(at('Meeting notes')).toBe('Inbox/Meeting notes.markdown');
+  it('finds a note by file name or title in any case, the first in the record when names are shared', () => {
+    expect(at('Plan')).toBe('Projects/Plotline/Plan.md');
+    expect(at(' meeting NOTES ')).toBe('Inbox/Meeting notes.markdown');
     expect(at('Standup 3 March')).toBe('Inbox/Meeting notes.markdown');
-    expect(at('Rye loaf.md')).toBe('Recipes\\Rye loaf.md');
+    expect(at('Garden/Plan')).toBeUndefined();
   });
 
-  it('reads aliases, headings and the escaped pipe a table needs, and links the notes they name', () => {
+  it('reads past an alias and a heading, and links the notes named', () => {
     const index = record.entries.find((e) => e.title === 'Index')!;
-    expect(linkTargets(index.body).map(at)).toEqual(['Garden/Plan.md', 'Projects/Plotline/Plan.md', 'Recipes\\Rye loaf.md', undefined]);
+    expect(linkTargets(index.body).map(at)).toEqual(['Projects/Plotline/Plan.md', 'Inbox/Meeting notes.markdown', 'Inbox/Meeting notes.markdown', undefined]);
     const to = liveLinks(store.db, index.id).map((l) => store.getEntry(l.to)!.externalId);
-    expect(to).toEqual(['Garden/Plan.md', 'Projects/Plotline/Plan.md', 'Recipes\\Rye loaf.md']);
+    expect(to).toEqual(['Projects/Plotline/Plan.md', 'Inbox/Meeting notes.markdown']);
   });
 });
 
