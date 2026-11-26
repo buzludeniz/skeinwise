@@ -104,14 +104,21 @@ export function prepare(dir: string): void {
   writeFileSync(join(dir, MARK), 'Made by bench/run.ts; it clears this folder on its next run.\n');
 }
 
-/** Runs one job in a fresh worker. A worker still running after `timeout` ms is stopped and rejects with Stopped. */
-function runWorker(job: Job, env: NodeJS.ProcessEnv, timeout: number): Promise<WorkerReport> {
+/**
+ * Runs one job in a fresh worker. A worker still running after `timeout` ms is stopped and rejects with Stopped, which
+ * carries the most resident memory seen in samples taken every second.
+ */
+export function runWorker(job: Job, env: NodeJS.ProcessEnv, timeout: number): Promise<WorkerReport> {
   return new Promise((done, fail) => {
     const child = spawn(process.execPath, [WORKER, JSON.stringify(job)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     child.stdout.on('data', (d: Buffer) => (out += d.toString()));
     child.stderr.on('data', (d: Buffer) => (err += d.toString()));
+    let sampled = 0;
+    const sampler = setInterval(() => {
+      if (child.pid !== undefined && child.exitCode === null) residentMB(child.pid).then((mb) => void (sampled = Math.max(sampled, mb)), () => {});
+    }, 1_000);
     let stopped = false;
     const timer = setTimeout(() => {
       stopped = true;
@@ -120,18 +127,22 @@ function runWorker(job: Job, env: NodeJS.ProcessEnv, timeout: number): Promise<W
     child.on('error', fail);
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (stopped) fail(new Stopped(timeout));
+      clearInterval(sampler);
+      if (stopped) fail(new Stopped(timeout, sampled));
       else if (code !== 0) fail(new Error(err.trim().split('\n').slice(-3).join(' ') || `the worker exited ${code}`));
       else done(JSON.parse(out.trim().split('\n').pop()!) as WorkerReport);
     });
   });
 }
 
-class Stopped extends Error {
+export class Stopped extends Error {
   readonly after: number;
-  constructor(after: number) {
+  /** The most resident memory seen before the stop, in MB; 0 when no sample was taken. */
+  readonly peakMB: number;
+  constructor(after: number, peakMB: number) {
     super(`stopped after ${show(after, 'ms')}`);
     this.after = after;
+    this.peakMB = peakMB;
   }
 }
 
@@ -155,6 +166,7 @@ async function waitFor(check: () => boolean | Promise<boolean>, timeout: number,
 
 export async function bench(opts: BenchOptions): Promise<number> {
   const { size, entries } = opts;
+  const loadAtStart = loadavg()[0]!;
   prepare(opts.dir);
   const home = join(opts.dir, 'home');
   const user = join(opts.dir, 'user');
@@ -201,20 +213,29 @@ export async function bench(opts: BenchOptions): Promise<number> {
     if (imported !== entries) results.set('import.time', { error: `${imported} of the ${entries} entries written were imported` });
   });
 
+  let organised = false;
   await measure(['runAll.time', 'runAll.memory'], 'first run all --engine none (the longest step)', async () => {
     const limit = 2 * limitOf('runAll.time', size);
     try {
       const r = await runWorker({ kind: 'cli', runs: [['run', 'all', '--engine', 'none']] }, env, limit);
       results.set('runAll.time', { value: r.times[0]! });
       results.set('runAll.memory', { value: r.peakMB });
+      organised = true;
     } catch (err) {
       if (!(err instanceof Stopped)) throw err;
       results.set('runAll.time', { value: err.after, note: 'stopped at twice the budget' });
-      results.set('runAll.memory', { error: 'not known: the run was stopped' });
+      // Memory seen before the stop is a floor: over budget if it already was, otherwise not known.
+      results.set(
+        'runAll.memory',
+        err.peakMB > limitOf('runAll.memory', size)
+          ? { value: err.peakMB, note: 'at least: sampled until the run was stopped' }
+          : { error: `not known: the run was stopped at ${show(err.peakMB, 'MB')}` },
+      );
     }
   });
 
   await measure(['incremental.time'], 'organise 100 new entries', async () => {
+    if (!organised) throw new Error('not measured: the first run all did not finish, so every entry is still new');
     const increment = writeIncrement(join(opts.dir, 'corpus'), 100);
     const runs = [['import', increment], ['run', 'all', '--engine', 'none', '--scope', 'new']];
     const r = await runWorker({ kind: 'cli', runs }, env, 3 * limitOf('incremental.time', size));
@@ -244,7 +265,8 @@ export async function bench(opts: BenchOptions): Promise<number> {
     results.set('web.js', webInitialJs(join(ROOT, 'dist', 'web')));
   });
 
-  const machine = `Node ${process.version}, ${platform()} ${arch()}, ${cpus().length} cores, ${Math.round(totalmem() / 2 ** 30)} GB, load ${loadavg()[0]!.toFixed(1)}`;
+  const load = `load ${loadAtStart.toFixed(1)} at the start and ${loadavg()[0]!.toFixed(1)} at the end`;
+  const machine = `Node ${process.version}, ${platform()} ${arch()}, ${cpus().length} cores, ${Math.round(totalmem() / 2 ** 30)} GB, ${load}`;
   const rows = judge(size, results);
   const corpusSize = entries === SIZES[size] ? `${entries.toLocaleString('en')} entries` : `a check run on ${entries.toLocaleString('en')} entries, not ${size}`;
   process.stdout.write(`Skeinwise bench, ${size} budgets (${corpusSize}, seed ${opts.seed}). ${machine}.\n`);

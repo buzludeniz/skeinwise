@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { BUDGETS, judge, percentile, report, type Result } from '../bench/budgets.ts';
 import { planCorpus, writeCorpus, writeIncrement } from '../bench/corpus.ts';
-import { MCP_CALLS, parseOptions, prepare, webInitialJs } from '../bench/run.ts';
+import { MCP_CALLS, parseOptions, prepare, runWorker, Stopped, webInitialJs } from '../bench/run.ts';
 import { work } from '../bench/worker.ts';
 
 let dir: string;
@@ -115,6 +115,15 @@ describe('bench runner', () => {
     expect(() => parseOptions(['--entries', '10'])).toThrow(/1000 or more/);
     expect(parseOptions([]).dir).toMatch(/[/\\]\.skeinwise[/\\]bench[/\\]50k$/);
     expect(() => parseOptions(['1m'])).toThrow(/50k or 150k/);
+  });
+
+  it('stops a worker that runs past its time and says when', async () => {
+    const corpus = writeCorpus(join(dir, 'corpus'), 3_000);
+    const env = { ...process.env, SKEINWISE_HOME: join(dir, 'home'), HOME: join(dir, 'user') };
+    const stopped = await runWorker({ kind: 'cli', runs: [['import', ...corpus.paths]] }, env, 50).catch((err: unknown) => err);
+    expect(stopped).toBeInstanceOf(Stopped);
+    expect((stopped as Stopped).after).toBe(50);
+    expect((stopped as Stopped).message).toBe('stopped after 50 ms');
   });
 
   it('clears only a folder it made, or an empty one', () => {
