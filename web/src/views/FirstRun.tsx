@@ -12,7 +12,7 @@ import { Button, Kbd, Logo, MOD, useFocusTrap } from '../ui/common.tsx';
 import { importSummary } from '../upload.ts';
 
 type Step = 'setup' | 'bring' | 'grow';
-type LineState = 'wait' | 'busy' | 'done' | 'warn' | 'later';
+type LineState = 'wait' | 'busy' | 'done' | 'warn';
 type FoundRow = Found & { decision: 'in' | 'out' | 'later' | null };
 
 const STEPS: [Step, string][] = [
@@ -30,7 +30,7 @@ function Mark({ state }: { state: LineState }) {
   if (state === 'done') return <Check size={16} class="ok-text" aria-label="Done" />;
   if (state === 'busy') return <LoaderCircle size={16} class="spin" aria-label="Working" />;
   if (state === 'warn') return <TriangleAlert size={16} class="warn-text" aria-label="Needs a look" />;
-  return <CircleDashed size={16} class="soft" aria-label={state === 'later' ? 'Later' : 'Waiting'} />;
+  return <CircleDashed size={16} class="soft" aria-label="Waiting" />;
 }
 
 function Steps({ step }: { step: Step }) {
@@ -80,7 +80,7 @@ function SetUp({ onNext }: { onNext: () => void }) {
       mark('record', 'warn');
     }
     await pause();
-    mark('servers', 'later');
+    mark('servers', 'done');
     mark('model', 'busy');
     try {
       const t = await api.get<{ ok: boolean; message: string }>('model/test');
@@ -116,8 +116,11 @@ function SetUp({ onNext }: { onNext: () => void }) {
         <li>
           <Mark state={lines.servers!} />
           <span>
-            Two local servers for AI agents: the memory server and the window server
-            <span class="soft"> · they come in version 0.5</span>
+            Two MCP servers for your AI agents: memory over your record, and a way to steer this app's view
+            <span class="soft block">
+              To give an agent your record as its memory, run <code>skeinwise connect claude-code</code> in a terminal,
+              with codex, cursor or claude-desktop in place of claude-code for the others.
+            </span>
           </span>
         </li>
         <li>
