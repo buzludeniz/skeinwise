@@ -1,134 +1,27 @@
-// The fuzz harness for the import parsers: decodeText, scanXml, readDocx and parseFrontMatter/parseNote. Each target
-// takes a mutated input and must either return or refuse it the way it says it will (UnsafeFileError, XmlError) within
-// a time budget; any other error, a result that breaks a target's own rule, or a slow input is a finding. Every input is
-// built at run time from the seeds written here, so nothing hostile is ever committed.
-//
-// test/importers-fuzz.test.ts runs a few hundred seeded inputs per target with the suite. A long run, from the repo:
-//
-//   node test/fuzz/importers.ts --seconds 600 --dir <a new folder> [--seed 1] [--target docx]
-//   node test/fuzz/importers.ts --replay <dir>/<finding>.bin --target docx
-//
-// A long run loads the Mac for minutes: take the heavy-job turn first and release it when it ends. Each finding names
-// its target, seed and iteration, which replay it exactly, and its input is written to --dir.
+// The fuzz targets for the import parsers: decodeText, the line endings of a note, scanXml, readDocx (through the zip
+// reader) and parseFrontMatter/parseNote. Each takes a mutated input and returns, or refuses it the way it says it will
+// (UnsafeFileError, XmlError); what it returns must also keep the rules written in its `run`. The seeds are built here
+// at run time, so nothing hostile is committed.
 
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { parseArgs } from 'node:util';
 import { strToU8, unzipSync, zipSync } from 'fflate';
 import { UnsafeFileError } from '../../src/fsafe.ts';
-import { mulberry32 } from '../../src/random.ts';
 import { docxNoteText, readDocx } from '../../src/importers/docx.ts';
 import { parseFrontMatter, parseNote } from '../../src/importers/notes.ts';
-import { decodeText } from '../../src/importers/text.ts';
+import { decodeText, type TextEncoding } from '../../src/importers/text.ts';
 import { scanXml, XmlError } from '../../src/importers/xml.ts';
-
-type Rng = () => number;
-
-export interface Target {
-  name: string;
-  /** Valid inputs to start from. */
-  seeds: () => Uint8Array[];
-  /** Words worth inserting: the syntax this parser cares about. */
-  tokens: string[];
-  /** Runs one input. Throws a refusal the target promises, or anything else when it found a bug. */
-  run: (input: Uint8Array, scratch: string) => void;
-  /** The errors that are the parser saying no, as it should. */
-  refused: (error: unknown) => boolean;
-  /** Mutates in a way that knows the format, some of the time (a .docx: a part's XML, zipped again). */
-  mutate?: (rng: Rng, seed: Uint8Array, generic: (bytes: Uint8Array) => Uint8Array) => Uint8Array;
-}
-
-export interface Finding {
-  target: string;
-  seed: number;
-  iteration: number;
-  ms: number;
-  error: string;
-  input: Uint8Array;
-}
-
-/** The largest input a mutation may build: big enough for a repeated token to show a parser going quadratic. */
-const MAX_INPUT = 1024 * 1024;
+import { concat, int, MAX_INPUT, mutateZipField, pick, type Rng, type Target } from './engine.ts';
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
-function wellFormed(text: string, what: string): void {
+export function wellFormed(text: string, what: string): void {
   if (LONE_SURROGATE.test(text)) throw new Error(`${what} holds a lone surrogate`);
 }
 
-const utf8 = (bytes: Uint8Array) => new TextDecoder('utf-8').decode(bytes);
-const pick = <T>(rng: Rng, list: readonly T[]): T => list[Math.floor(rng() * list.length)]!;
-const int = (rng: Rng, below: number) => Math.floor(rng() * below);
-
-function concat(...parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let at = 0;
-  for (const p of parts) {
-    out.set(p, at);
-    at += p.length;
-  }
-  return out;
-}
-
-const INTERESTING = [0x00, 0x0a, 0x0d, 0x20, 0x22, 0x23, 0x26, 0x2d, 0x2f, 0x3a, 0x3b, 0x3c, 0x3e, 0x5b, 0x5d, 0x7f, 0x80, 0xbf, 0xc0, 0xef, 0xfe, 0xff];
-
-/** One to four generic mutations: bit flips, odd bytes, cuts, deletions, splices from the seeds, repeats, tokens. */
-function mutateBytes(rng: Rng, input: Uint8Array, seeds: Uint8Array[], tokens: Uint8Array[]): Uint8Array {
-  let bytes = input;
-  for (let n = 1 + int(rng, 4); n > 0; n--) {
-    const at = int(rng, bytes.length + 1);
-    switch (int(rng, 8)) {
-      case 0: {
-        bytes = bytes.slice();
-        for (let k = 1 + int(rng, 8); k > 0 && bytes.length; k--) bytes[int(rng, bytes.length)]! ^= 1 << int(rng, 8);
-        break;
-      }
-      case 1: {
-        bytes = bytes.slice();
-        for (let k = 1 + int(rng, 4); k > 0 && bytes.length; k--) bytes[int(rng, bytes.length)] = pick(rng, INTERESTING);
-        break;
-      }
-      case 2:
-        bytes = bytes.subarray(0, at);
-        break;
-      case 3:
-        bytes = concat(bytes.subarray(0, at), bytes.subarray(Math.min(bytes.length, at + 1 + int(rng, 64))));
-        break;
-      case 4: {
-        const other = pick(rng, seeds);
-        const from = int(rng, other.length);
-        bytes = concat(bytes.subarray(0, at), other.subarray(from, from + 1 + int(rng, 256)), bytes.subarray(at));
-        break;
-      }
-      case 5: {
-        // A chunk repeated many times: the shape that makes a backtracking parser slow.
-        const chunk = bytes.subarray(at, at + 1 + int(rng, 16));
-        const times = Math.min(1 << int(rng, 17), Math.floor(MAX_INPUT / Math.max(1, chunk.length)));
-        const repeated = new Uint8Array(chunk.length * times);
-        for (let i = 0; i < times; i++) repeated.set(chunk, i * chunk.length);
-        bytes = concat(bytes.subarray(0, at), repeated, bytes.subarray(at));
-        break;
-      }
-      case 6:
-      case 7: {
-        const token = pick(rng, tokens);
-        const times = rng() < 0.2 ? Math.min(1 << int(rng, 14), Math.floor(MAX_INPUT / Math.max(1, token.length))) : 1;
-        const repeated = new Uint8Array(token.length * times);
-        for (let i = 0; i < times; i++) repeated.set(token, i * token.length);
-        bytes = concat(bytes.subarray(0, at), repeated, bytes.subarray(at));
-        break;
-      }
-    }
-    if (bytes.length > MAX_INPUT) bytes = bytes.subarray(0, MAX_INPUT);
-  }
-  return bytes;
-}
+export const utf8 = (bytes: Uint8Array): string => new TextDecoder('utf-8').decode(bytes);
 
 // ---- seeds ----
 
-const NOTE = '---\ntitle: "Seed swap: spring"\ncreated: 2025-03-01\ntags: [garden, seeds]\npeople:\n  - Ana\n  - "Bo, Jr"\nsummary: |\n  two\n  lines\n---\n# Swap\n\nBring #seeds and [[Seed list]].\n';
+export const NOTE = '---\ntitle: "Seed swap: spring"\ncreated: 2025-03-01\ntags: [garden, seeds]\npeople:\n  - Ana\n  - "Bo, Jr"\nsummary: |\n  two\n  lines\n---\n# Swap\n\nBring #seeds and [[Seed list]].\n';
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const DOCUMENT = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="${W}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>
@@ -146,35 +39,183 @@ function docxParts(): Record<string, Uint8Array> {
   return { '_rels/.rels': strToU8(RELS), 'word/document.xml': strToU8(DOCUMENT), 'word/styles.xml': strToU8(STYLES), 'docProps/core.xml': strToU8(CORE) };
 }
 
+// ---- structure-aware XML mutation ----
+
+const ELEMENTS = ['w:p', 'w:r', 'w:t', 'w:tbl', 'w:tr', 'w:tc', 'w:del', 'w:pPr', 'w:body', 'w:style', 'dc:title', 'Relationship'];
+const TEXT_TOKENS = ['&amp;', '&lt;', '&#x1F331;', '&#xD800;', '&#0;', '&#x110000;', '&unknown;', '&', '﻿', '‮', '\r\n', '\t', '# ', '---', '[[x]]', '|', '`', '<!-- c -->', '<![CDATA[<]]>', ']]>'];
+const ATTR_TOKENS = [' w:val="Heading1"', ' w:val="Heading9"', ' w:val=""', ' w:val="&quot;"', ' w:val="a" w:val="b"', ' xmlns:w="urn:other"', ' xml:space="preserve"', ' Target="../../x.xml"', ' Target="/word/document.xml"', ' Type="x"', ' __proto__="p"', ' w:styleId="Sub"', ' w:ilvl="99999"'];
+const NEST = ['<w:tbl><w:tr><w:tc>', '</w:tc></w:tr></w:tbl>'] as const;
+
+/** Where the element opened at `at` ends, past its closing tag, by counting tags of its own name; -1 when it doesn't. */
+function elementEnd(xml: string, at: number, name: string): number {
+  const self = xml.indexOf('>', at);
+  if (self < 0) return -1;
+  if (xml[self - 1] === '/') return self + 1;
+  const tags = new RegExp(`<(/?)${name.replace(':', '\\:')}(?=[\\s/>])[^>]*?(/?)>`, 'g');
+  tags.lastIndex = at;
+  let depth = 0;
+  for (let m = tags.exec(xml); m; m = tags.exec(xml)) {
+    if (m[2]) continue;
+    depth += m[1] ? -1 : 1;
+    if (depth === 0) return m.index + m[0].length;
+  }
+  return -1;
+}
+
+/** One element of the given name, picked at random: [start, end), or null. */
+function someElement(rng: Rng, xml: string, name: string): [number, number] | null {
+  const starts: number[] = [];
+  const open = new RegExp(`<${name.replace(':', '\\:')}(?=[\\s/>])`, 'g');
+  for (let m = open.exec(xml); m && starts.length < 512; m = open.exec(xml)) starts.push(m.index);
+  if (!starts.length) return null;
+  const start = pick(rng, starts);
+  const end = elementEnd(xml, start, name);
+  return end < 0 ? null : [start, end];
+}
+
+/** A place between two tags, where an element can go. */
+function someGap(rng: Rng, xml: string): number {
+  const gaps: number[] = [];
+  for (let i = xml.indexOf('><'); i >= 0 && gaps.length < 4096; i = xml.indexOf('><', i + 1)) gaps.push(i + 1);
+  return gaps.length ? pick(rng, gaps) : xml.length;
+}
+
+/**
+ * Changes an XML part the way a strange but well-formed document would: elements duplicated, dropped, repeated or
+ * nested deep, odd text and attributes, with a generic byte mutation now and then for the parser's error paths.
+ */
+export function mutateXml(rng: Rng, xml: string, generic: (bytes: Uint8Array) => Uint8Array): string {
+  if (rng() < 0.2) return utf8(generic(strToU8(xml)));
+  let out = xml;
+  for (let n = 1 + int(rng, 3); n > 0; n--) {
+    const op = int(rng, 6);
+    const el = someElement(rng, out, pick(rng, ELEMENTS));
+    if (op === 0 && el) {
+      out = out.slice(0, el[1]) + out.slice(el[0], el[1]) + out.slice(el[1]);
+    } else if (op === 1 && el) {
+      out = out.slice(0, el[0]) + out.slice(el[1]);
+    } else if (op === 2 && el) {
+      // Many copies, to reach the size caps and anything slow in the number of elements.
+      const one = out.slice(el[0], el[1]);
+      const times = Math.min(1 + int(rng, 4000), Math.floor((MAX_INPUT - out.length) / Math.max(1, one.length)));
+      if (times > 0) out = out.slice(0, el[1]) + one.repeat(times) + out.slice(el[1]);
+    } else if (op === 3 && el) {
+      // Tables in tables, around and past the parser's depth limit.
+      const depth = pick(rng, [2, 50, 1000, 1364, 1365, 1366, 2000]);
+      out = out.slice(0, el[0]) + NEST[0].repeat(depth) + out.slice(el[0], el[1]) + NEST[1].repeat(depth) + out.slice(el[1]);
+    } else if (op === 4) {
+      const texts: number[] = [];
+      for (let m = /<(?:w:t|w:delText|dc:title)(?:\s[^>]*)?>/g, r = m.exec(out); r && texts.length < 512; r = m.exec(out)) texts.push(r.index + r[0].length);
+      const at = texts.length ? pick(rng, texts) : someGap(rng, out);
+      out = out.slice(0, at) + pick(rng, TEXT_TOKENS) + out.slice(at);
+    } else {
+      const tags: number[] = [];
+      for (let m = /<[A-Za-z][\w:.-]*/g, r = m.exec(out); r && tags.length < 512; r = m.exec(out)) tags.push(r.index + r[0].length);
+      if (tags.length) {
+        const at = pick(rng, tags);
+        out = out.slice(0, at) + pick(rng, ATTR_TOKENS) + out.slice(at);
+      }
+    }
+  }
+  return out.length > MAX_INPUT ? out.slice(0, MAX_INPUT) : out;
+}
+
 const XML_TOKENS = ['<', '>', '</', '/>', '<!--', '-->', '<![CDATA[', ']]>', '<?', '?>', '<!DOCTYPE a [<!ENTITY x "y">]>', '&', '&amp;', '&#', '&#x', '&#x1F331;', '&#0;', ';', '"', "'", '=', ' xmlns:w="x"', '<w:p>', '</w:p>', '<w:t>', '</w:t>', '<w:tbl><w:tr><w:tc>', '<w:del>', '﻿', '\u0000'];
+
+// ---- text decoding ----
+
+const BOMS: Record<TextEncoding, number[]> = {
+  'utf-8': [0xef, 0xbb, 0xbf],
+  'utf-16le': [0xff, 0xfe],
+  'utf-16be': [0xfe, 0xff],
+  'utf-32le': [0xff, 0xfe, 0, 0],
+  'utf-32be': [0, 0, 0xfe, 0xff],
+};
+
+function encode(text: string, encoding: TextEncoding): Uint8Array {
+  if (encoding === 'utf-8') return Buffer.from(text, 'utf8');
+  if (encoding === 'utf-16le') return Buffer.from(text, 'utf16le');
+  if (encoding === 'utf-16be') return Buffer.from(text, 'utf16le').swap16();
+  const points = [...text].map((c) => c.codePointAt(0)!);
+  const out = Buffer.alloc(points.length * 4);
+  points.forEach((p, i) => (encoding === 'utf-32le' ? out.writeUInt32LE(p, i * 4) : out.writeUInt32BE(p, i * 4)));
+  return out;
+}
+
+const equalBytes = (a: Uint8Array, b: Uint8Array): boolean => Buffer.compare(a, b) === 0;
+
+/** decodeText's promises: well-formed text without a NUL, a mark it names, and nothing replaced that it doesn't say. */
+function checkDecoded(input: Uint8Array): string {
+  const decoded = decodeText(input, 'fuzz.txt');
+  const { text, encoding, bom, replaced } = decoded;
+  wellFormed(text, 'the decoded text');
+  if (text.includes('\0')) throw new Error('a NUL came through');
+  const mark = BOMS[encoding];
+  if (bom && !mark.every((b, i) => input[i] === b)) throw new Error(`says it dropped a ${encoding} mark the input doesn't start with`);
+  if (replaced && !text.includes('�')) throw new Error('says it replaced bytes, and holds no U+FFFD');
+  // Nothing replaced: the text is exactly the input's bytes after the mark, in its encoding.
+  if (!replaced && !equalBytes(encode(text, encoding), input.subarray(bom ? mark.length : 0))) throw new Error(`replaced bytes without saying so (${encoding})`);
+  return text;
+}
+
+// ---- line endings ----
+
+/** Every line break as CR LF; a lone CR stays. Undone by `lf` below, as `lf(crlf(t)) === lf(t)`. */
+const crlf = (t: string): string => t.replace(/\r?\n/g, '\r\n');
+const lf = (t: string): string => t.replace(/\r\n/g, '\n');
+
+/** A parsed note with every string's CR LF made LF, as JSON: the same note whatever its line breaks were. */
+function noteRead(text: string): string {
+  // A name with no stem, so the title falls back to the note's first line when it has no heading or title.
+  const note = parseNote('.md', text, new Date(0));
+  return JSON.stringify(note, (_key, value: unknown) => (typeof value === 'string' ? lf(value) : value));
+}
 
 // ---- targets ----
 
-export const TARGETS: Target[] = [
+const notFile = (error: unknown) => error instanceof UnsafeFileError && error.reason === 'not-a-file';
+
+export const IMPORTER_TARGETS: Target[] = [
   {
     name: 'text',
+    owner: 'src/importers/text.ts (tab 9)',
+    memoryMiB: 256,
     seeds: () => {
       const wide = Buffer.from(NOTE, 'utf16le');
       return [
         strToU8(NOTE),
-        concat(new Uint8Array([0xef, 0xbb, 0xbf]), strToU8(NOTE)),
-        concat(new Uint8Array([0xff, 0xfe]), wide),
-        concat(new Uint8Array([0xfe, 0xff]), Buffer.from(wide).swap16()),
+        concat(new Uint8Array(BOMS['utf-8']), strToU8(NOTE)),
+        concat(new Uint8Array(BOMS['utf-16le']), wide),
+        concat(new Uint8Array(BOMS['utf-16be']), Buffer.from(wide).swap16()),
         wide,
-        concat(new Uint8Array([0xff, 0xfe, 0, 0]), new Uint8Array(new Uint32Array([...NOTE].map((c) => c.codePointAt(0)!)).buffer)),
+        concat(new Uint8Array(BOMS['utf-32le']), encode(NOTE, 'utf-32le')),
+        concat(new Uint8Array(BOMS['utf-32be']), encode('Bring 🌱 seeds\r\n', 'utf-32be')),
+        strToU8('mixed\r\nline\nends\rhere\n\r'),
       ];
     },
-    tokens: ['﻿', '\u0000', '�', '\u{1F331}', '\r\n', '\uD800', '\xff', '\xfe\xff', '\xef\xbb\xbf'],
+    tokens: ['﻿', '\u0000', '�', '\u{1F331}', '\r\n', '\r', '\n', '\n\r', '\uD800', '\xff', '\xfe\xff', '\xef\xbb\xbf', '\xff\xfe\x00\x00', '\x00\x00\xfe\xff', '\x00\x00', '\xed\xa0\x80', '\xf4\x90\x80\x80', '\xc0\x80', '\x00\xd8', '\x00\xdc'],
+    run: (input) => void checkDecoded(input),
+    refused: notFile,
+  },
+  {
+    name: 'lines',
+    owner: 'src/importers/notes.ts (tab 9)',
+    memoryMiB: 256,
+    seeds: () => [strToU8(NOTE), strToU8(crlf(NOTE)), strToU8(NOTE.replace(/\n/g, (_, at: number) => (at % 3 ? '\n' : '\r\n'))), strToU8('first line\r\nsecond #tag\r[[Link\r\n]]\n'), strToU8('---\r\n---\n# T\r\n')],
+    tokens: ['\r\n', '\n', '\r', '\n\r', '\r\r\n', '---\r\n', '---\n', '...\r\n', '\r\n---\r\n', 'key: |\r\n', 'key: >\n', '  more\r\n', '  - item\r\n', 'tags: [a,\r\n b]\r\n', '# heading\r\n', '#\r\n', '[[link\r\n]]', ' #tag\r\n', 'title:\r\n'],
     run: (input) => {
-      // Only the first U+FEFF is a byte order mark: one after it is text (a zero-width no-break space) and is kept.
-      wellFormed(decodeText(input, 'fuzz.txt').text, 'the decoded text');
+      const text = checkDecoded(input);
+      if (noteRead(text) !== noteRead(crlf(text))) throw new Error('the note reads differently with CR LF line breaks');
     },
-    refused: (error) => error instanceof UnsafeFileError && error.reason === 'not-a-file',
+    refused: notFile,
   },
   {
     name: 'xml',
+    owner: 'src/importers/xml.ts (tab 9)',
+    memoryMiB: 256,
     seeds: () => [strToU8(DOCUMENT), strToU8(STYLES), strToU8(CORE), strToU8(RELS)],
     tokens: XML_TOKENS,
+    mutate: (rng, seed, generic) => strToU8(mutateXml(rng, utf8(seed), generic)),
     run: (input) => {
       let depth = 0;
       scanXml(utf8(input), {
@@ -194,37 +235,45 @@ export const TARGETS: Target[] = [
   },
   {
     name: 'docx',
+    owner: 'src/importers/docx.ts (tab 9)',
+    fileName: 'input.docx',
+    // Its caps: 128 MiB of parts in all, read as text, with the XML and the Markdown made from it.
+    memoryMiB: 1024,
     seeds: () => [zipSync(docxParts()), zipSync(docxParts(), { level: 0 }), zipSync({ 'word/document.xml': strToU8(DOCUMENT) })],
-    tokens: [...XML_TOKENS, 'PK\u0003\u0004', 'PK\u0001\u0002', 'PK\u0005\u0006', '../', 'word/../../'],
+    tokens: [...XML_TOKENS, 'PK\x03\x04', 'PK\x01\x02', 'PK\x05\x06', '../', 'word/../../'],
     mutate: (rng, seed, generic) => {
-      if (rng() < 0.5) return generic(seed);
-      // Mutate one part's XML and zip it again, so the damage reaches the parser behind the zip reader.
+      const r = rng();
+      if (r < 0.15) return generic(seed);
+      if (r < 0.3) return mutateZipField(rng, seed);
+      // Mutate one part's XML and zip it again, so the change reaches the parser and the walker behind the zip reader.
       const parts: Record<string, Uint8Array> = unzipSync(seed);
-      const names = Object.keys(parts);
-      const name = pick(rng, names);
-      parts[name] = generic(parts[name]!);
+      const name = pick(rng, Object.keys(parts));
+      parts[name] = strToU8(mutateXml(rng, utf8(parts[name]!), generic));
       if (rng() < 0.1) parts[pick(rng, ['../evil.xml', 'word/../../x.xml', '/abs.xml', 'word/extra.xml'])] = strToU8(DOCUMENT);
       return zipSync(parts, { level: rng() < 0.5 ? 0 : 6 });
     },
-    run: (input, scratch) => {
-      const path = join(scratch, 'fuzz.docx');
-      writeFileSync(path, input);
-      const doc = readDocx(path);
+    run: (_input, file) => {
+      const doc = readDocx(file);
       wellFormed(doc.body, 'the body');
-      const note = parseNote('fuzz.docx', docxNoteText(doc), new Date(0));
+      const note = parseNote('input.docx', docxNoteText(doc), new Date(0));
       wellFormed(note.body, "the note's body");
+      // The front matter is the reader's own: nothing in the document adds a key to it.
+      const keys = Object.keys(note.properties).sort().join();
+      if (keys !== 'title' && keys !== 'created,title') throw new Error(`the document added front matter: ${keys}`);
     },
     refused: (error) => error instanceof UnsafeFileError,
   },
   {
     name: 'frontmatter',
-    seeds: () => [strToU8(NOTE), strToU8(`﻿${NOTE}`), strToU8(NOTE.replace(/\n/g, '\r\n')), strToU8('---\n---\n'), strToU8('no front matter #tag')],
+    owner: 'src/importers/notes.ts (tab 9)',
+    memoryMiB: 256,
+    seeds: () => [strToU8(NOTE), strToU8(`﻿${NOTE}`), strToU8(crlf(NOTE)), strToU8('---\n---\n'), strToU8('no front matter #tag')],
     tokens: ['---\n', '...\n', '\n', ':', ': ', '- ', '  - ', '[', ']', ',', '"', "'", "''", '\\"', '|', '>', '#', '[[', ']]', '__proto__: x\n', 'constructor: y\n', 'tags: ', 'created: ', '﻿', '\r'],
     run: (input) => {
       const text = utf8(input);
       const front = parseFrontMatter(text);
       if (Object.getPrototypeOf(front.properties) !== null || Object.getPrototypeOf(front.meta) !== null) throw new Error('front matter has a prototype');
-      if (!text.endsWith(front.body) && !text.replace(/^﻿/, '').endsWith(front.body)) throw new Error('the body is not the end of the note');
+      if (!text.endsWith(front.body)) throw new Error('the body is not the end of the note');
       const note = parseNote('fuzz.md', text, new Date(0));
       if (note.createdAt && Number.isNaN(Date.parse(note.createdAt))) throw new Error(`createdAt ${note.createdAt} is not a date`);
       JSON.stringify(note.properties);
@@ -232,111 +281,3 @@ export const TARGETS: Target[] = [
     refused: () => false,
   },
 ];
-
-/** A generator for one iteration, so any finding replays from its seed and iteration alone. */
-function rngFor(seed: number, target: string, iteration: number): Rng {
-  let h = seed >>> 0;
-  for (const c of target) h = Math.imul(h ^ c.charCodeAt(0), 0x01000193) >>> 0;
-  return mulberry32((h ^ Math.imul(iteration + 1, 0x9e3779b1)) >>> 0);
-}
-
-/** Builds the input for one iteration of a target. */
-export function inputFor(target: Target, seed: number, iteration: number): Uint8Array {
-  const rng = rngFor(seed, target.name, iteration);
-  const seeds = target.seeds();
-  const tokens = target.tokens.map((t) => (/^[\x00-\xff]*$/.test(t) && /[\x80-\xff]/.test(t) ? Uint8Array.from(t, (c) => c.charCodeAt(0)) : strToU8(t)));
-  const start = pick(rng, seeds);
-  const generic = (bytes: Uint8Array) => mutateBytes(rng, bytes, seeds, tokens);
-  return target.mutate ? target.mutate(rng, start, generic) : generic(start);
-}
-
-/** Runs one input; a finding when it fails in a way the target doesn't promise, or takes longer than budgetMs. */
-export function runOne(target: Target, input: Uint8Array, scratch: string, budgetMs: number): { error?: string; ms: number } {
-  const started = performance.now();
-  let error: string | undefined;
-  try {
-    target.run(input, scratch);
-  } catch (e) {
-    if (!target.refused(e)) error = e instanceof Error ? `${e.name}: ${e.message}\n${e.stack ?? ''}` : String(e);
-  }
-  const ms = performance.now() - started;
-  if (!error && ms > budgetMs) error = `took ${Math.round(ms)} ms on ${input.length} bytes, past the ${budgetMs} ms budget`;
-  return error ? { error, ms } : { ms };
-}
-
-export interface FuzzOptions {
-  seed: number;
-  /** Stop after this many inputs per target... */
-  iterations?: number;
-  /** ...or after this many seconds in all, shared between the targets. */
-  seconds?: number;
-  targets?: Target[];
-  /** Where the .docx inputs are written while they run. */
-  scratch: string;
-  budgetMs?: number;
-  onFinding?: (finding: Finding) => void;
-}
-
-export function fuzz(options: FuzzOptions): { runs: Record<string, number>; findings: Finding[] } {
-  const targets = options.targets ?? TARGETS;
-  const budgetMs = options.budgetMs ?? 2000;
-  const findings: Finding[] = [];
-  const runs: Record<string, number> = {};
-  const until = options.seconds ? performance.now() + options.seconds * 1000 : Infinity;
-  const limit = options.iterations ?? (options.seconds ? Infinity : 200);
-  for (let iteration = 0; iteration < limit && performance.now() < until; iteration++) {
-    for (const target of targets) {
-      const input = inputFor(target, options.seed, iteration);
-      const { error, ms } = runOne(target, input, options.scratch, budgetMs);
-      runs[target.name] = (runs[target.name] ?? 0) + 1;
-      if (error) {
-        const finding = { target: target.name, seed: options.seed, iteration, ms, error, input };
-        findings.push(finding);
-        options.onFinding?.(finding);
-      }
-    }
-  }
-  return { runs, findings };
-}
-
-function main(): void {
-  const { values } = parseArgs({
-    options: {
-      seconds: { type: 'string', default: '60' },
-      seed: { type: 'string', default: String(Date.now() % 2 ** 31) },
-      target: { type: 'string' },
-      dir: { type: 'string' },
-      replay: { type: 'string' },
-      budget: { type: 'string', default: '2000' },
-    },
-  });
-  const targets = values.target ? TARGETS.filter((t) => t.name === values.target) : TARGETS;
-  if (!targets.length) throw new Error(`No target named ${values.target}: ${TARGETS.map((t) => t.name).join(', ')}`);
-  const dir = values.dir ? resolve(values.dir) : mkdtempSync(join(tmpdir(), 'skeinwise-fuzz-'));
-  mkdirSync(dir, { recursive: true });
-  const budgetMs = Number(values.budget);
-  if (values.replay) {
-    const input = new Uint8Array(readFileSync(values.replay));
-    for (const target of targets) console.log(`${target.name}: ${runOne(target, input, dir, budgetMs).error ?? 'returned or refused, as it should'}`);
-    return;
-  }
-  const seed = Number(values.seed);
-  console.log(`fuzzing ${targets.map((t) => t.name).join(', ')} for ${values.seconds} s, seed ${seed}, inputs in ${dir}`);
-  const { runs, findings } = fuzz({
-    seed,
-    seconds: Number(values.seconds),
-    targets,
-    scratch: dir,
-    budgetMs,
-    onFinding: (f) => {
-      const file = join(dir, `${f.target}-seed${f.seed}-i${f.iteration}.bin`);
-      writeFileSync(file, f.input);
-      console.log(`FINDING ${f.target} seed ${f.seed} iteration ${f.iteration} (${f.input.length} bytes, ${Math.round(f.ms)} ms): ${f.error.split('\n')[0]}\n  input: ${file}`);
-    },
-  });
-  writeFileSync(join(dir, 'findings.json'), JSON.stringify(findings.map(({ input: _input, ...f }) => f), null, 2));
-  console.log(`${Object.entries(runs).map(([t, n]) => `${t} ${n}`).join(', ')} inputs; ${findings.length} findings`);
-  process.exitCode = findings.length ? 1 : 0;
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();

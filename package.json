@@ -24,7 +24,8 @@
     "test": "vitest run",
     "build": "tsc -p tsconfig.build.json && vite build -c web/vite.config.ts",
     "build:web": "vite build -c web/vite.config.ts",
-    "e2e": "pnpm build && playwright test -c e2e/playwright.config.ts"
+    "e2e": "pnpm build && playwright test -c e2e/playwright.config.ts",
+    "fuzz": "node test/fuzz/run.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.65.0",
