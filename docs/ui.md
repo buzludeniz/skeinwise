@@ -228,7 +228,7 @@ Groups, top to bottom:
 
 | Group | Holds |
 |---|---|
-| AI agents | Connected agents, **Copy config** for each, **Copy a sample question** |
+| AI agents | The agents found on this computer, requests from agents waiting for your answer, how to connect one (`skeinwise connect <agent>`), **Copy a sample question** |
 | AI model | **Local model** (the default: its address, the model file, a **Test** button), **Outside model** (address, model, the env var holding the key), or **No AI** |
 | Usage cap | A monthly token cap for an outside model. At the cap, runs wait for the next month |
 | Backup | A zip of the record, on demand (**Back up now**) |
