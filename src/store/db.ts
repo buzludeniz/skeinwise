@@ -31,25 +31,29 @@ export function migrate(db: DatabaseSync): void {
   const enforced = (db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number }).foreign_keys === 1;
   if (enforced) db.exec('PRAGMA foreign_keys = OFF');
   try {
-    for (let v = schemaVersion(db); v < MIGRATIONS.length; v++) {
-      db.exec('BEGIN');
-      try {
-        db.exec(MIGRATIONS[v]!);
-        const broken = db.prepare('PRAGMA foreign_key_check').all() as { table: string; parent: string }[];
-        if (broken.length) {
-          const where = [...new Set(broken.map((b) => `${b.table} → ${b.parent}`))].join(', ');
-          throw new Error(`Migration ${v + 1} would leave ${broken.length} broken reference(s) (${where}). Nothing was changed.`);
-        }
-        db.exec(`PRAGMA user_version = ${v + 1}`);
-        db.exec('COMMIT');
-      } catch (err) {
-        db.exec('ROLLBACK');
-        throw err;
-      }
+    // Each step takes the write lock first (BEGIN IMMEDIATE, waiting out the busy timeout) and reads the version again
+    // inside it. Two processes that open an old record together queue on the lock, and the second sees the first's
+    // commit instead of running the same migration again.
+    while (inTransaction(db, () => migrateOnce(db))) {
+      // Next version.
     }
   } finally {
     if (enforced) db.exec('PRAGMA foreign_keys = ON');
   }
+}
+
+/** Runs the record's next migration inside the caller's transaction; false when the record is already up to date. */
+function migrateOnce(db: DatabaseSync): boolean {
+  const v = schemaVersion(db);
+  if (v >= MIGRATIONS.length) return false;
+  db.exec(MIGRATIONS[v]!);
+  const broken = db.prepare('PRAGMA foreign_key_check').all() as { table: string; parent: string }[];
+  if (broken.length) {
+    const where = [...new Set(broken.map((b) => `${b.table} → ${b.parent}`))].join(', ');
+    throw new Error(`Migration ${v + 1} would leave ${broken.length} broken reference(s) (${where}). Nothing was changed.`);
+  }
+  db.exec(`PRAGMA user_version = ${v + 1}`);
+  return true;
 }
 
 /** SQLITE_BUSY, or one of its extended codes: another connection holds the write lock past the busy timeout. */
