@@ -1,6 +1,7 @@
 // The organiser's read of the record: visible entries, the units it groups (a thread, or a loose note), and term
 // vectors for both. Built once per command and shared by the tasks of a run.
 
+import { withoutNoteExt } from '../importers/note-ext.ts';
 import type { Entry, Store } from '../store/store.ts';
 import { buildIndex, type TermIndex, tokenize, type Vec, vectorize } from './text.ts';
 
@@ -43,7 +44,7 @@ export class NoteNames<T extends NoteName> {
   constructor(entries: Iterable<T>) {
     for (const e of entries) {
       if (e.kind !== 'note') continue;
-      const base = e.externalId.split('/').pop()!.replace(/\.(md|markdown|txt)$/i, '');
+      const base = withoutNoteExt(e.externalId.split('/').pop()!);
       for (const name of [base, e.title ?? '']) {
         const key = name.trim().toLowerCase();
         if (key && !this.byName.has(key)) this.byName.set(key, e);

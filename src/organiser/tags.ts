@@ -3,6 +3,7 @@
 // a model, it names the topics and settles the entries that match a tag by one word only.
 
 import type { DatabaseSync } from 'node:sqlite';
+import { withoutNoteExt } from '../importers/note-ext.ts';
 import type { Entry } from '../store/store.ts';
 import { type Existing, type Group, groupName, groupUnits, namingRequest } from './groups.ts';
 import { invalid, isRecord, list, type ModelRequest, type Plan, type Product, round, type TaskContext } from './plan.ts';
@@ -113,7 +114,7 @@ function planProjects(ctx: TaskContext, schema: Schema): Plan {
 }
 
 function projectName(note: Entry): string {
-  return (note.title ?? note.externalId.split('/').pop()!.replace(/\.(md|markdown|txt)$/i, '')).trim();
+  return (note.title ?? withoutNoteExt(note.externalId.split('/').pop()!)).trim();
 }
 
 // Moods and your own schemas
