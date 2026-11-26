@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -246,6 +246,33 @@ describe('skeinwise connect', () => {
     expectMode(file, 0o600);
     expect(readFileSync(`${file}.skeinwise-backup-20261125T100000Z`, 'utf8')).toBe(before);
     expect(output.out).toContain(`Wrote ${file}.`);
+  });
+
+  // Windows makes links only with Developer Mode or an administrator's rights.
+  it.skipIf(process.platform === 'win32')('keeps every backup as a new file, and never writes through a link left at its path', async () => {
+    const file = join(user, '.cursor', 'mcp.json');
+    mkdirSync(join(user, '.cursor'));
+    writeFileSync(file, '{"mcpServers": {}}\n');
+    const stamp = `${file}.skeinwise-backup-20261125T100000Z`;
+    const elsewhere = join(dir, 'elsewhere.json');
+    writeFileSync(elsewhere, 'not yours\n');
+    symlinkSync(elsewhere, stamp);
+    symlinkSync(join(dir, 'nowhere.json'), `${stamp}-2`);
+
+    const first = setupCtx(['cursor'], { yes: true });
+    expect(await connect(first.ctx, DEPS)).toBe(0);
+    expect(first.output.out).toContain(`The file as it was is kept at ${stamp}-3.`);
+    expect(readFileSync(`${stamp}-3`, 'utf8')).toBe('{"mcpServers": {}}\n');
+    expectMode(`${stamp}-3`, 0o600);
+    expect(readFileSync(elsewhere, 'utf8')).toBe('not yours\n');
+    expect(existsSync(join(dir, 'nowhere.json'))).toBe(false);
+
+    // Connecting again in the same second keeps the first backup as it was.
+    const written = readFileSync(file, 'utf8');
+    const again = setupCtx(['cursor'], { yes: true });
+    expect(await connect(again.ctx, DEPS)).toBe(0);
+    expect(readFileSync(`${stamp}-3`, 'utf8')).toBe('{"mcpServers": {}}\n');
+    expect(readFileSync(`${stamp}-4`, 'utf8')).toBe(written);
   });
 
   it("refuses a config that isn't valid JSON, and leaves the file and the token as they were", async () => {

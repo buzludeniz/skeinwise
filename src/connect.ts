@@ -233,14 +233,27 @@ function stamp(now: string): string {
   return now.replace(/\.\d+Z$/, 'Z').replace(/[-:]/g, '');
 }
 
-/** Copies the file as it is now beside itself (owner-only: it may hold other tokens) and returns the copy's path. */
+/**
+ * Copies the file as it is now beside itself (owner-only: it may hold other tokens) and returns the copy's path. The copy
+ * is always a new file: an earlier backup from the same second gets a -2, -3… after it, and a link left at the path is
+ * never written through.
+ */
 function backup(file: string, now: string): string | null {
   if (!existsSync(file)) return null;
-  const copy = `${file}.skeinwise-backup-${stamp(now)}`;
-  // Written owner-only from the start, never copied at the original's mode first.
-  writeFileSync(copy, readFileSync(file), { mode: 0o600 });
-  chmodSync(copy, 0o600);
-  return copy;
+  const text = readFileSync(file);
+  for (let n = 1; ; n++) {
+    const copy = `${file}.skeinwise-backup-${stamp(now)}${n > 1 ? `-${n}` : ''}`;
+    try {
+      // Written owner-only from the start, never copied at the original's mode first. 'wx' refuses any existing path,
+      // a link included, even one to nowhere.
+      writeFileSync(copy, text, { mode: 0o600, flag: 'wx' });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
+      throw err;
+    }
+    chmodSync(copy, 0o600);
+    return copy;
+  }
 }
 
 function writeOwnerOnly(file: string, text: string): void {
