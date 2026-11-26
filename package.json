@@ -1,6 +1,6 @@
 {
   "name": "skeinwise",
-  "version": "0.3.0",
+  "version": "1.0.0-rc.1",
   "description": "A second brain that organises itself from your AI chats and notes. Local first, works with no AI or a small local model.",
   "license": "MIT",
   "author": "Deniz Ikili",

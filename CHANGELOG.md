@@ -51,6 +51,11 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
   Windows and Ubuntu with Node 24 and 26. [docs/security.md](docs/security.md) describes the threat model and the
   limits.
 
+## [1.0.0-rc.1] - 2026-11-27
+
+The first release candidate for 1.0.0, on npm under the `next` dist-tag: `npx skeinwise@next`. It has the changes
+listed above for 1.0.0.
+
 ## [0.3.0] - 2026-11-25
 
 The update stream.
@@ -82,6 +87,7 @@ The record and the command line.
 - Full-text search, the `skeinwise` command and an invented demo record.
 
 [Unreleased]: https://github.com/buzludeniz/skeinwise/compare/v0.3.0...HEAD
+[1.0.0-rc.1]: https://www.npmjs.com/package/skeinwise/v/1.0.0-rc.1
 [0.3.0]: https://github.com/buzludeniz/skeinwise/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/buzludeniz/skeinwise/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/buzludeniz/skeinwise/releases/tag/v0.1.0
