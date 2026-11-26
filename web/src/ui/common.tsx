@@ -8,7 +8,7 @@ import markDark from '../../../docs/brand/logo-mark-dark.svg';
 import markLight from '../../../docs/brand/logo-mark.svg';
 import { useApp } from '../store.ts';
 import { theme } from '../themes.ts';
-import { panelId, tabId, tabStep } from './tabs.ts';
+import { panelId, radioStep, tabId, tabStep } from './tabs.ts';
 
 /**
  * The mark from docs/brand, used as it is: the light file on light themes and the dark one on dark themes, as the
@@ -66,6 +66,10 @@ export function Switch({
   );
 }
 
+/**
+ * A radio group drawn as one row of buttons. Only the chosen one is in the Tab order (the first, when none is), and the
+ * arrow keys move to the next one and choose it.
+ */
 export function Segmented<T extends string>({
   options,
   value,
@@ -77,16 +81,28 @@ export function Segmented<T extends string>({
   onChange: (v: T) => void;
   label: string;
 }) {
+  const row = useRef<HTMLDivElement>(null);
+  const chosen = options.some(([key]) => key === value);
+  const onKeyDown = (e: KeyboardEvent, at: number) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const next = radioStep(e.key, at, options.length);
+    if (next === null) return;
+    e.preventDefault();
+    onChange(options[next]![0]);
+    row.current?.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus();
+  };
   return (
-    <div class="segmented" role="radiogroup" aria-label={label}>
-      {options.map(([key, text]) => (
+    <div class="segmented" role="radiogroup" aria-label={label} ref={row}>
+      {options.map(([key, text], i) => (
         <button
           key={key}
           type="button"
           role="radio"
           aria-checked={value === key}
+          tabIndex={value === key || (!chosen && i === 0) ? 0 : -1}
           class={value === key ? 'on' : ''}
           onClick={() => onChange(key)}
+          onKeyDown={(e) => onKeyDown(e, i)}
         >
           {text}
         </button>
