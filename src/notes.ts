@@ -28,7 +28,7 @@ import { pathInside, readImports } from './importers/detect.ts';
 import { parseFrontMatter, splitFrontMatter } from './importers/notes.ts';
 import { currentMark, finishRun, startRun } from './organiser/runs.ts';
 import { inTransaction } from './store/db.ts';
-import type { Entry, Store, Version } from './store/store.ts';
+import type { Entry, ImportBatch, Store, Version } from './store/store.ts';
 
 export interface NoteWrite {
   path: string;
@@ -262,22 +262,37 @@ function asAgent<T>(store: Store, fn: () => T): T {
   return inTransaction(store.db, fn);
 }
 
-/** The newest agent note save's run, or 0. It changes with every agent's note save (saveAsAgent). */
-function lastAgentSave(store: Store): number {
-  return Number((store.db.prepare(`SELECT COALESCE(MAX(id), 0) AS id FROM runs WHERE task = 'note'`).get() as { id: number }).id);
+/**
+ * A mark that moves whenever the record gains a version (an agent's save, a restore, an undo putting text back) or a
+ * run is undone (which may remove a note an agent started). Each of those writes its note files under the record's
+ * write lock, so a reader that notes this mark before it reads the notes folder can tell, once it holds the lock,
+ * whether the files may have changed since it read them. Both parts are cheap: the newest row id, and a count over runs.
+ */
+export function notesMark(store: Store): string {
+  const row = store.db
+    .prepare(`SELECT (SELECT COALESCE(MAX(id), 0) FROM versions) AS version, (SELECT COUNT(*) FROM runs WHERE status = 'undone') AS undone`)
+    .get() as { version: number; undone: number };
+  return `${row.version}:${row.undone}`;
 }
 
 /**
  * Files the notes folder as your words. The folder is read before the record's write lock is taken, as reading it can
- * take a while. An agent that saved a note in between (asAgent) may have changed a file after it was read, and filing
- * the text read would put the agent's older text back as yours. So when an agent saved meanwhile, the folder is read
- * again under the lock.
+ * take a while. A write that came in between (an agent's save, an undo) may have changed a file after it was read, and
+ * filing the text read would put the older text back as yours, or bring back a note an undo removed. So when the mark
+ * moved meanwhile, the folder is read again under the lock.
  */
 function ingestNotes(store: Store, dir: string, options: { emptyOk?: boolean }): void {
-  const seen = lastAgentSave(store);
-  let batches = readImports(dir, options);
+  const mark = notesMark(store);
+  fileNotes(store, dir, readImports(dir, options), mark, options);
+}
+
+/**
+ * Files batches read from the notes folder after `mark` (notesMark) was taken, under the record's write lock, reading
+ * the folder again first when the mark has moved since (ingestNotes).
+ */
+export function fileNotes(store: Store, dir: string, read: ImportBatch[], mark: string, options: { emptyOk?: boolean } = {}): void {
   inTransaction(store.db, () => {
-    if (lastAgentSave(store) !== seen) batches = readImports(dir, options);
+    const batches = notesMark(store) === mark ? read : readImports(dir, options);
     for (const batch of batches) if (batch.source.kind === 'notes') store.ingest(batch, { editor: 'you', ownFiles: true });
   });
 }

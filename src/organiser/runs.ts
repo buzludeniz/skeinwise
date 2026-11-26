@@ -268,16 +268,29 @@ interface NoteUndo {
 
 /**
  * Undoes a run: puts back the text of notes it updated, then deletes everything it made (or reverses a correction) and
- * marks it undone in one transaction. `home` is the record's folder: a note kept there has its file put back too, so
- * an undone review run needs it. Each note goes back in its own transaction first (the store's restore opens one, and
- * SQLite has no nested BEGIN). If the undo stops after that, running it again finds those notes already back. A note an
- * agent's run started is removed, its file and its entry. `now` is the caller's clock, for the versions put back.
+ * marks it undone, in one transaction. `home` is the record's folder: a note kept there has its file put back too, so
+ * an undone review run needs it. A note an agent's run started is removed, its file and its entry. `now` is the
+ * caller's clock, for the versions put back.
+ *
+ * The record's write lock is held from the checks through the files written back to the last change, as for an
+ * agent's note write (asAgent in notes.ts): a reader of the notes folder waits, then finds the text known, and no save
+ * comes between the checks and the files. Should the undo stop partway, the files written so far hold the text from
+ * before the run and the record is as it was; running it again reads them in and finishes.
  */
 export function undoRun(db: DatabaseSync, id: number, home?: string, now?: () => string): UndoResult {
-  const before = getRun(db, id);
-  const undoable = before?.status === 'done' && before.task !== 'correction' && before.task !== 'ask' && !dependents(db, id).length;
-  const { restored, purged, word } = undoable ? restoreEdits(db, before, home, now) : { restored: [], purged: [], word: [] };
-  return inTransaction(db, () => {
+  const done = inTransaction(db, (): UndoResult | UsageError => {
+    const before = getRun(db, id);
+    const undoable = before?.status === 'done' && before.task !== 'correction' && before.task !== 'ask' && !dependents(db, id).length;
+    let notes: NoteUndo = { restored: [], purged: [], word: [] };
+    try {
+      if (undoable) notes = restoreEdits(db, before, home, now);
+    } catch (error) {
+      // A refusal (a note changed since the run) comes before restoreEdits changes anything. It is thrown after the
+      // commit, so the edits its read of the notes folder filed stay filed.
+      if (error instanceof UsageError) return error;
+      throw error;
+    }
+    const { restored, purged, word } = notes;
     const run = getRun(db, id);
     if (!run) throw new UsageError(`No run ${id}. Run "skeinwise runs" for the list.`);
     if (run.status === 'undone') throw new UsageError(`Run ${id} is already undone.`);
@@ -302,6 +315,8 @@ export function undoRun(db: DatabaseSync, id: number, home?: string, now?: () =>
     db.prepare("UPDATE runs SET status = 'undone' WHERE id = ?").run(id);
     return { run: { ...run, status: 'undone' }, removed, restored, word };
   });
+  if (done instanceof UsageError) throw done;
+  return done;
 }
 
 /**
