@@ -1,6 +1,6 @@
 // The release machinery's checks: the package check (release/pack-check.ts, LS-20 and the audit's L17) and the
 // release workflow's refusals (release/check-tag.ts, Deniz's decision 3a).
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { changelogSection, distTag, releaseRefusal } from '../release/check-tag.ts';
@@ -119,14 +119,17 @@ describe('the workflows', () => {
       .filter((l) => !l.trimStart().startsWith('#'))
       .map((l) => l.replace(/\s#\s.*$/, ''))
       .join('\n');
-  const ci = workflow('ci.yml');
+  const names = readdirSync(join(root, '.github/workflows')).filter((n) => /\.ya?ml$/.test(n));
   const release = workflow('release.yml');
+  const bench = workflow('bench.yml');
 
   it('pin every action by commit SHA and leave no credentials in .git/config', () => {
-    for (const text of [ci, release]) {
+    expect(names).toEqual(expect.arrayContaining(['bench.yml', 'ci.yml', 'release.yml']));
+    for (const name of names) {
+      const text = workflow(name);
       const uses = [...text.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
       expect(uses.length).toBeGreaterThan(0);
-      for (const action of uses) expect(action, action).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+      for (const action of uses) expect(action, `${name}: ${action}`).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
       expect(text.match(/actions\/checkout@/g)?.length).toBe(text.match(/persist-credentials: false/g)?.length);
       expect(text).toMatch(/^permissions:/m);
       expect(text.match(/runs-on:/g)?.length).toBe(text.match(/timeout-minutes:/g)?.length);
@@ -138,7 +141,17 @@ describe('the workflows', () => {
     expect(on).toContain('tags:');
     expect(on).not.toMatch(/branches|workflow_dispatch|pull_request|schedule|workflow_run|repository_dispatch/);
     expect(release).toContain('node release/check-tag.ts');
-    expect(ci).not.toMatch(/npm publish|id-token/);
+    for (const name of names.filter((n) => n !== 'release.yml')) expect(workflow(name), name).not.toMatch(/npm publish|id-token/);
+  });
+
+  it('bench on every push with a small corpus, and at full size only when started by hand, never with a model', () => {
+    const smoke = bench.slice(bench.indexOf('\n  smoke:'), bench.indexOf('\n  full:'));
+    const full = bench.slice(bench.indexOf('\n  full:'));
+    expect(smoke).toContain("if: ${{ github.event_name != 'workflow_dispatch' }}");
+    expect(smoke).toContain('pnpm bench 50k --entries 3000');
+    expect(full).toContain("if: ${{ github.event_name == 'workflow_dispatch' }}");
+    expect(full).toContain('pnpm bench "$SIZE"');
+    expect(bench).not.toMatch(/model serve|llama|ollama|localUrl|:8731|:8741|engine (local|remote)/i);
   });
 
   it('publish over OIDC from the publish job alone, with no token and no --provenance flag', () => {
