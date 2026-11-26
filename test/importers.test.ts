@@ -171,7 +171,7 @@ describe('notes', () => {
   });
 
   it('leaves text without front matter alone', () => {
-    expect(parseFrontMatter('no front matter')).toEqual({ meta: {}, body: 'no front matter' });
+    expect(parseFrontMatter('no front matter')).toEqual({ meta: {}, properties: {}, body: 'no front matter' });
   });
 });
 
