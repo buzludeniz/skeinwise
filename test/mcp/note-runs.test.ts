@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { main } from '../../src/cli.ts';
 import { DEMO_NOW } from '../../src/demo/demo.ts';
@@ -207,6 +207,42 @@ describe('undo removes only the file the run made, as the run left it', () => {
     expect(() => undoRun(store.db, note.runId)).toThrow(`Run ${note.runId} changed notes, so undoing it needs the record's folder to put their files back.`);
     expect(kept(note)).toEqual({ entry: true, file: true, status: 'done' });
     expect(existsSync(join(home, 'record.db'))).toBe(true);
+  });
+
+  it("removes a note the assistant found a loop in and made a task from: the loop goes, your task stays unlinked", async () => {
+    const note = await writeNote('Call plan', 'Call the baker on Friday.');
+    const ask = startRun(store.db, { task: 'ask', engine: 'none', model: null, scope: 'all', mark: currentMark(store.db), now: LATER });
+    store.db
+      .prepare("INSERT INTO pa_found (run_id, key, entry_id, is_loop, kind, what) VALUES (?, 'baker', ?, 1, 'promise', 'Call the baker')")
+      .run(ask, note.entryId);
+    store.db.prepare("INSERT INTO pa_loops (key, entry_id, status, updated_at) VALUES ('baker', ?, 'snoozed', ?)").run(note.entryId, LATER);
+    const task = store.db
+      .prepare("INSERT INTO pa_tasks (title, entry_id, loop_key, created_at, updated_at) VALUES ('Call the baker', ?, 'baker', ?, ?)")
+      .run(note.entryId, LATER, LATER).lastInsertRowid;
+    const count = (table: string) => (store.db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE entry_id = ?`).get(note.entryId) as { n: number }).n;
+
+    expect(undoRun(store.db, note.runId, home, () => LATER).removed).toEqual({ notes: 1 });
+    expect(kept(note)).toEqual({ entry: false, file: false, status: 'undone' });
+    expect([count('pa_found'), count('pa_loops')]).toEqual([0, 0]);
+    expect({ ...(store.db.prepare('SELECT title, entry_id AS entryId FROM pa_tasks WHERE id = ?').get(task) as object) }).toEqual({
+      title: 'Call the baker',
+      entryId: null,
+    });
+    expect(() => undoRun(store.db, note.runId, home, () => LATER)).toThrow(`Run ${note.runId} is already undone.`);
+  });
+
+  it.skipIf(process.platform === 'win32')("keeps the whole note when its file can't be removed, and the next undo removes both", async () => {
+    const note = await writeNote('Rye plan', 'Try 80% hydration.');
+    chmodSync(dirname(note.file), 0o500);
+    try {
+      expect(() => undoRun(store.db, note.runId, home, () => LATER)).toThrow(/unlink/);
+    } finally {
+      chmodSync(dirname(note.file), 0o700);
+    }
+    expect(kept(note)).toEqual({ entry: true, file: true, status: 'done' });
+    expect(store.history(note.entryId)).toHaveLength(1);
+    undoRun(store.db, note.runId, home, () => LATER);
+    expect(kept(note)).toEqual({ entry: false, file: false, status: 'undone' });
   });
 });
 

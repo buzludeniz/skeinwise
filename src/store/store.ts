@@ -275,7 +275,7 @@ export function sortTime(claimed: string | null | undefined, observed: string): 
 }
 
 /** Every table that hangs a row on an entry, and its column: purgeEntry clears them all. */
-const PURGE_REFERENCES: [table: string, column: string][] = [
+export const PURGE_REFERENCES: [table: string, column: string][] = [
   ['entry_tags', 'entry_id'],
   ['entry_folders', 'entry_id'],
   ['links', 'from_entry'],
@@ -283,7 +283,15 @@ const PURGE_REFERENCES: [table: string, column: string][] = [
   ['hub_entries', 'entry_id'],
   ['layers', 'entry_id'],
   ['review_items', 'note_entry'],
+  ['pa_loops', 'entry_id'],
+  ['pa_found', 'entry_id'],
 ];
+
+/**
+ * Rows that name an entry but are yours, not the entry's (a task the assistant made from it): purgeEntry keeps them and
+ * drops the reference.
+ */
+export const PURGE_UNLINKS: [table: string, column: string][] = [['pa_tasks', 'entry_id']];
 
 interface WriteContext {
   editor: string;
@@ -620,7 +628,8 @@ export class Store {
 
   /**
    * Removes an entry for good: every version, its search row and everything the organiser hung on it (tags, folders,
-   * links either way, hub membership, layers, review items, and its quotes in hub sections and review reasons), with
+   * links either way, hub membership, layers, review items, and its quotes in hub sections and review reasons), and the
+   * assistant's open loops and readings of it; a task of yours made from it stays, without the link. All with
    * SQLite's secure_delete on so the freed pages are zeroed. A thread left empty goes too. Text a model wrote from it
    * elsewhere (an `ask` run's answer) is not traced. Old text can still sit in the write-ahead log and in free pages until
    * `scrub()` runs; the caller runs it after a purge it was asked to make thorough.
@@ -637,6 +646,7 @@ export class Store {
         this.db.exec("INSERT INTO entry_search (entry_search, rank) VALUES ('secure-delete', 1)");
         this.db.prepare('DELETE FROM entry_search WHERE rowid = ?').run(entryId);
         for (const [table, column] of PURGE_REFERENCES) this.db.prepare(`DELETE FROM ${table} WHERE ${column} = ?`).run(entryId);
+        for (const [table, column] of PURGE_UNLINKS) this.db.prepare(`UPDATE ${table} SET ${column} = NULL WHERE ${column} = ?`).run(entryId);
         this.dropQuotes(entryId);
         const versions = Number(this.db.prepare('DELETE FROM versions WHERE entry_id = ?').run(entryId).changes);
         this.db.prepare('DELETE FROM entries WHERE id = ?').run(entryId);

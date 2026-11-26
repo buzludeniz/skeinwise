@@ -367,6 +367,45 @@ describe('inTransaction inside inTransaction', () => {
     expect(labels(db)).toEqual([]);
   });
 
+  it('keeps the outer writes out when SQLite itself rolled back under a failed inner call', () => {
+    const db = openDb(':memory:');
+    expect(() =>
+      inTransaction(db, () => {
+        insert(db, 'outer');
+        try {
+          inTransaction(db, () => {
+            insert(db, 'inner');
+            // What SQLite does on its own on a full disk or an I/O error.
+            db.exec('ROLLBACK');
+            throw new Error('disk full');
+          });
+        } catch {
+          // The outer call carries on.
+        }
+        insert(db, 'after');
+        inTransaction(db, () => insert(db, 'nested'));
+      }),
+    ).toThrow('disk full');
+    expect(labels(db)).toEqual([]);
+    expect(db.isTransaction).toBe(false);
+    inTransaction(db, () => insert(db, 'next'));
+    expect(labels(db)).toEqual(['next']);
+  });
+
+  it('refuses a nested call once SQLite rolled back under a statement the outer call caught', () => {
+    const db = openDb(':memory:');
+    expect(() =>
+      inTransaction(db, () => {
+        insert(db, 'outer');
+        db.exec('ROLLBACK');
+        inTransaction(db, () => insert(db, 'nested'));
+      }),
+    ).toThrow("The record's write transaction was rolled back by an earlier error, so nothing more is written.");
+    expect(labels(db)).toEqual([]);
+    inTransaction(db, () => insert(db, 'next'));
+    expect(labels(db)).toEqual(['next']);
+  });
+
   it('refuses to join a transaction opened with a raw BEGIN', () => {
     const db = openDb(':memory:');
     db.exec('BEGIN');

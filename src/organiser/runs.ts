@@ -356,9 +356,14 @@ function restoreEdits(db: DatabaseSync, run: Run, home: string | undefined, now:
   });
   const purged: number[] = [];
   for (const { entryId, file } of started) {
-    // The file first: if the entry can't be purged after it, running the undo again finds no file and purges.
-    if (file) removeNoteFile(file);
-    store.purgeEntry(entryId);
+    // One transaction, the entry first and the file last: an entry that can't be purged leaves the file as it was, and
+    // a file that can't be removed (open in another program on Windows, say) rolls the purge back, so the note stays
+    // whole and running the undo again does all of it. Should the commit itself fail after the file went, the next undo
+    // finds no file (startedNoteFile gives null) and purges the entry.
+    inTransaction(db, () => {
+      store.purgeEntry(entryId);
+      if (file) removeNoteFile(file);
+    });
     purged.push(entryId);
   }
   const restored: number[] = [];

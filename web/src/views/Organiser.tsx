@@ -3,12 +3,12 @@
 
 import { useMemo, useState } from 'preact/hooks';
 import { Check, FolderTree, GitCompareArrows, ListChecks, Merge, Network, RotateCcw, SkipForward, Sparkles, Workflow } from 'lucide-preact';
-import { changed, engineName, loadRecord, message, openEntry, openNav, openPanel, organise, postRunUndo, toast, undoRun } from '../actions.ts';
+import { changed, engineName, loadRecord, message, openEntry, openNav, openPanel, organise, postRunUndo, toast, undoRun, wordNotice } from '../actions.ts';
 import { api } from '../api.ts';
 import { fmtDate, fmtNum, plural, runMade } from '../format.ts';
 import { folderCounts } from '../nav.ts';
 import { useApp } from '../store.ts';
-import type { EntryDetail, Folder, ReviewItem, Run } from '../types.ts';
+import type { EntryDetail, Folder, ReviewItem, Run, SavedEntry } from '../types.ts';
 import { Button, Empty, Select } from '../ui/common.tsx';
 
 interface Resolution {
@@ -97,7 +97,7 @@ function ReviewCard({ item, title }: { item: ReviewItem; title: string }) {
       await loadRecord();
       if (before !== null) {
         changed(`Updated “${title}”`, `Put “${title}” back`, async () => {
-          await api.put(`entries/${item.noteEntry}`, { body: before });
+          wordNotice(await api.put<SavedEntry>(`entries/${item.noteEntry}`, { body: before }));
           await loadRecord();
         });
         if (done.word) toast(`${done.word} is a Word document, which Skeinwise doesn’t write, so it doesn’t have this update.`);

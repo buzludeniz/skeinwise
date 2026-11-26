@@ -1,9 +1,10 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.ts';
+import { loadConfig, saveConfig } from '../src/config.ts';
 import { DEMO_NOW, writeDemo } from '../src/demo/demo.ts';
 import { openHome } from '../src/home.ts';
 import { readImports } from '../src/importers/detect.ts';
@@ -13,6 +14,7 @@ import { type RunOptions, runSteps, runTask, steps } from '../src/organiser/orga
 import { RecordView } from '../src/organiser/record.ts';
 import { currentMark, finishRun, getRun, startRun, undoRun } from '../src/organiser/runs.ts';
 import { definedTags, findSchema, getLiveHub, getReviewItem, heldEntries, liveFolders, liveHubs, liveTags, openReviewItems } from '../src/organiser/views.ts';
+import { startServer } from '../src/server/serve.ts';
 import { openDb } from '../src/store/db.ts';
 import { Store } from '../src/store/store.ts';
 
@@ -277,7 +279,8 @@ describe('a note kept as a Word document', () => {
         const code = await main(argv, { out: (t) => (out += t), err: (t) => (err += t), env: { SKEINWISE_HOME: home }, now: () => DEMO_NOW });
         return { code, out, err };
       };
-      const shown = join('notes', 'Garden plan.docx');
+      // The record's "/" path (pathInside), on Windows too.
+      const shown = 'notes/Garden plan.docx';
 
       const saved = await sw('review', '--resolve', String(item), 'update', '--yes');
       expect(saved).toMatchObject({ code: 0, err: '' });
@@ -303,6 +306,38 @@ describe('a note kept as a Word document', () => {
       }
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("is never written by an edit in the app: PUT /api/entries/:id saves a version only, and names the file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-word-put-'));
+    const home = join(dir, 'home');
+    try {
+      const store = openHome(home, () => DEMO_NOW);
+      const path = join(notesDir(home), 'Report.docx');
+      writeFileSync(path, docx('Quarterly report.'));
+      const bytes = readFileSync(path);
+      readNotes(store, home);
+      const note = store.allEntries().find((e) => e.kind === 'note')!;
+      store.db.close();
+      // No-AI, and a pretend home directory for the app's live capture.
+      saveConfig(home, { ...loadConfig(home), engine: 'none' });
+      mkdirSync(join(dir, 'scan'));
+      const app = await startServer({ home, port: 0, webDir: null, scanRoot: join(dir, 'scan') });
+      try {
+        const res = await fetch(`http://127.0.0.1:${app.port}/api/entries/${note.id}`, {
+          method: 'PUT',
+          headers: { 'X-Skeinwise-Token': app.token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body: 'Edited in the app' }),
+        });
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ wroteFile: false, word: 'notes/Report.docx', version: { version: 2, editor: 'you' } });
+      } finally {
+        await app.close();
+      }
+      expect(readFileSync(path)).toEqual(bytes);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
