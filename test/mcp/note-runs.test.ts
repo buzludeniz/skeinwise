@@ -128,6 +128,25 @@ describe("an agent's save is a run of its own", () => {
     expect(kept(first)).toEqual({ entry: false, file: false, status: 'undone' });
   });
 
+  it("lets an agent change its note again once an undo puts back the agent's own text, but not after your edit", async () => {
+    const first = await writeNote('Rye plan', 'Try 80% hydration.');
+    const second = await writeNote('Rye plan', 'Try 78% hydration.');
+    expect((await sw('undo', String(second.runId))).code).toBe(0);
+    expect(store.history(first.entryId).at(-1)!.editor).toBe('you');
+
+    // The undo is yours, but the text it put back is claude-code's: no words of yours are in the way.
+    const third = await writeNote('Rye plan', 'Try 75% hydration.');
+    expect(third).toMatchObject({ entryId: first.entryId, file: first.file });
+    expect(readFileSync(first.file, 'utf8')).toContain('75%');
+
+    // Your own words still close the note to it.
+    writeFileSync(first.file, readFileSync(first.file, 'utf8').replace('75%', '70%'));
+    const refused = await call(server, 'write_note', { title: 'Rye plan', body: 'Try 72% hydration.' });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('was changed by you after claude-code wrote it');
+    expect(readFileSync(first.file, 'utf8')).toContain('70%');
+  });
+
   it("counts an agent's saves from before runs, which name it without agent:, as its own", () => {
     const now = new Date(LATER);
     const made = writeAgentNote(store, home, 'claude-code', 'Rye notes', 'Hydration 75%', now);
