@@ -3,6 +3,7 @@
 
 import type { BrainData, BrainPoint } from '../../../src/server/queries.ts';
 import { type Grouped, type Grouping, groupPoints, layoutPoints, linkDegree, linkPairs, threadPairs } from '../groups.ts';
+import { plural } from '../format.ts';
 import type { LayoutPoint } from '../layout.ts';
 import { hexToRgb, mix, type Palette, pointColors, type Theme } from '../themes.ts';
 
@@ -17,7 +18,8 @@ export interface SceneInput {
   cross: Uint32Array;
   /** Index pairs for hub spokes: each hub joined to every entry it holds. */
   spokes: Uint32Array;
-  labels: { index: number; text: string }[];
+  /** The labelled points, hubs first (biggest first), then notes. `name` is what a screen reader hears for the label's button. */
+  labels: { index: number; text: string; name: string }[];
 }
 
 /** A concept hub's point, after the entries' points. */
@@ -154,14 +156,19 @@ export function buildModel(record: BrainData, by: Grouping, pal: Palette, theme:
   });
   // Labels: hubs first, biggest first; then the most-linked notes, then the newest, so a record without links still
   // gets a few.
+  // A hub's count is its entries in the whole record, not just the ones in the sample.
+  const hubCounts = hubs.map((h) => (inRecord ? h.hub.entries.filter((id) => inRecord.has(id)).length : h.members.length));
   const hubLabels = hubs
-    .map((h, k) => ({ index: entries.length + k, text: h.hub.name.trim(), count: h.members.length }))
+    .map((h, k) => ({ index: entries.length + k, text: h.hub.name.trim(), count: hubCounts[k]! }))
     .filter((l) => l.text)
     .sort((a, b) => b.count - a.count || a.index - b.index)
-    .map(({ index, text }) => ({ index, text }));
+    .map(({ index, text, count }) => ({ index, text, name: `${text}: concept hub, ${plural(count, 'entry', 'entries')}` }));
   const notes = entries.map((p, i) => i).filter((i) => entries[i]!.kind === 1 && data.points[i]![8].trim());
   notes.sort((a, b) => degree[b]! - degree[a]! || entries[b]!.time - entries[a]!.time || a - b);
-  const noteLabels = notes.slice(0, Math.max(0, 16 - hubLabels.length)).map((index) => ({ index, text: data.points[index]![8].trim() }));
+  const noteLabels = notes.slice(0, Math.max(0, 16 - hubLabels.length)).map((index) => {
+    const text = data.points[index]![8].trim();
+    return { index, text, name: `${text}: note` };
+  });
   return {
     data,
     total: record.points.length,
@@ -178,8 +185,7 @@ export function buildModel(record: BrainData, by: Grouping, pal: Palette, theme:
       labels: [...hubLabels.slice(0, 16), ...noteLabels],
     },
     indexOf,
-    // A hub's count is its entries in the whole record, not just the ones in the sample.
-    hubs: hubs.map((h, k) => ({ index: entries.length + k, id: h.hub.id, name: h.hub.name, count: inRecord ? h.hub.entries.filter((id) => inRecord.has(id)).length : h.members.length })),
+    hubs: hubs.map((h, k) => ({ index: entries.length + k, id: h.hub.id, name: h.hub.name, count: hubCounts[k]! })),
   };
 }
 

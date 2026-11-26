@@ -1,10 +1,14 @@
-// The Brain: the record as a glowing point cloud, with search, Fit, view settings, layouts and the legend.
+// The Brain: the record as a glowing point cloud, with search, Fit, view settings, layouts and the legend. One click
+// on a point or its label pins a card for it; double-click opens it.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Focus, Info, Plus, Search, SlidersHorizontal, X } from 'lucide-preact';
-import { clearLight, go, light, message, saveConfig, setGrouping, setLayout, toast } from '../actions.ts';
+import { clearLight, go, light, message, openEntry, openPanel, saveConfig, setGrouping, setLayout, toast } from '../actions.ts';
 import { api, qs } from '../api.ts';
+import { PartCard } from '../brain/PartCard.tsx';
+import { indexOfPoint, KIND_NAMES, type Part, partAt } from '../brain/parts.ts';
 import { useBrainModel, useBrainScene } from '../brain/useBrain.ts';
+import '../brain/brain.css';
 import { fmtDate, fmtNum, plural, speakerName } from '../format.ts';
 import { type ColourGrouping, GROUPING_LABELS } from '../groups.ts';
 import type { Layout } from '../layout.ts';
@@ -18,7 +22,12 @@ const LAYOUTS: [Layout, string][] = [
   ['clusters', 'Clusters'],
 ];
 
-const KIND_NAMES = ['Message', 'Note', 'File'];
+/** What the screen reader hears when a point is selected. */
+function selectedText(part: Part): string {
+  return part.kind === 'entry'
+    ? `Selected: ${part.title}, ${part.type.toLowerCase()}, ${fmtDate(part.at)}.`
+    : `Selected: ${part.name}, concept hub, ${plural(part.count, 'entry', 'entries')}.`;
+}
 
 export function BrainView() {
   const host = useRef<HTMLDivElement>(null);
@@ -30,18 +39,63 @@ export function BrainView() {
   const clip = useApp((s) => s.clip);
   const [settings, setSettings] = useState(false);
   const [help, setHelp] = useState(layout === 'rings');
+  // The selected point, by its point id (an entry id, or a hub id negated), so it outlives a regroup or a reload.
+  const [selected, setSelected] = useState<{ point: number; keyboard: boolean } | null>(null);
+  const index = selected && model ? indexOfPoint(model, selected.point) : -1;
+  const part = index >= 0 && model && brain ? partAt(model, brain, index) : null;
 
   useEffect(() => setHelp(layout === 'rings'), [layout]);
+
+  // The scene is shared with the Timeline's strip, which has no selection: leaving the Brain clears it.
+  useEffect(() => () => scene?.select(-1), [scene]);
+
+  // After useBrainScene's effects (new data clears the scene's selection), so the selection comes back after a reload.
+  useEffect(() => {
+    if (!scene || !model) return;
+    scene.select(index);
+    if (selected && index < 0) setSelected(null);
+  }, [scene, model, index]);
+
+  useEffect(() => {
+    if (!scene) return;
+    scene.onSelect = (i, keyboard) => {
+      const point = i >= 0 ? model?.input.points[i]?.id : undefined;
+      setSelected(point === undefined ? null : { point, keyboard });
+    };
+    return () => {
+      scene.onSelect = () => undefined;
+    };
+  }, [scene, model]);
+
+  const focusInCard = () => !!(document.activeElement as HTMLElement | null)?.closest?.('.part-card');
+
+  /** Closes the card. If focus was in it, focus goes back to the point's label, or to the brain. */
+  const closeCard = () => {
+    const back = focusInCard();
+    setSelected(null);
+    if (back) scene?.focusLabel(index);
+  };
+
+  /** A row in the card: select it when the brain draws it, otherwise open it. */
+  const pick = (point: number) => {
+    if (model && indexOfPoint(model, point) >= 0) setSelected({ point, keyboard: focusInCard() });
+    else if (point < 0) openPanel({ kind: 'hub', id: -point });
+    else openEntry(point);
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement).closest('input, textarea, select, [contenteditable]');
-      if (e.key === 'Escape' && lit && !document.querySelector('.side-panel, .modal-open')) clearLight();
+      if (e.key === 'Escape' && !document.querySelector('.side-panel, .modal-open')) {
+        // The card closes first; the next Esc puts the lit points back.
+        if (part && !typing && !settings) closeCard();
+        else if (lit) clearLight();
+      }
       if (!typing && (e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey && !(e.target as HTMLElement).closest('canvas')) scene?.fit();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [lit, scene]);
+  }, [lit, scene, part?.point, settings, index]);
 
   const empty = brain && brain.points.length === 0;
   // The scene's point i is the model's, which is a sample when the record is past the cap.
@@ -98,12 +152,28 @@ export function BrainView() {
       <div class="brain-layouts">
         <Segmented label="Layout" options={LAYOUTS} value={layout} onChange={setLayout} />
         {layout !== 'brain' && (
-          <Button icon={Info} kind="quiet" small aria-expanded={help} onClick={() => setHelp(!help)}>
+          <Button
+            icon={Info}
+            kind="quiet"
+            small
+            aria-expanded={help && !part}
+            onClick={() => {
+              // The card and this box share the corner: asking for the box puts the card away.
+              if (part) {
+                setSelected(null);
+                setHelp(true);
+              } else setHelp(!help);
+            }}
+          >
             How to read this
           </Button>
         )}
       </div>
-      {help && layout !== 'brain' && <ReadingBox layout={layout} onClose={() => setHelp(false)} />}
+      {help && layout !== 'brain' && !part && <ReadingBox layout={layout} onClose={() => setHelp(false)} />}
+      {part && brain && !clip && <PartCard part={part} record={brain} onPick={pick} onClose={closeCard} takeFocus={selected?.keyboard ?? false} />}
+      <p class="sr-only" role="status">
+        {part ? selectedText(part) : ''}
+      </p>
 
       {point && hover && !clip && (
         <div class="hover-card" style={{ transform: `translate(${Math.round(hover.x + 14)}px, ${Math.round(hover.y - 12)}px)` }} role="tooltip">
@@ -114,14 +184,14 @@ export function BrainView() {
           <p class="hover-meta">
             {KIND_NAMES[point[1]]} · {speakerName(brain!.speakers[point[2]] ?? '')}
           </p>
-          <p class="hover-hint">Double-click to open</p>
+          <p class="hover-hint">Click to pin · double-click to open</p>
         </div>
       )}
       {hub && hover && !clip && (
         <div class="hover-card" style={{ transform: `translate(${Math.round(hover.x + 14)}px, ${Math.round(hover.y - 12)}px)` }} role="tooltip">
           <p class="hover-title">{hub.name}</p>
           <p class="hover-meta">Concept hub · {plural(hub.count, 'entry', 'entries')}</p>
-          <p class="hover-hint">Double-click to open</p>
+          <p class="hover-hint">Click to pin · double-click to open</p>
         </div>
       )}
 

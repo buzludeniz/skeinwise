@@ -1,0 +1,127 @@
+/* The clickable brain: label buttons and the pinned card. The page's main styles come later in the bundle, so each
+   rule here names its parent too, to win over a rule there of the same weight. */
+
+/* The labels are buttons. They take clicks only while shown, and one with keyboard focus always shows. */
+.brain-labels .brain-label {
+  cursor: pointer;
+  pointer-events: none;
+}
+
+.brain-labels .brain-label.on,
+.brain-labels .brain-label:focus-visible {
+  pointer-events: auto;
+}
+
+.brain-labels .brain-label:focus-visible {
+  opacity: 1;
+  outline-offset: 1px;
+  z-index: 1;
+}
+
+.brain-labels .brain-label:hover {
+  border-color: var(--accent);
+}
+
+/* The card one click pins, in the top left corner (the "How to read this" box gives way to it). */
+.brain-view .part-card {
+  position: absolute;
+  top: 62px;
+  left: 16px;
+  width: 320px;
+  max-height: calc(100% - 62px - 84px);
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 5;
+  font-size: 13px;
+}
+
+.app.compact .brain-view .part-card {
+  left: 8px;
+  right: 8px;
+  width: auto;
+}
+
+.part-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.part-card h2 {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+  padding-top: 3px;
+}
+
+.part-card .part-meta {
+  margin: 4px 0 0;
+  font-size: var(--text-small);
+  color: var(--ink-soft);
+}
+
+.part-card .part-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 2px;
+}
+
+.part-card .part-subhead {
+  margin: 12px 0 4px;
+  font-size: var(--text-small);
+  color: var(--ink-soft);
+}
+
+.part-card .part-note {
+  margin: 2px 0 4px;
+  font-size: var(--text-small);
+  color: var(--ink-soft);
+}
+
+.part-card .part-error {
+  color: var(--danger);
+}
+
+.part-card .part-rows {
+  overflow-y: auto;
+  min-height: 0;
+  margin: 0 -6px;
+}
+
+.part-card .part-rows button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: var(--radius-small);
+  text-align: left;
+}
+
+.part-card .part-rows button:hover {
+  background: var(--hover);
+}
+
+.part-card .part-row-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.part-card .part-row-why {
+  font-size: var(--text-small);
+  color: var(--ink-soft);
+}
+
+@media (forced-colors: active) {
+  .brain-view .part-card {
+    border-color: CanvasText;
+  }
+}

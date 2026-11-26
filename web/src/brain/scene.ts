@@ -20,6 +20,7 @@ import {
 import { brainOutline, hash01, layoutFor, ringGuides, type Layout, type LayoutPoint } from '../layout.ts';
 import { hexToRgb } from '../themes.ts';
 import type { SceneInput } from './input.ts';
+import { nearestPoint } from './pick.ts';
 
 export type { SceneInput };
 
@@ -140,6 +141,27 @@ void main() {
   gl_FragColor = vec4(uColor, (1.0 - d) * uAlpha * vShade * uShow);
 }`;
 
+// The selected point's marker: a ring around it, drawn over everything, so a selection never relies on colour alone.
+const MARK_VERT = /* glsl */ `
+uniform float uScale;
+uniform float uSize;
+uniform float uBase;
+uniform float uRatio;
+void main() {
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = clamp(uBase * uSize * uScale / max(0.05, -mv.z) * 1.9 + 14.0, 20.0, 120.0) * uRatio;
+}`;
+
+const MARK_FRAG = /* glsl */ `
+uniform vec3 uColor;
+void main() {
+  float d = length(gl_PointCoord - 0.5) * 2.0;
+  float a = smoothstep(0.6, 0.72, d) * (1.0 - smoothstep(0.86, 0.98, d));
+  if (a <= 0.0) discard;
+  gl_FragColor = vec4(uColor, a);
+}`;
+
 const BACK_VERT = /* glsl */ `
 varying vec2 vUv;
 void main() {
@@ -195,6 +217,13 @@ export class BrainScene {
   private spokeLines: LineSegments | null = null;
   private shell: Points | null = null;
   private rings: LineSegments | null = null;
+  private readonly markMat: ShaderMaterial;
+  private readonly selectMat: ShaderMaterial;
+  private mark: Points | null = null;
+  private selectLines: LineSegments | null = null;
+  /** The selected point's index, or -1. Its marker and its own lines follow it through moves. */
+  private selected = -1;
+  private selectDirty = false;
 
   private input: SceneInput | null = null;
   private layouts = new Map<Layout, Float32Array>();
@@ -230,7 +259,9 @@ export class BrainScene {
   private last = 0;
   private dirty = true;
   private resizer: ResizeObserver | null = null;
-  private labelEls: { index: number; el: HTMLDivElement; w: number }[] = [];
+  private labelEls: { index: number; el: HTMLButtonElement; w: number }[] = [];
+  /** The label that has keyboard focus: always shown, wherever its point is. -1 when none. */
+  private focusedLabel = -1;
 
   private pointers = new Map<number, { x: number; y: number }>();
   private dragMoved = 0;
@@ -240,6 +271,8 @@ export class BrainScene {
 
   onHover: (hover: Hover | null) => void = () => undefined;
   onOpen: (index: number) => void = () => undefined;
+  /** A click on a point or its label selects it; a click on empty space passes -1. `keyboard` when a key pressed the label. */
+  onSelect: (index: number, keyboard: boolean) => void = () => undefined;
   onTouch: () => void = () => undefined;
 
   constructor() {
@@ -249,10 +282,14 @@ export class BrainScene {
     this.canvas.className = 'brain-canvas';
     this.canvas.tabIndex = 0;
     this.canvas.setAttribute('role', 'img');
-    this.canvas.setAttribute('aria-label', 'The brain: every entry as a point. Drag or use the arrow keys to turn it, plus and minus to zoom, F to fit.');
+    this.canvas.setAttribute(
+      'aria-label',
+      'The brain: every entry as a point. Click a point for its card. Drag or use the arrow keys to turn it, plus and minus to zoom, F to fit. Tab steps through the labelled hubs.',
+    );
     this.labelLayer = document.createElement('div');
     this.labelLayer.className = 'brain-labels';
-    this.labelLayer.setAttribute('aria-hidden', 'true');
+    this.labelLayer.setAttribute('role', 'group');
+    this.labelLayer.setAttribute('aria-label', 'Labelled hubs and notes');
     this.root.append(this.canvas, this.labelLayer);
     this.motionQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
     this.reducedMotion = this.motionQuery?.matches ?? false;
@@ -317,6 +354,18 @@ export class BrainScene {
       blending: AdditiveBlending,
     });
 
+    this.markMat = new ShaderMaterial({
+      vertexShader: MARK_VERT,
+      fragmentShader: MARK_FRAG,
+      uniforms: { uScale: { value: 1 }, uSize: { value: 1 }, uBase: { value: 0.1 }, uRatio: { value: 1 }, uColor: { value: new Vector3(0.91, 0.89, 0.85) } },
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      blending: NormalBlending,
+    });
+    this.selectMat = lineMat(0.55);
+    this.selectMat.blending = NormalBlending;
+
     const { positions, shade } = brainOutline();
     const g = new BufferGeometry();
     g.setAttribute('position', new BufferAttribute(positions, 3));
@@ -342,6 +391,7 @@ export class BrainScene {
     host.append(this.root);
     this.mode = mode;
     this.root.dataset.mode = mode;
+    if (mode !== 'full') this.select(-1);
     this.resizer?.disconnect();
     this.resizer = new ResizeObserver(() => this.resize());
     this.resizer.observe(host);
@@ -387,7 +437,9 @@ export class BrainScene {
     this.crossMat.uniforms.uAlpha!.value = theme.light ? 0.12 : 0.08;
     this.spokeMat.uniforms.uAlpha!.value = theme.light ? 0.08 : 0.05;
     this.ringMat.uniforms.uAlpha!.value = theme.light ? 0.25 : 0.16;
+    this.markMat.uniforms.uColor!.value.set(...rgb(theme.ink));
     if (this.input) this.buildRings();
+    this.selectDirty = true;
     this.dirty = true;
   }
 
@@ -396,6 +448,7 @@ export class BrainScene {
     this.options = options;
     this.turning = options.turning && !this.touched && !this.reducedMotion;
     this.pointMat.uniforms.uSize!.value = options.pointSize;
+    this.markMat.uniforms.uSize!.value = options.pointSize;
     if (densityChanged) this.applyDensity();
     this.syncLabels();
     this.dirty = true;
@@ -412,6 +465,8 @@ export class BrainScene {
     this.lit = new Float32Array(n).fill(1);
     this.anyLit = false;
     this.mix = 1;
+    this.selected = -1;
+    this.selectDirty = true;
 
     const g = new BufferGeometry();
     g.setAttribute('position', new BufferAttribute(this.from, 3));
@@ -453,6 +508,7 @@ export class BrainScene {
     this.layouts.delete('clusters');
     if (this.layout === 'clusters') this.moveTo('clusters', true);
     this.buildLines();
+    this.selectDirty = true;
     this.dirty = true;
   }
 
@@ -535,6 +591,27 @@ export class BrainScene {
     return { x: ((v.x + 1) / 2) * this.width, y: ((1 - v.y) / 2) * this.height };
   }
 
+  /** Marks one point as selected, with a ring and its own lines drawn brighter; -1 clears it. Only the Brain view selects. */
+  select(index: number): void {
+    const n = this.input?.points.length ?? 0;
+    const next = index >= 0 && index < n && this.mode === 'full' ? index : -1;
+    if (next === this.selected) return;
+    this.selected = next;
+    this.selectDirty = true;
+    this.dirty = true;
+  }
+
+  get selectedIndex(): number {
+    return this.selected;
+  }
+
+  /** Puts keyboard focus on the label of this point, if it has one; otherwise on the canvas. */
+  focusLabel(index: number): void {
+    const label = this.labelEls.find((l) => l.index === index);
+    if (label && !this.labelLayer.classList.contains('hidden')) label.el.focus({ preventScroll: true });
+    else this.canvas.focus({ preventScroll: true });
+  }
+
   // Layout and moves.
 
   private layoutOf(layout: Layout): Float32Array {
@@ -546,10 +623,11 @@ export class BrainScene {
     return pos;
   }
 
+  /** Where point i is drawn right now: mid-move, on the same eased path the shaders draw. */
   private pointAt(i: number): [number, number, number] {
     const k = i * 3;
     if (this.mix >= 1) return [this.current[k]!, this.current[k + 1]!, this.current[k + 2]!];
-    const t = this.mix;
+    const t = easeInOut(this.mix);
     return [
       this.from[k]! + (this.current[k]! - this.from[k]!) * t,
       this.from[k + 1]! + (this.current[k + 1]! - this.from[k + 1]!) * t,
@@ -581,6 +659,7 @@ export class BrainScene {
     } else this.mix = 1;
     this.applyMix();
     this.buildLabels();
+    this.selectDirty = true;
     this.dirty = true;
   }
 
@@ -709,6 +788,7 @@ export class BrainScene {
     if (this.linkLines) this.linkLines.visible = d > 0;
     if (this.crossLines) this.crossLines.visible = d > 0;
     if (this.spokeLines) this.spokeLines.visible = d > 0;
+    this.selectDirty = true;
     this.dirty = true;
   }
 
@@ -727,6 +807,75 @@ export class BrainScene {
     if (this.input) set(this.linkLines, this.input.links, LINK_STEPS * 2);
     if (this.input) set(this.crossLines, this.input.cross, LINK_STEPS * 2);
     if (this.input) set(this.spokeLines, this.input.spokes, 2);
+  }
+
+  // The selection.
+
+  /**
+   * The selected point's ring and its own lines (its links, cross links, spokes and thread steps), in ink, over the
+   * rest. They are rebuilt from where points are drawn now, so they follow a move; that is a few dozen vertices, so
+   * it runs on every frame of a move.
+   */
+  private buildSelection(): void {
+    this.selectDirty = false;
+    const i = this.selected;
+    if (this.mark) {
+      this.scene.remove(this.mark);
+      this.mark.geometry.dispose();
+      this.mark = null;
+    }
+    if (this.selectLines) {
+      this.scene.remove(this.selectLines);
+      this.selectLines.geometry.dispose();
+      this.selectLines = null;
+    }
+    if (i < 0 || !this.input) return;
+    const at = this.pointAt(i);
+    const mg = new BufferGeometry();
+    mg.setAttribute('position', new BufferAttribute(new Float32Array(at), 3));
+    this.markMat.uniforms.uBase!.value = this.input.sizes[i] ?? 0.1;
+    this.mark = new Points(mg, this.markMat);
+    this.mark.frustumCulled = false;
+    this.mark.renderOrder = 4;
+    this.scene.add(this.mark);
+
+    // Each pair touching i, as two drawn positions; curved like the lines they lie over.
+    const ends = (pairs: Uint32Array, limit = pairs.length) => {
+      const out: number[] = [];
+      for (let k = 0; k + 1 < limit; k += 2) {
+        if (pairs[k] === i || pairs[k + 1] === i) out.push(...this.pointAt(pairs[k]!), ...this.pointAt(pairs[k + 1]!));
+      }
+      return new Float32Array(out);
+    };
+    const pairsOf = (pos: Float32Array) => Uint32Array.from({ length: pos.length / 3 }, (_, k) => k);
+    const d = this.options.lineDensity;
+    const parts: Float32Array[] = [];
+    if (d > 0) {
+      const links = ends(this.input.links);
+      const cross = ends(this.input.cross);
+      parts.push(this.lineVertices(links, pairsOf(links), true), this.lineVertices(cross, pairsOf(cross), true, 0.08));
+      parts.push(ends(this.input.spokes), ends(this.threadOrder));
+    }
+    const length = parts.reduce((sum, p) => sum + p.length, 0);
+    if (!length) return;
+    const pos = new Float32Array(length);
+    let o = 0;
+    for (const p of parts) {
+      pos.set(p, o);
+      o += p.length;
+    }
+    const colors = new Float32Array(pos.length);
+    const ink = rgb(this.theme.ink);
+    for (let k = 0; k < colors.length; k += 3) colors.set(ink, k);
+    const g = new BufferGeometry();
+    g.setAttribute('position', new BufferAttribute(pos, 3));
+    g.setAttribute('target', new BufferAttribute(pos, 3));
+    g.setAttribute('color', new BufferAttribute(colors, 3));
+    g.setAttribute('lit', new BufferAttribute(new Float32Array(pos.length / 3).fill(1), 1));
+    this.selectLines = new LineSegments(g, this.selectMat);
+    this.selectLines.frustumCulled = false;
+    this.selectLines.renderOrder = 3;
+    this.scene.add(this.selectLines);
   }
 
   /** The activity layout's guides: a faint circle per year, with month spokes, only in that layout. */
@@ -780,17 +929,36 @@ export class BrainScene {
 
   // Labels.
 
+  /**
+   * The labels are buttons: a click or Enter selects the point, and Tab steps through them in order, hubs first and
+   * biggest first. A rebuild keeps keyboard focus on the same label.
+   */
   private buildLabels(): void {
+    const had = this.labelEls.find((l) => l.el === document.activeElement)?.el.getAttribute('aria-label') ?? null;
     for (const { el } of this.labelEls) el.remove();
     this.labelEls = [];
+    this.focusedLabel = -1;
     if (!this.input) return;
     const max = this.width < 700 ? 6 : 12;
-    for (const { index, text } of this.input.labels.slice(0, max)) {
-      const el = document.createElement('div');
+    for (const { index, text, name } of this.input.labels.slice(0, max)) {
+      const el = document.createElement('button');
+      el.type = 'button';
       el.className = 'brain-label';
       el.textContent = text.length > 34 ? `${text.slice(0, 32)}…` : text;
+      el.setAttribute('aria-label', name);
+      el.addEventListener('click', (e) => this.onSelect(index, e.detail === 0));
+      el.addEventListener('dblclick', () => this.onOpen(index));
+      el.addEventListener('focus', () => {
+        this.focusedLabel = index;
+        this.dirty = true;
+      });
+      el.addEventListener('blur', () => {
+        if (this.focusedLabel === index) this.focusedLabel = -1;
+        this.dirty = true;
+      });
       this.labelLayer.append(el);
       this.labelEls.push({ index, el, w: 0 });
+      if (had !== null && name === had) el.focus({ preventScroll: true });
     }
     this.syncLabels();
   }
@@ -813,6 +981,15 @@ export class BrainScene {
       // To the right of its point, or to the left when that would run off the canvas. Measured once.
       label.w ||= el.offsetWidth;
       const box = s ? { x: s.x + 9 + label.w > this.width - 8 ? Math.max(8, s.x - 9 - label.w) : s.x + 9, y: s.y - 22, w: label.w } : null;
+      // A label with keyboard focus always shows, so focus is never on something unseen; behind the camera, it waits
+      // in the top left corner.
+      if (index === this.focusedLabel) {
+        const at = box ?? { x: 8, y: 8, w: label.w };
+        el.classList.add('on');
+        placed.push(at);
+        el.style.transform = `translate(${Math.round(at.x)}px, ${Math.round(Math.max(4, at.y))}px)`;
+        continue;
+      }
       // Hide labels on the far side of the cloud, under a dim point, or overlapping a label already placed.
       const visible =
         !!box &&
@@ -915,6 +1092,8 @@ export class BrainScene {
     this.shellMat.uniforms.uScale!.value = scale;
     this.pointMat.uniforms.uRatio!.value = this.ratio;
     this.shellMat.uniforms.uRatio!.value = this.ratio;
+    this.markMat.uniforms.uScale!.value = scale;
+    this.markMat.uniforms.uRatio!.value = this.ratio;
     this.backMat.uniforms.uAspect!.value = w / h;
     if (refit && !this.touched) this.fit(false);
     if (this.labelEls.length && (w < 700) !== (this.labelEls.length <= 6)) this.buildLabels();
@@ -956,6 +1135,7 @@ export class BrainScene {
     }
     if (!this.dirty || !this.renderer) return;
     this.dirty = false;
+    if (this.selectDirty || (this.selected >= 0 && this.mix < 1)) this.buildSelection();
     this.placeCamera();
     this.renderer.render(this.scene, this.camera);
     this.placeLabels();
@@ -1028,6 +1208,12 @@ export class BrainScene {
       },
       { passive: false },
     );
+    // One click selects (a drag that turned the brain doesn't); a click on empty space clears the selection.
+    c.addEventListener('click', (e) => {
+      if (this.mode !== 'full' || this.dragMoved > 3) return;
+      const rect = c.getBoundingClientRect();
+      this.onSelect(this.nearest(e.clientX - rect.left, e.clientY - rect.top, 16), false);
+    });
     c.addEventListener('dblclick', (e) => {
       const rect = c.getBoundingClientRect();
       const i = this.nearest(e.clientX - rect.left, e.clientY - rect.top, 16);
@@ -1086,26 +1272,18 @@ export class BrainScene {
   /** The point nearest a spot on screen, within a radius in CSS pixels; -1 when none. Dimmed points don't count. */
   private nearest(x: number, y: number, radius: number): number {
     if (!this.input || this.grow < 1) return -1;
-    const m = this.camera.projectionMatrix.clone().multiply(this.camera.matrixWorldInverse).elements;
-    const n = this.input.points.length;
-    let best = -1;
-    let bestD = radius * radius;
-    let bestZ = Infinity;
-    for (let i = 0; i < n; i++) {
-      if (this.anyLit ? this.lit[i]! < 1.5 : this.lit[i]! < 0.5) continue;
-      const [px, py, pz] = this.pointAt(i);
-      const w = m[3]! * px + m[7]! * py + m[11]! * pz + m[15]!;
-      if (w <= 0) continue;
-      const sx = (((m[0]! * px + m[4]! * py + m[8]! * pz + m[12]!) / w + 1) / 2) * this.width;
-      const sy = ((1 - (m[1]! * px + m[5]! * py + m[9]! * pz + m[13]!) / w) / 2) * this.height;
-      const d = (sx - x) ** 2 + (sy - y) ** 2;
-      if (d < bestD - 4 || (d < bestD + 4 && w < bestZ)) {
-        best = i;
-        bestD = Math.min(bestD, d);
-        bestZ = w;
-      }
-    }
-    return best;
+    const matrix = this.camera.projectionMatrix.clone().multiply(this.camera.matrixWorldInverse).elements;
+    const lit = this.lit;
+    const floor = this.anyLit ? 1.5 : 0.5;
+    return nearestPoint(
+      { matrix, width: this.width, height: this.height },
+      { from: this.from, to: this.current, t: easeInOut(this.mix) },
+      this.input.points.length,
+      x,
+      y,
+      radius,
+      (i) => lit[i]! < floor,
+    );
   }
 }
 
