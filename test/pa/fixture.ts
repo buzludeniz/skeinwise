@@ -25,7 +25,11 @@ export const NOTES: EntryInput[] = [
 
 /** A store holding the invented record, its clock stopped at NOW unless given one. */
 export function paStore(clock: () => string = () => NOW): Store {
-  const store = new Store(openDb(':memory:'), clock);
+  return fillRecord(new Store(openDb(':memory:'), clock));
+}
+
+/** Puts the invented record into a store. */
+export function fillRecord(store: Store): Store {
   store.ingest({ source: { kind: 'notes', label: 'Notes', location: '/invented/notes' }, threads: [], entries: NOTES });
   store.ingest({
     source: { kind: 'claude', label: 'Claude' },
