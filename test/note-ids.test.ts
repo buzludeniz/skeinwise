@@ -15,7 +15,8 @@ const CHECK = /outside\(|!relative\(|^\s*const rel = relative\(dir, full\);$/;
 
 describe('note entry ids', () => {
   it.each(LOOKUPS)('%s builds ids and file names with pathInside, and calls relative() only to check containment', (file) => {
-    const lines = readFileSync(join(import.meta.dirname, '..', file), 'utf8').split('\n');
+    // A Windows checkout may end its lines with \r\n.
+    const lines = readFileSync(join(import.meta.dirname, '..', file), 'utf8').split(/\r?\n/);
     const naming = lines.flatMap((line, i) => (/\brelative\(/.test(line) && !CHECK.test(line) ? [`${file}:${i + 1}: ${line.trim()}`] : []));
     expect(naming).toEqual([]);
   });
