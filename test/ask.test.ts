@@ -40,12 +40,14 @@ describe('asking the demo record', () => {
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('"what did I decide about sqlite" finds both Plotline decisions, oldest first', async () => {
+  it('"what did I decide about sqlite" finds the four Plotline decisions, oldest first', async () => {
     const r = await ask(store, record, 'what did I decide about sqlite', NONE);
     expect(r).toMatchObject({ kind: 'decided', topic: 'sqlite', answer: null, runId: null, message: null });
     expect(r.hits.map((h) => [h.date, h.why, h.quote])).toEqual([
       ['2025-03-09', 'decision', 'Decided: Plotline runs on SQLite.'],
       ['2026-04-05', 'decision', expect.stringMatching(/^Changing my mind on SQLite: .* so we move to Postgres\.$/)],
+      ['2026-08-11', 'decision', 'Decided: the waiting list stays in SQLite on the shed laptop, copied to Postgres every night.'],
+      ['2026-10-14', 'decision', expect.stringMatching(/^Changing my mind on the waiting list: .* into Postgres with the rest of Plotline\.$/)],
     ]);
     expect(r.hits.every((h) => h.speaker === 'you')).toBe(true);
     expect(listRuns(store.db)).toEqual([]);
@@ -56,6 +58,8 @@ describe('asking the demo record', () => {
     expect(r.hits.map((h) => [h.date, h.why])).toEqual([
       ['2025-03-09', 'first mention'],
       ['2026-04-05', 'change'],
+      ['2026-08-11', 'decision'],
+      ['2026-10-14', 'change'],
     ]);
   });
 
@@ -63,7 +67,7 @@ describe('asking the demo record', () => {
     const r = await ask(store, record, 'when did I first mention sourdough', NONE);
     const dates = r.hits.map((h) => h.date);
     expect(dates).toEqual([...dates].sort());
-    expect(dates[0]).toBe('2024-03-18');
+    expect(dates[0]).toBe('2024-11-24');
     expect(r.hits.every((h) => h.why === 'first mention')).toBe(true);
     const none = await ask(store, record, 'what did I decide about zeppelins', NONE);
     expect(none.hits).toEqual([]);
@@ -82,7 +86,7 @@ describe('asking the demo record', () => {
     const client = createModel(DEFAULT_CONFIG, 'local', { fetch, env: {} });
     const r = await ask(store, record, 'what did I decide about sqlite', { engine: 'local', client, budget: 0, limit: 5 });
     expect(sent[0]).toMatch(/E1 \(2025-03-09, me, "Plotline runs on SQLite"\): .*Decided: Plotline runs on SQLite\./);
-    expect(r).toMatchObject({ answer: 'SQLite in March 2025, then Postgres in April 2026.', cites: [385, 345], engine: 'local', model: 'models/fake-4b.gguf' });
+    expect(r).toMatchObject({ answer: 'SQLite in March 2025, then Postgres in April 2026.', cites: [559, 475], engine: 'local', model: 'models/fake-4b.gguf' });
     const run = listRuns(store.db).find((x) => x.id === r.runId)!;
     expect(run).toMatchObject({ task: 'ask', status: 'done', engine: 'local', tokensIn: 300, tokensOut: 25 });
   });
@@ -99,10 +103,10 @@ describe('asking the demo record', () => {
   });
 
   it('similar finds the entries most like one, from other threads, best first', () => {
-    const hits = similarEntries(record, 385, 3);
-    expect(hits[0]).toMatchObject({ entryId: 345, date: '2026-04-05' });
+    const hits = similarEntries(record, 559, 3);
+    expect(hits[0]).toMatchObject({ entryId: 475, date: '2026-04-05' });
     expect(hits.map((h) => h.score)).toEqual([...hits.map((h) => h.score)].sort((a, b) => b - a));
-    expect(hits.every((h) => h.entryId !== 385)).toBe(true);
+    expect(hits.every((h) => h.entryId !== 559)).toBe(true);
     expect(() => similarEntries(record, 99_999, 3)).toThrow(/No entry 99999/);
   });
 });
