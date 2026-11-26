@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.ts';
 import { DEMO_NOW } from '../src/demo/demo.ts';
@@ -235,7 +235,7 @@ describe('notes from the command line', () => {
     const home = newHome();
     const sw = inHome(home, { now: '2026-11-25T10:30:00.000Z' });
     const first = await sw('note', 'Fed the starter at 18:00');
-    expect(first.out).toMatch(/^Started .*daily\/2026-11-25\.md \(entry #1\)\.\n$/);
+    expect(first.out).toMatch(/^Started .*daily[\\/]2026-11-25\.md \(entry #1\)\.\n$/);
     expect((await sw('note', 'Rye proof took four hours')).out).toMatch(/^Added to .*2026-11-25\.md \(entry #1\)\.\n$/);
     expect((await sw('note')).code).toBe(2);
 
@@ -260,7 +260,8 @@ describe('settings from the command line', () => {
     expect((await sw('config', 'budget', 'lots')).code).toBe(2);
     expect((await sw('config', 'engine', '--unset')).out).toBe('engine is back to its default: local\n');
     expect((await sw('config', 'liveFolders', '[{"path": "/notes/mara", "owner": "Mara"}, {"path": "/notes/mine"}]')).out).toBe(
-      'liveFolders = /notes/mara (Mara), /notes/mine\n',
+      // The folders are kept resolved: on Windows, on the current drive.
+      `liveFolders = ${resolve('/notes/mara')} (Mara), ${resolve('/notes/mine')}\n`,
     );
     const unknown = await sw('config', 'colour', 'blue');
     expect(unknown.code).toBe(2);
