@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -163,6 +163,27 @@ describe('skeinwise doctor', () => {
 
     writeFileSync(file, '{oops');
     expect(of(await diagnose(home, env(), deps()), 'mcp')).toContainEqual(expect.objectContaining({ status: 'problem', text: expect.stringMatching(/isn't valid JSON/) }));
+  });
+
+  it('finds a bare command on PATH as Windows does: as an .exe or a .cmd', async () => {
+    mkdirSync(join(user, '.cursor'));
+    await connect({ ...ctxFor({ yes: true }).ctx, args: ['cursor'] }, { script: resolve('src/cli.ts'), node: process.execPath });
+    const file = join(user, '.cursor', 'mcp.json');
+    const entry = JSON.parse(readFileSync(file, 'utf8')).mcpServers.skeinwise;
+    writeFileSync(file, JSON.stringify({ mcpServers: { skeinwise: { ...entry, command: 'skeinwise' } } }));
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    const onPath = { ...env(), PATH: bin };
+    const missing = expect.objectContaining({ status: 'problem', text: "Cursor starts Skeinwise with skeinwise, which isn't there." });
+    expect(of(await diagnose(home, onPath, deps({ platform: 'win32' })), 'mcp')).toContainEqual(missing);
+    for (const name of ['skeinwise.exe', 'skeinwise.cmd']) {
+      writeFileSync(join(bin, name), '');
+      chmodSync(join(bin, name), 0o755);
+      expect(of(await diagnose(home, onPath, deps({ platform: 'win32' })), 'mcp')).toEqual([{ check: 'mcp', status: 'ok', text: 'Cursor is connected as cursor (read scope)' }]);
+      // Only Windows adds an extension to a bare name.
+      expect(of(await diagnose(home, onPath, deps({ platform: 'linux' })), 'mcp')).toContainEqual(missing);
+      rmSync(join(bin, name));
+    }
   });
 
   it("reads Codex's token from its config.toml", async () => {

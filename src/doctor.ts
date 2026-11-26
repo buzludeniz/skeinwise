@@ -264,13 +264,18 @@ function readEntry(client: AgentClient, file: string): Entry | null | { unreadab
   return { command: typeof entry.command === 'string' ? entry.command : null, env: env as Record<string, string> };
 }
 
-function commandFound(command: string, env: NodeJS.ProcessEnv): boolean {
+/**
+ * Whether the command an agent's config starts Skeinwise with is there. On Windows a bare name is also found as an .exe
+ * (a native install) or a .cmd (npm's shim).
+ */
+function commandFound(command: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean {
   if (isAbsolute(command)) return existsSync(command);
   if (command.includes('/') || command.includes('\\')) return false;
-  return onPath(command, env.PATH) !== null || (process.platform === 'win32' && onPath(`${command}.cmd`, env.PATH) !== null);
+  const names = platform === 'win32' ? [command, `${command}.exe`, `${command}.cmd`] : [command];
+  return names.some((name) => onPath(name, env.PATH) !== null);
 }
 
-function checkMcp(home: string, env: NodeJS.ProcessEnv): Finding[] {
+function checkMcp(home: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Finding[] {
   const out: Finding[] = [];
   let access: Access;
   try {
@@ -303,7 +308,7 @@ function checkMcp(home: string, env: NodeJS.ProcessEnv): Finding[] {
       continue;
     }
     connected += 1;
-    if (!entry.command || !commandFound(entry.command, env)) {
+    if (!entry.command || !commandFound(entry.command, env, platform)) {
       out.push({ check: 'mcp', status: 'problem', text: `${client.label} starts Skeinwise with ${entry.command ?? 'no command'}, which isn't there.`, fix });
       continue;
     }
@@ -332,7 +337,7 @@ export async function diagnose(home: string, env: NodeJS.ProcessEnv, deps: Docto
     ...checkModes(home, deps.platform),
     checkLive(home),
     await checkModel(home, env, deps),
-    ...checkMcp(home, env),
+    ...checkMcp(home, env, deps.platform),
   ];
 }
 
