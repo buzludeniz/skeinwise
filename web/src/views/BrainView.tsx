@@ -140,9 +140,13 @@ export function BrainView() {
         )
       )}
       {empty && (
-        <div class="brain-fallback">
+        // Beside the body, not over it: on an empty record the body is the picture of what is to come.
+        <div class="brain-fallback empty-body">
           <Empty title="Nothing woven yet">
-            <p>Add an export, a note folder or your agent history, and the brain fills in point by point.</p>
+            <p>
+              Each source you bring in gets its own nerve: chat assistants down the arms, coding agents down the legs,
+              and the rest round the trunk. Notes fill the head.
+            </p>
             <Button icon={Plus} kind="primary" onClick={() => go('add')}>
               Add files or a source
             </Button>
