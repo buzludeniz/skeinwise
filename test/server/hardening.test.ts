@@ -2,7 +2,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, lstatSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import { request } from 'node:http';
+import { createServer, request } from 'node:http';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +11,7 @@ import { loadConfig, saveConfig } from '../../src/config.ts';
 import { publicMessage } from '../../src/server/app.ts';
 import { type Running, startServer } from '../../src/server/serve.ts';
 import { sameToken } from '../../src/server/token.ts';
+import { keyShaped } from '../samples.ts';
 import { cleanUploads } from '../../src/server/uploads.ts';
 
 let dir: string;
@@ -295,6 +296,61 @@ describe('L8: note files', () => {
     rmSync(join(notes(), 'daily'));
     expect((await api('daily', { body: { text: 'a daily line' } })).status).toBe(200);
     expect(lstatSync(join(notes(), 'daily')).isDirectory()).toBe(true);
+  });
+});
+
+describe('M11 / SETTINGS-1: the page cannot choose where your words go', () => {
+  it('refuses a settings change that sends them elsewhere, with the command and none of the values sent', async () => {
+    const before = (await api('settings')).body;
+    const tries = [
+      { ai: { engine: 'remote' } },
+      { ai: { remote: { address: 'https://collector.attacker.invalid/v1' } } },
+      { ai: { remote: { hosts: ['collector.attacker.invalid'] } } },
+      { ai: { remote: { keyEnv: 'SKEINWISE_STOLEN_API_KEY' } } },
+      { exclusions: { redact: false } },
+      { live: { folders: [{ path: '/Users/someone/.ssh' }] } },
+      { live: { remote: true } },
+      { live: { downloads: true } },
+    ];
+    for (const body of tries) {
+      const res = await api('settings', { method: 'PUT', body: { appearance: { theme: 'paper' }, ...body } });
+      expect(res.status, JSON.stringify(body)).toBe(403);
+      expect(res.body.command).toMatch(/^skeinwise config \w+ /);
+      expect(JSON.stringify(res.body)).not.toMatch(/attacker|STOLEN|\.ssh/);
+    }
+    expect((await api('settings')).body).toEqual(before);
+    // What the page was shown goes back unchanged.
+    expect((await api('settings', { method: 'PUT', body: { ai: before.ai, live: before.live, exclusions: before.exclusions } })).status).toBe(200);
+  });
+
+  it('never lets a request pick the outside model the terminal did not choose', async () => {
+    let reached = 0;
+    const outside = createServer((req, res) => {
+      reached++;
+      req.resume();
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"choices":[{"message":{"content":"{}"}}],"usage":{}}');
+    });
+    await new Promise<void>((done) => outside.listen(0, '127.0.0.1', done));
+    const port = (outside.address() as { port: number }).port;
+    const saved = loadConfig(home);
+    process.env.SKEINWISE_HARDENING_API_KEY = keyShaped('sk-', 'hardening-', 'not-a-real-key');
+    saveConfig(home, { ...saved, engine: 'local', remoteUrl: `http://127.0.0.1:${port}/v1`, remoteModel: 'm', apiKeyEnv: 'SKEINWISE_HARDENING_API_KEY', remoteHosts: [`127.0.0.1:${port}`] });
+    try {
+      const ask = await api('ask?q=One&engine=remote');
+      expect(ask.status).toBe(403);
+      expect(ask.body.command).toBe('skeinwise config engine remote');
+      expect((await api('organise/preview', { body: { task: 'tag', engine: 'remote' } })).status).toBe(403);
+      expect((await api('organise', { body: { task: 'tag', engine: 'remote', yes: true } })).status).toBe(403);
+      expect(reached).toBe(0);
+      // Once the terminal chose it, the same request reaches it: the refusal above is what stopped it.
+      saveConfig(home, { ...loadConfig(home), engine: 'remote' });
+      expect((await api('ask?q=One&engine=remote')).status).toBe(200);
+      expect(reached).toBeGreaterThan(0);
+    } finally {
+      saveConfig(home, saved);
+      delete process.env.SKEINWISE_HARDENING_API_KEY;
+      await new Promise((done) => outside.close(done));
+    }
   });
 });
 

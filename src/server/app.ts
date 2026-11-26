@@ -13,7 +13,7 @@ import { undoRun } from '../organiser/runs.ts';
 import type { Store } from '../store/store.ts';
 import { backup } from './backup.ts';
 import { cellEntries, parseFilter, tableCounts, type TableProp, tides, timelineBuckets } from './buckets.ts';
-import { ConfigError, readConfig, TABLE_PROPS, writeConfig } from './config.ts';
+import { CliOnly, ConfigError, readConfig, TABLE_PROPS, writeConfig } from './config.ts';
 import { writeOver } from './files.ts';
 import { findAgents, findSources, preview } from './found.ts';
 import type { AppLive } from './live.ts';
@@ -524,7 +524,9 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       const status =
         error instanceof HttpError
           ? error.status
-          : error instanceof ConfigError || error instanceof NoteError || error instanceof UsageError
+          : error instanceof CliOnly
+            ? 403
+            : error instanceof ConfigError || error instanceof NoteError || error instanceof UsageError
             ? 400
             : /^No (entry|source|thread) \d+/.test(error instanceof Error ? error.message : '')
               ? 404
@@ -532,7 +534,9 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       const message = error instanceof Error ? error.message : String(error);
       if (status === 500) process.stderr.write(`skeinwise serve: ${error instanceof Error ? (error.stack ?? message) : message}\n`);
       // The page gets no paths outside the record folder (M2, L10); the terminal keeps the whole message.
-      if (!res.headersSent) send(raw, res, status, { error: publicMessage(message, home) });
+      // A terminal-only setting also names the command, so the page can offer to copy it (SETTINGS-1).
+      const extra = error instanceof CliOnly ? { command: error.command } : {};
+      if (!res.headersSent) send(raw, res, status, { error: publicMessage(message, home), ...extra });
       else res.end();
     }
   };
