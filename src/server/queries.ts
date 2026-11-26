@@ -140,15 +140,51 @@ export interface BrainData {
   folders: string[];
   projects: string[];
   threads: Record<string, string>;
+  /** Every entry, or past BRAIN_POINTS a sample of them (see samplePoints). Threads hold the titles of these points'. */
   points: BrainPoint[];
-  /** [from, to, kind]: 0 = note link, 1 = cross link. */
+  // total, counts and a hub's size are always sent; they are optional so data built before them still types.
+  /** How many entries the record holds; more than points.length when the brain shows a sample. */
+  total?: number;
+  /**
+   * The whole record's counts, so a legend over a sample still counts the record: by speaker, source, folder and
+   * project (each in the order of its list above; `noProject` for entries in none), and by month (0 = January, UTC).
+   */
+  counts?: { speaker: number[]; source: number[]; folder: number[]; project: number[]; noProject: number; month: number[] };
+  /** [from, to, kind]: 0 = note link, 1 = cross link. Only between points in `points`. */
   links: [number, number, number][];
-  /** The organiser's concept hubs, each with the entries it holds (its spokes). */
-  hubs: { id: number; name: string; entries: number[] }[];
+  /** The organiser's concept hubs: `size` entries in all, `entries` those of them in `points` (its spokes). */
+  hubs: { id: number; name: string; size?: number; entries: number[] }[];
   organiser: boolean;
 }
 
-export function brainData(db: DatabaseSync): BrainData {
+/**
+ * The most points /api/brain sends; past it, a sample, and the page says so. The page draws at most this many anyway,
+ * so a big record's first load stays small (1.5 MB gzip at 150,000 entries, plan section 7).
+ */
+export const BRAIN_POINTS = 20_000;
+
+/** Picks `room` of the indices spread evenly over time, so the sample keeps the record's shape. */
+function spread(points: BrainPoint[], indices: number[], room: number): number[] {
+  if (indices.length <= room) return indices;
+  const byTime = [...indices].sort((a, b) => points[a]![7] - points[b]![7] || a - b);
+  return Array.from({ length: room }, (_, k) => byTime[Math.floor((k * byTime.length) / room)]!);
+}
+
+/**
+ * The indices of the points to send, in record order, or null when they all fit. Notes and files come first, since
+ * you wrote or kept them; the room left goes to messages spread evenly over time. A copy of the page's own sampler
+ * (samplePoints in web/src/brain/input.ts, on v1/web), which then finds nothing to cut.
+ */
+export function samplePoints(points: BrainPoint[], cap = BRAIN_POINTS): number[] | null {
+  if (points.length <= cap) return null;
+  const kept: number[] = [];
+  const messages: number[] = [];
+  points.forEach((p, i) => (p[1] === 0 ? messages : kept).push(i));
+  const first = spread(points, kept, cap);
+  return [...first, ...spread(points, messages, cap - first.length)].sort((a, b) => a - b);
+}
+
+export function brainData(db: DatabaseSync, cap = BRAIN_POINTS): BrainData {
   const rows = entryRows(db);
   const speakers: string[] = [];
   const folders: string[] = [];
@@ -168,9 +204,8 @@ export function brainData(db: DatabaseSync): BrainData {
   const kindCode = { message: 0, note: 1, file: 2 } as const;
   const projects: string[] = [];
   const pr = new Map<string, number>();
-  const points: BrainPoint[] = rows.map((r) => {
+  const all: BrainPoint[] = rows.map((r) => {
     if (!sources.has(r.sourceId)) sources.set(r.sourceId, { id: r.sourceId, label: r.source, kind: r.sourceKind });
-    if (r.threadId && r.threadTitle !== null) threads[r.threadId] = r.threadTitle;
     return [
       r.id,
       kindCode[r.kind],
@@ -183,24 +218,55 @@ export function brainData(db: DatabaseSync): BrainData {
       r.title.length > 90 ? `${r.title.slice(0, 89)}…` : r.title,
     ];
   });
+  const sourceList = [...sources.values()];
+  const counts = {
+    speaker: speakers.map(() => 0),
+    source: sourceList.map(() => 0),
+    folder: folders.map(() => 0),
+    project: projects.map(() => 0),
+    noProject: 0,
+    month: Array.from({ length: 12 }, () => 0),
+  };
+  const sourceAt = new Map(sourceList.map((src, i) => [src.id, i]));
+  for (const p of all) {
+    counts.speaker[p[2]]!++;
+    counts.source[sourceAt.get(p[3])!]!++;
+    counts.folder[p[5]]!++;
+    if (p[6] >= 0) counts.project[p[6]]!++;
+    else counts.noProject++;
+    if (Number.isFinite(p[7])) counts.month[new Date(p[7]).getUTCMonth()]!++;
+  }
+  const keep = samplePoints(all, cap);
+  const points = keep ? keep.map((i) => all[i]!) : all;
+  for (const i of keep ?? rows.keys()) {
+    const r = rows[i]!;
+    if (r.threadId && r.threadTitle !== null) threads[r.threadId] = r.threadTitle;
+  }
   const ready = organiserReady(db);
   const visible = new Set(rows.map((r) => r.id));
+  const shown = keep ? new Set(points.map((p) => p[0])) : visible;
   // Note links come from your [[links]] whatever has run; cross links from the organiser's link task.
-  const links: [number, number, number][] = noteLinks(db).map(([a, b]) => [a, b, 0]);
-  if (ready) for (const l of liveLinks(db)) if (l.kind === 'cross' && visible.has(l.from) && visible.has(l.to)) links.push([l.from, l.to, 1]);
+  const links: [number, number, number][] = [];
+  for (const [a, b] of noteLinks(db)) if (shown.has(a) && shown.has(b)) links.push([a, b, 0]);
+  if (ready) for (const l of liveLinks(db)) if (l.kind === 'cross' && shown.has(l.from) && shown.has(l.to)) links.push([l.from, l.to, 1]);
   const hubs = ready
     ? liveHubs(db)
-        .map((h) => ({ id: h.id, name: h.name, entries: hubEntryIds(db, h.id).filter((id) => visible.has(id)) }))
-        .filter((h) => h.entries.length)
+        .map((h) => {
+          const ids = hubEntryIds(db, h.id).filter((id) => visible.has(id));
+          return { id: h.id, name: h.name, size: ids.length, entries: keep ? ids.filter((id) => shown.has(id)) : ids };
+        })
+        .filter((h) => h.size)
     : [];
   return {
     kinds: ['message', 'note', 'file'],
     speakers,
-    sources: [...sources.values()],
+    sources: sourceList,
     folders,
     projects,
     threads,
     points,
+    total: all.length,
+    counts,
     links,
     hubs,
     organiser: ready,
