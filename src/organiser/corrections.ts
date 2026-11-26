@@ -8,7 +8,7 @@
 
 import { lineDiff } from '../diff.ts';
 import { UsageError } from '../errors.ts';
-import { homeNoteFile, rewriteNoteFile, wordNoteFile } from '../notes.ts';
+import { homeNoteFile, readNotes, rewriteNoteFile, wordNoteFile } from '../notes.ts';
 import { inTransaction } from '../store/db.ts';
 import type { Store } from '../store/store.ts';
 import { currentMark, finishRun, getRun, startRun } from './runs.ts';
@@ -182,11 +182,24 @@ const STATUS: Record<ReviewAction, ReviewItem['status']> = { update: 'updated', 
  * Answers one review item. "holds" keeps the note as it is, and the entries behind the item won't flag it again;
  * "skip" sets it aside until the next review run; "update" shows the proposed note as a diff and, with yes, saves it as
  * a new version (and into its file, for a note in the record folder).
+ *
+ * The record's write lock is held from the checks through the file written to the version saved, as for an agent's
+ * note write (asAgent in notes.ts): a reader of the notes folder in between waits, then finds the update known, so the
+ * version keeps the review run's id and undoing the run puts the note back. The notes folder is read first, under the
+ * lock, so an edit made in the file that the record hasn't read yet makes the proposal out of date and is never written
+ * over. A refusal is thrown once the lock is let go, so what that read filed stays filed.
  */
 export function resolveReview(store: Store, home: string, id: number, action: ReviewAction, yes: boolean): Resolution {
+  const done = inTransaction(store.db, () => answerReview(store, home, id, action, yes));
+  if (done instanceof UsageError) throw done;
+  return done;
+}
+
+/** resolveReview's work, under the record's write lock. A refusal is returned, not thrown. */
+function answerReview(store: Store, home: string, id: number, action: ReviewAction, yes: boolean): Resolution | UsageError {
   const item = getReviewItem(store.db, id);
-  if (!item) throw new UsageError(`No review item ${id} in the current review. Run "skeinwise review" for the list.`);
-  if (item.status !== 'open') throw new UsageError(`Review item ${id} is already answered (${item.status}).`);
+  if (!item) return new UsageError(`No review item ${id} in the current review. Run "skeinwise review" for the list.`);
+  if (item.status !== 'open') return new UsageError(`Review item ${id} is already answered (${item.status}).`);
   const base = { item, action, diff: [] as string[], saved: false, version: null, file: null, word: null };
   const mark = (status: ReviewItem['status']) =>
     store.db.prepare("UPDATE review_items SET status = ?, resolved_at = ? WHERE id = ? AND status = 'open'").run(status, store.now(), id);
@@ -194,12 +207,13 @@ export function resolveReview(store: Store, home: string, id: number, action: Re
     mark(STATUS[action]);
     return { ...base, item: { ...item, status: STATUS[action] }, saved: true };
   }
+  readNotes(store, home);
   const note = store.getEntry(item.noteEntry);
   if (!note) throw new Error(`Review item ${id} points at entry ${item.noteEntry}, which is not in the record.`);
   const run = getRun(store.db, item.runId)!;
   const newest = store.db.prepare('SELECT MAX(id) AS id FROM versions WHERE entry_id = ?').get(note.id) as { id: number };
   if (newest.id > run.mark) {
-    throw new UsageError(`Note #${note.id} changed after review run ${run.id}, so its proposal is out of date. Run the review again: skeinwise run review`);
+    return new UsageError(`Note #${note.id} changed after review run ${run.id}, so its proposal is out of date. Run the review again: skeinwise run review`);
   }
   const diff = lineDiff(note.body, item.proposed.trim());
   if (!yes) return { ...base, diff };
