@@ -59,7 +59,7 @@ export function groupPoints(data: BrainData, by: Grouping): Grouped {
   return { groups, of: Int32Array.from(labels, (l) => index.get(l)!) };
 }
 
-/** The layout's view of each point: notes cluster by project, else folder; originals wind on their source's strand and keep their thread. */
+/** The layout's view of each point: notes cluster by project, else folder; originals wind on their source's strand. */
 export function layoutPoints(data: BrainData, groupOf: Int32Array): LayoutPoint[] {
   const strand = new Map(data.sources.map((s, i) => [s.id, i]));
   return data.points.map((p, i) => ({
@@ -68,7 +68,6 @@ export function layoutPoints(data: BrainData, groupOf: Int32Array): LayoutPoint[
     time: p[7],
     cluster: p[6] >= 0 ? 1000 + p[6] : p[5],
     strand: strand.get(p[3]) ?? 0,
-    thread: p[4],
     group: groupOf[i]!,
   }));
 }

@@ -125,15 +125,3 @@
     border-color: CanvasText;
   }
 }
-
-/* The empty record: the card sits beside the body so the figure shows, except on a compact screen, where there is no
-   room beside it. */
-.brain-view .brain-fallback.empty-body {
-  place-items: center end;
-  padding-right: 48px;
-}
-
-.app.compact .brain-view .brain-fallback.empty-body {
-  place-items: center;
-  padding-right: 0;
-}
