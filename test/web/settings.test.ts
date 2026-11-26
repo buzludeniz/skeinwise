@@ -16,6 +16,15 @@ describe('Settings', () => {
     expect(settings).not.toMatch(/'Sync'|title="Sync"|config\.sync\b|saveConfig\(\{ sync/);
   });
 
+  it('has no Proof of date switch and no daily backup switch, since 1.0 does neither; the on-demand backup stays', () => {
+    expect(settings).not.toMatch(/'Proof of date'|title="Proof of date"|config\.proofOfDate|saveConfig\(\{ proofOfDate/);
+    expect(settings).not.toMatch(/config\.backup\.daily|saveConfig\(\{ backup: \{ daily|Back up every day/);
+    expect(settings).not.toMatch(/not available yet/i);
+    expect(settings).toContain('<Group title="Backup">');
+    expect(settings).toContain("'Back up now'");
+    expect(settings).toContain("api.post<{ file: string; bytes: number }>('backup')");
+  });
+
   it('offers no agent config to copy, and names the command that writes it for every agent it knows', () => {
     expect(settings).not.toContain('Copy config');
     expect(settings).not.toContain('not available yet');

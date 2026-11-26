@@ -68,7 +68,7 @@ run (Set up, Bring in, Watch it grow) · rail with Brain, Threads, Stats, Timeli
 Assistant, Guide and + Add · the 3D brain, a point cloud in the shape of a standing body with the brain as its head ·
 Guide panel · concept hub panel · entry reader with its layers and history · the Activity layout · timeline ·
 Workbench (the table builder and Activity) · notes editor with `[[links]]` and a daily note · review queue · compact
-window · settings (agents, AI model, usage cap, proof of date, backup, exclusions, appearance) · six themes and seven
+window · settings (agents, AI model, usage cap, backup, exclusions, appearance) · six themes and seven
 palettes. Full detail: [ui.md](ui.md).
 
 ### Features

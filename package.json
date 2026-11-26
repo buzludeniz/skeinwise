@@ -13,7 +13,9 @@
     "dist/src",
     "dist/web",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "engines": {
     "node": ">=24"

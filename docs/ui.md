@@ -228,13 +228,16 @@ Groups, top to bottom:
 
 | Group | Holds |
 |---|---|
-| AI agents | Connected agents, **Copy config** for each, **Copy a sample question** |
+| AI agents | The agents found on this computer, requests from agents waiting for your answer, how to connect one (`skeinwise connect <agent>`), **Copy a sample question** |
 | AI model | **Local model** (the default: its address, the model file, a **Test** button), **Outside model** (address, model, the env var holding the key), or **No AI** |
 | Usage cap | A monthly token cap for an outside model. At the cap, runs wait for the next month |
-| Proof of date | A switch, marked Later: it is kept, but 1.0 proves nothing yet (the ledger is [planned](features.md#ledger-and-proof-of-date-planned)) |
-| Backup | A zip of the record, on demand. Daily backups are marked Later: the switch is kept and does nothing in 1.0 |
+| Backup | A zip of the record, on demand (**Back up now**) |
 | Exclusions | Rules by source, folder or pattern; redaction before any outside model |
 | Appearance | Theme and palette |
+
+Proof of date and daily backups aren't in 1.0, and Settings has no switch for either. Both are planned (proof of date
+comes with the [ledger](features.md#ledger-and-proof-of-date-planned)). A choice an earlier build stored for them stays
+in the config.
 
 ## Themes
 
