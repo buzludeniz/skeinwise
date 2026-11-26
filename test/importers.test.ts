@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { deflateSync, strToU8, zipSync } from 'fflate';
 import { buildZip } from './fsafe-zip.ts';
 import { parseChatGPT, parseClaude, parseClaudeCodeSession, parseCodexSession, parseGemini } from '../src/importers/chats.ts';
-import { accountFingerprint, readFilesUnder, readImports, readImportsInWorker, sniffExport, sniffSession } from '../src/importers/detect.ts';
+import { accountFingerprint, NothingToImportError, readFilesUnder, readImports, readImportsInWorker, sniffExport, sniffSession } from '../src/importers/detect.ts';
 import { UnsafeFileError } from '../src/fsafe.ts';
 import { parseFrontMatter, parseNote } from '../src/importers/notes.ts';
 import { toIso } from '../src/importers/util.ts';
@@ -275,6 +275,34 @@ describe('readImports', () => {
       expect(JSON.stringify(batches)).toContain('Bring beans, peas and labels.');
       expect(batches.flatMap((b) => b.entries ?? []).map((e) => e.externalId)).toEqual(['notes/whole.md']);
       expect(warnings).toEqual([expect.stringMatching(/notes\.zip \(notes\/cut\.md\): refused, its packed bytes are damaged \(unexpected EOF\)/)]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('says there is nothing to import with an error of its own, in a worker too', async () => {
+    const thrown = (fn: () => unknown): unknown => {
+      try {
+        fn();
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    };
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-nothing-'));
+    try {
+      const empty = join(dir, 'empty');
+      mkdirSync(empty);
+      const zip = join(dir, 'pictures.zip');
+      writeFileSync(zip, zipSync({ 'img.png': new Uint8Array([1]) }));
+      for (const path of [empty, zip]) {
+        for (const error of [thrown(() => readImports(path)), await readImportsInWorker(path).catch((e: unknown) => e)]) {
+          expect(error).toBeInstanceOf(NothingToImportError);
+          expect((error as NothingToImportError).path).toBe(path);
+          expect((error as Error).message).toBe(`Nothing to import in ${path}`);
+        }
+      }
+      expect(readImports(empty, { emptyOk: true })).toEqual([]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { basename, extname, join, relative, resolve } from 'node:path';
 import { openSafe, readRange, readSafe, UnsafeFileError } from '../fsafe.ts';
 import { parseClaudeCodeSession } from '../importers/chats.ts';
-import { pathInside, readFilesUnder, readImports, sniffSession } from '../importers/detect.ts';
+import { NothingToImportError, pathInside, readFilesUnder, readImports, sniffSession } from '../importers/detect.ts';
 import { NOTE_FILE_EXT } from '../importers/note-ext.ts';
 import { FileReport } from '../importers/util.ts';
 import type { ImportBatch, ImportResult, Store } from '../store/store.ts';
@@ -392,7 +392,7 @@ export class LiveCapture {
         // Downloads holds everything; only chat exports are taken, never loose notes inside some other zip.
         batches = readImports(file, { onWarning: (m) => warnings.push(m) }).filter((b) => EXPORT_KINDS.has(b.source.kind));
       } catch (error) {
-        if (!(error as Error).message.startsWith('Nothing to import')) throw error;
+        if (!(error instanceof NothingToImportError)) throw error;
       }
       // What an export skipped is worth a word; what some other zip held is not.
       if (batches.length) for (const w of warnings) this.warn(w);

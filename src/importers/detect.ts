@@ -65,6 +65,19 @@ function warner(options: ImportOptions): (message: string) => void {
   return options.onWarning ?? ((message) => console.warn(`skeinwise: ${message}`));
 }
 
+/**
+ * readImports found nothing it reads at the path: a folder or zip without a note or an export in it, or a file of a
+ * kind it doesn't read. readImportsInWorker rejects with it too.
+ */
+export class NothingToImportError extends Error {
+  readonly path: string;
+  constructor(path: string) {
+    super(`Nothing to import in ${path}`);
+    this.name = 'NothingToImportError';
+    this.path = path;
+  }
+}
+
 function why(error: unknown): string {
   if (error instanceof UnsafeFileError) return error.message;
   const e = error as NodeJS.ErrnoException;
@@ -227,7 +240,7 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
     const raw = { path: abs, read: () => ({ text: file.text }), modifiedAt: file.mtime };
     batches = collect([raw], dirname(abs), (p) => pathInside(dirname(abs), p), options, warn, { path: abs, sha256: file.sha256 });
   }
-  if (!batches.length && !options.emptyOk) throw new Error(`Nothing to import in ${path}`);
+  if (!batches.length && !options.emptyOk) throw new NothingToImportError(path);
   return batches;
 }
 
@@ -235,6 +248,7 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
 type WorkerReply =
   | { type: 'warning'; message: string }
   | { type: 'done'; batches: ImportBatch[] }
+  | { type: 'nothing'; path: string }
   | { type: 'error'; message: string; path?: string; reason?: UnsafeReason };
 
 // Next to this file: read-worker.ts when run from source, read-worker.js once built.
@@ -261,6 +275,7 @@ export function readImportsInWorker(path: string, options: ImportOptions = {}): 
     worker.on('message', (reply: WorkerReply) => {
       if (reply.type === 'warning') warn(reply.message);
       else if (reply.type === 'done') finish(() => done(reply.batches));
+      else if (reply.type === 'nothing') finish(() => fail(new NothingToImportError(reply.path)));
       else
         finish(() =>
           fail(reply.reason && reply.path ? new UnsafeFileError(reply.path, reply.reason, reply.message) : new Error(reply.message)),
@@ -327,8 +342,9 @@ function collect(
       text = read.text;
       origin = container ?? (read.sha256 ? { path: f.path, sha256: read.sha256 } : null);
     } catch (error) {
-      // One file that can't or mustn't be read never stops the others.
-      if (error instanceof UnsafeFileError || (error as NodeJS.ErrnoException).code) {
+      // One file that can't or mustn't be read never stops the others: a refusal, or a system error, whose code is a
+      // string (EACCES, EISDIR). Any other error is a bug, and stops the import rather than being skipped as a file.
+      if (error instanceof UnsafeFileError || typeof (error as NodeJS.ErrnoException).code === 'string') {
         warn(why(error));
         continue;
       }
