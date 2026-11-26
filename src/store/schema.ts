@@ -1,6 +1,8 @@
 // Each migration runs once, in order. PRAGMA user_version records how many have run.
 // Never edit a migration that has shipped in a release: add a new one.
 
+import { PA_MIGRATION } from '../pa/schema.ts';
+
 export const MIGRATIONS: readonly string[] = [
   // 1. The record: sources, threads, entries and their versions. Originals are append-only.
   `
@@ -255,4 +257,8 @@ export const MIGRATIONS: readonly string[] = [
         AND (later.scope = 'all' OR (later.scope = r.scope AND later.scope <> 'new'))
     ));
   `,
+
+  // The assistant: tasks and reminders, what you said about open loops, a model's reading of them, and the briefs
+  // (src/pa/schema.ts).
+  PA_MIGRATION,
 ];
