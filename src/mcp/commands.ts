@@ -76,7 +76,7 @@ function token(ctx: Ctx): string | undefined {
  * the next call, without restarting the server. The agent is the one whose token the client's environment carries.
  */
 export function memoryServer(ctx: Ctx): McpServer<Caller> {
-  const session = new MemorySession({ store: ctx.store, home: ctx.home, token: token(ctx), now: clock(ctx) });
+  const session = new MemorySession({ store: ctx.store, home: ctx.home, token: token(ctx), now: clock(ctx), warn: (text) => ctx.io.err(text) });
   return new McpServer<Caller>({
     name: 'skeinwise',
     version: version(),
@@ -214,7 +214,11 @@ const mcp: Command = async (ctx) => {
     }
     case 'confirm': {
       if (rest.length !== 1) throw new UsageError('Give the request number: skeinwise mcp confirm <n>. "skeinwise mcp pending" lists them.');
-      const done = confirmRequest(ctx.home, ctx.store, needId(rest[0], 'request'), clock(ctx)());
+      const done = confirmRequest(ctx.home, ctx.store, needId(rest[0], 'request'), clock(ctx)(), (r) => {
+        if (ctx.values.json) return;
+        const noun = r.tool === 'not_mine' ? 'thread' : 'run';
+        say(ctx, `Request ${r.id}: ${safeLine(r.agent)} asked for ${r.tool} on ${noun} ${r.target} (${safeLine(r.what)}). Making that change now.`);
+      });
       if (ctx.values.json) ctx.json(done);
       else if (done.request.tool === 'not_mine') say(ctx, `Done: thread ${done.request.target} is left out now. Bring it back with: skeinwise not-mine ${done.request.target} --undo`);
       else say(ctx, `Done: run ${done.request.target} is undone.`);
