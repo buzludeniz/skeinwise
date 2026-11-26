@@ -7,8 +7,9 @@
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathInside, readImportsInWorker } from '../importers/detect.ts';
+import { parseFrontMatter } from '../importers/notes.ts';
 import { underFrontMatter, wordNoteFile } from '../notes.ts';
-import type { Store, Version } from '../store/store.ts';
+import { hashText, type Store, type Version } from '../store/store.ts';
 import { folderInside, readPlain, UnsafeFile, writeNew, writeOver } from './files.ts';
 
 export class NoteError extends Error {}
@@ -128,7 +129,7 @@ export function saveEntry(home: string, store: Store, id: number, body: string):
   return oneAtATime(home, () => writeEntry(home, store, id, body));
 }
 
-function writeEntry(home: string, store: Store, id: number, body: string): SavedEntry {
+async function writeEntry(home: string, store: Store, id: number, body: string): Promise<SavedEntry> {
   const entry = store.getEntry(id);
   if (!entry) throw new NoteError(`No entry ${id}`);
   if (!body.trim()) throw new NoteError('An entry cannot be saved empty');
@@ -137,10 +138,27 @@ function writeEntry(home: string, store: Store, id: number, body: string): Saved
   if (word) return { version: store.editEntry(id, body, 'you'), wroteFile: false, word };
   const file = own;
   // The file is read before the version is saved, so a link there refuses the whole save.
-  const old = file ? (safely(home, () => readPlain(file)) ?? '') : '';
+  const old = file ? safely(home, () => readPlain(file)) : null;
+  if (file && old !== null) await refuseUnreadEdit(home, store, id, file, old, body);
   const version = store.editEntry(id, body, 'you');
-  if (file) safely(home, () => writeOver(file, underFrontMatter(old, version.body)));
+  if (file) safely(home, () => writeOver(file, underFrontMatter(old ?? '', version.body)));
   return { version, wroteFile: file !== null };
+}
+
+/**
+ * Refuses a save over a note file that holds an edit the record hasn't read (made in another editor since the last
+ * capture), as restore does (src/store/commands.ts): written over, that edit would be in no version. The file stays as
+ * it is, and is read in now as your version, so the page shows it when the note is opened again. A file that already
+ * holds the text being saved (a save that stopped before the record) goes on.
+ */
+async function refuseUnreadEdit(home: string, store: Store, id: number, file: string, old: string, body: string): Promise<void> {
+  const onDisk = hashText(parseFrontMatter(old).body);
+  if (onDisk === store.history(id).at(-1)!.contentHash || onDisk === hashText(body)) return;
+  await importNote(home, store, file);
+  throw new NoteError(
+    `${pathInside(home, file)} holds an edit the record hadn't read yet, so it stays as it is. Nothing was saved. ` +
+      'Skeinwise has read that edit in now: open the note again to see it, then make your change.',
+  );
 }
 
 /** The note's file when it lives in the home folder's notes/ (its folder resolved), else null. */
