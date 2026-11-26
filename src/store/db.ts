@@ -70,8 +70,19 @@ export function isBusy(error: unknown): boolean {
  * front, so a busy record fails at the start (after the busy timeout), before fn has done anything. When another
  * process still holds the lock, the whole transaction runs once more; a second busy is thrown, never swallowed.
  * fn may run twice, so it must touch nothing outside this database.
+ *
+ * Called inside a transaction that inTransaction itself opened, fn joins it, so a caller can make several writes one
+ * change. The outer commit or rollback covers both, and an inner throw rolls the whole transaction back even if the
+ * outer fn catches it. A transaction opened any other way (a raw BEGIN) is not joined: BEGIN IMMEDIATE refuses it.
  */
 export function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  const open = opened.get(db);
+  if (open) {
+    // SQLite ended the transaction itself (disk full, an I/O error) under a statement the outer fn caught and went on
+    // from. A new transaction here would commit on its own and then drop the outer one's tracking.
+    if (!db.isTransaction) throw new Error('The record\'s write transaction was rolled back by an earlier error, so nothing more is written.');
+    return joinTransaction(db, open, fn);
+  }
   try {
     return runTransaction(db, fn);
   } catch (error) {
@@ -80,15 +91,40 @@ export function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
   }
 }
 
+/** The transaction inTransaction opened on a connection, and an inner call's failure. */
+interface OpenTransaction {
+  failed?: unknown;
+}
+
+const opened = new WeakMap<DatabaseSync, OpenTransaction>();
+
 function runTransaction<T>(db: DatabaseSync, fn: () => T): T {
   db.exec('BEGIN IMMEDIATE');
+  const open: OpenTransaction = {};
+  opened.set(db, open);
   try {
     const result = fn();
+    // An inner call failed and the outer fn went on: its half-done writes must not be committed.
+    if (open.failed !== undefined) throw open.failed;
     db.exec('COMMIT');
     return result;
   } catch (err) {
     // A failed COMMIT may already have ended the transaction.
     if (db.isTransaction) db.exec('ROLLBACK');
+    throw err;
+  } finally {
+    opened.delete(db);
+  }
+}
+
+function joinTransaction<T>(db: DatabaseSync, open: OpenTransaction, fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    open.failed ??= err;
+    // SQLite rolls a transaction back itself on some errors (disk full, an I/O error). Begin another, so what the outer
+    // fn writes after catching this is held and rolled back at its end (open.failed), not committed a statement at a time.
+    if (!db.isTransaction) db.exec('BEGIN');
     throw err;
   }
 }

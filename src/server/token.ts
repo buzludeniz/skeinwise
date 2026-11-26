@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, closeSync, constants, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, constants, openSync, readFileSync, renameSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 
 const TOKEN = /^[0-9a-f]{64}$/;
@@ -26,9 +26,9 @@ export function loadToken(home: string): string {
  */
 export function newToken(home: string): string {
   const file = join(home, 'token');
-  const tmp = `${file}.${process.pid}.tmp`;
+  // Safe on Windows too, where O_EXCL follows a dangling link: the name is random and new, so no link can wait there.
+  const tmp = `${file}.${randomBytes(8).toString('hex')}.tmp`;
   const token = randomBytes(32).toString('hex');
-  rmSync(tmp, { force: true });
   const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   try {
     writeSync(fd, `${token}\n`);

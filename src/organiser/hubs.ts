@@ -213,12 +213,14 @@ export function planHubs(ctx: TaskContext): Plan {
   const asks = ctx.model ? drafts.map((d, i) => hubRequest(d, i + 1, drafts.length)) : [];
   return {
     requests: asks.map((a) => a.request),
+    // A hub without the model's answer gets its No-AI name and sections.
+    fallback: () => null,
     finish: (answers) => {
       let unsupported = 0;
       const hubs = drafts.map((d, i) => {
         const extracted = () => extractSections(d.sentences, d.group.centroid);
-        if (!ctx.model) return { draft: d, name: d.name, sections: extracted() };
-        const answer = answers[i] as HubAnswer;
+        const answer = ctx.model ? (answers[i] as HubAnswer | null) : null;
+        if (!answer) return { draft: d, name: d.name, sections: extracted() };
         const made = modelSections(answer, asks[i]!.shown, () => extracted().in_short);
         unsupported += made.dropped;
         return { draft: d, name: d.group.existing ? d.name : answer.name, sections: made.sections };

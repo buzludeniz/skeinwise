@@ -105,10 +105,12 @@ export function openSafe(path: string, options: SafeOptions = {}): SafeHandle {
   try {
     const stat = fstatSync(fd);
     if (!stat.isFile()) throw new UnsafeFileError(abs, 'not-a-file', `${abs}: skipped, it is not a regular file`);
+    // The open file's device and file id for the checks below, in bigint like the lstat's: as a number, a 64-bit Windows
+    // file id loses its low bits, and two files can look like one.
+    const opened = fstatSync(fd, { bigint: true });
     // Without O_NOFOLLOW (Windows) the open follows a link swapped in after the lstat, so the file opened must be the one
     // the lstat saw. A file system that reports no file id (0) can't show that, and its file is refused, not guessed at.
     if (link && !O_NOFOLLOW) {
-      const opened = fstatSync(fd, { bigint: true });
       if (link.ino === 0n) {
         throw new UnsafeFileError(abs, 'symlink', `${abs}: skipped, its drive gives no file ids, so a link put in its place couldn't be told apart`);
       }
@@ -122,8 +124,8 @@ export function openSafe(path: string, options: SafeOptions = {}): SafeHandle {
         throw new UnsafeFileError(abs, 'outside', `${abs}: skipped, it leads outside ${options.root}`);
       }
       // The real path must still be the file that was opened, or a folder above it was swapped for a link meanwhile.
-      const again = statSync(real);
-      if (again.dev !== stat.dev || again.ino !== stat.ino) {
+      const again = statSync(real, { bigint: true });
+      if (again.dev !== opened.dev || again.ino !== opened.ino) {
         throw new UnsafeFileError(abs, 'outside', `${abs}: skipped, it changed while it was being read`);
       }
     }
@@ -420,7 +422,17 @@ function inflateEntry(fd: number, end: number, entry: ZipEntry, path: string, li
       // The file was cut short after it was opened: without this the loop would wait forever for bytes that never come.
       if (!chunk.length) throw zipError(label, 'it was cut short while it was being read');
       read += chunk.length;
-      inflater.push(chunk, read >= entry.compressedSize);
+      try {
+        inflater.push(chunk, read >= entry.compressedSize);
+      } catch (error) {
+        // fflate's own error for a damaged or cut-off packed stream carries a numeric code (its "unexpected EOF" is 0),
+        // and becomes the zip's refusal, so a caller only ever sees an UnsafeFileError for a bad entry. The callback's
+        // refusals are UnsafeFileErrors already; anything else is a bug and goes on as it is.
+        if (error instanceof Error && typeof (error as { code?: unknown }).code === 'number') {
+          throw zipError(label, `its packed bytes are damaged (${error.message})`);
+        }
+        throw error;
+      }
     }
   } finally {
     limits.past += peak;

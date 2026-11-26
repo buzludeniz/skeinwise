@@ -49,5 +49,6 @@ describe('the shared printers with hostile imported text', () => {
     expect(indent(`car.${ESC}[8m hidden${ESC}[0m\n${ESC}]52;c;cHduZWQ=${BEL}next`)).toBe('    car. hidden\n    next');
     expect(oneLine(`a${ESC}]8;;https://attacker.example/${BEL}link${ESC}]8;;${BEL}\n\tb`)).toBe('alink b');
     expect(engineLabel('remote', `qwen${ESC}[2J`)).toBe('remote model qwen');
+    expect(engineLabel('agent', `claude-code${ESC}[2J`)).toBe('agent claude-code');
   });
 });

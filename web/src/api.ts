@@ -55,13 +55,50 @@ async function call<T>(method: string, path: string, body?: unknown, raw?: BodyI
   } catch {
     // Not JSON: fall through to the status check.
   }
-  if (!res.ok) {
-    if (res.status === 423) listeners.locked.forEach((f) => f());
-    if (res.status === 401) listeners.unauthorised.forEach((f) => f());
-    const message = (data as { error?: string } | null)?.error ?? `The server answered ${res.status}`;
-    throw new ApiError(res.status, message);
-  }
+  if (!res.ok) refuse(res.status, data);
   return data as T;
+}
+
+/** Throws the server's refusal, after telling whoever waits for a lock or a lost token. */
+function refuse(status: number, data: unknown): never {
+  if (status === 423) listeners.locked.forEach((f) => f());
+  if (status === 401) listeners.unauthorised.forEach((f) => f());
+  throw new ApiError(status, (data as { error?: string } | null)?.error ?? `The server answered ${status}`);
+}
+
+/**
+ * A GET answered with server-sent events (GET /api/ask/stream): `onEvent` gets each one as it arrives, and the call
+ * ends with the stream. EventSource can't send the token header, so this reads the body itself. Aborting `signal`
+ * closes the connection, which stops the server's work, and rejects with the AbortError.
+ */
+async function stream<E>(path: string, onEvent: (event: E) => void, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(`/api/${path}`, { headers: token ? { 'X-Skeinwise-Token': token } : {}, signal });
+  if (!res.ok) refuse(res.status, await res.json().catch(() => null));
+  if (!res.body) throw new ApiError(res.status, 'The server sent nothing back');
+  await readEvents(res.body, onEvent);
+}
+
+/** Reads `data: <json>` events, each ended by a blank line, out of a body as it arrives. */
+export async function readEvents<E>(body: ReadableStream<Uint8Array>, onEvent: (event: E) => void): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    let end: number;
+    while ((end = buffer.indexOf('\n\n')) >= 0) {
+      const data = buffer
+        .slice(0, end)
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.replace(/^data: ?/, ''))
+        .join('\n');
+      buffer = buffer.slice(end + 2);
+      if (data) onEvent(JSON.parse(data) as E);
+    }
+  }
 }
 
 export const api = {
@@ -69,6 +106,7 @@ export const api = {
   post: <T>(path: string, body: unknown = {}) => call<T>('POST', path, body),
   put: <T>(path: string, body: unknown) => call<T>('PUT', path, body),
   upload: <T>(path: string, file: Blob) => call<T>('POST', path, undefined, file),
+  stream: <E>(path: string, onEvent: (event: E) => void, signal?: AbortSignal) => stream<E>(path, onEvent, signal),
 };
 
 /** Builds a query string, skipping empty values. */

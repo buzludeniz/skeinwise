@@ -3,8 +3,12 @@
 // engine to one elsewhere, with a key from an environment variable, sent only to hosts you confirmed. Text for the
 // remote engine is always redacted (secrets always, a person's details when redaction is on), even when its URL is on
 // this computer: a proxy there passes it on. Requests never follow redirects, settings can't change a request's model,
-// messages or length, and errors never carry the key. Every answer must be one JSON object; the task's own check then
-// decides whether it fits.
+// messages or length, and errors never carry the key. Every answer must be one JSON object that the task's own check
+// accepts. An answer that isn't (not JSON, cut off, or the wrong shape) is asked for once more, with what was wrong;
+// a second bad answer throws a BadAnswerError, which carries the tokens of both.
+//
+// The local engine can also stream: `stream` hands over the answer's text as the model writes it, and its signal
+// stops the request (llama-server stops writing when the connection closes).
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,7 +18,8 @@ import { AnswerError, type ModelClient, type ModelRequest, type Sent } from './p
 import { Redactor, scrubSecrets } from './redact.ts';
 
 /** How long one request may take. A small model on a laptop can need minutes for a long answer. */
-const REQUEST_MS = 10 * 60 * 1000;
+/** The longest one request to the model may take once sent. */
+export const REQUEST_MS = 10 * 60 * 1000;
 const PROBE_MS = 5000;
 const REDACTED_NOTE = 'Some words are replaced by placeholders like [NAME_1]. Keep any placeholder you use exactly as written.';
 
@@ -27,6 +32,32 @@ export interface ModelDeps {
 
 /** A request that timed out once the server had it. A provider bills such a request all the same, so it counts in full. */
 export class ModelTimeoutError extends AnswerError {}
+
+/**
+ * An answer still unusable after one repair: not JSON, cut off, or not the shape the task asked for. The runner can
+ * do that request's part without the model.
+ */
+export class BadAnswerError extends AnswerError {}
+
+/** A request its caller stopped. What the model wrote before it stopped counts. */
+export class ModelCancelledError extends AnswerError {}
+
+/** What a streamed request reports while it runs, and how its caller stops it. */
+export interface Live {
+  /** Each piece of the answer's text as the model writes it: the raw JSON, uncleaned. Only the local engine streams. */
+  onText?: (piece: string) => void;
+  /** The answer was bad and is asked for again: the text so far is void. */
+  onRestart?: (why: string) => void;
+  /** Stops the request. */
+  signal?: AbortSignal;
+}
+
+export type Reply = { answer: unknown; tokensIn: number; tokensOut: number };
+
+/** A model client that can also stream an answer and be stopped. */
+export interface StreamingClient extends ModelClient {
+  stream: (request: ModelRequest, live: Live) => Promise<Reply>;
+}
 
 export function isLoopback(url: string): boolean {
   const host = new URL(url).hostname.replace(/^\[|\]$/g, '').toLowerCase();
@@ -73,11 +104,11 @@ export function untrustedHost(host: string, apiKeyEnv: string): string {
   );
 }
 
-export function createModel(config: Config, engine: 'local' | 'remote', deps: ModelDeps): ModelClient {
+export function createModel(config: Config, engine: 'local' | 'remote', deps: ModelDeps): StreamingClient {
   return engine === 'local' ? localModel(config, deps) : remoteModel(config, deps);
 }
 
-function localModel(config: Config, deps: ModelDeps): ModelClient {
+function localModel(config: Config, deps: ModelDeps): StreamingClient {
   const url = config.localUrl.replace(/\/+$/, '');
   if (!url) throw new UsageError('No local model server is set. Set one with: skeinwise config localUrl http://127.0.0.1:8731/v1');
   if (!isLoopback(url)) {
@@ -88,7 +119,14 @@ function localModel(config: Config, deps: ModelDeps): ModelClient {
   }
   let resolved = config.localModel;
   let probed = false;
-  const model: ModelClient = {
+  const target = (): Target => {
+    if (!resolved) throw new Error('The local model was not checked before sending; call probe first.');
+    // Thinking models (Qwen3 and others) answer faster and in plain JSON with their thinking switched off. The server
+    // keeps the prompt it last read, so a request that starts the same way (the same system prompt) reads only the
+    // rest; llama-server does that by default, and cache_prompt asks for it in case.
+    return { engine: 'local', url, key: readServerKey(deps), model: resolved, extra: { chat_template_kwargs: { enable_thinking: false }, cache_prompt: true } };
+  };
+  const model: StreamingClient = {
     engine: 'local',
     model: resolved,
     url,
@@ -116,17 +154,13 @@ function localModel(config: Config, deps: ModelDeps): ModelClient {
       }
       probed = true;
     },
-    send: async (request) => {
-      if (!resolved) throw new Error('The local model was not checked before sending; call probe first.');
-      // Thinking models (Qwen3 and others) answer faster and in plain JSON with their thinking switched off.
-      const target: Target = { engine: 'local', url, key: readServerKey(deps), model: resolved, extra: { chat_template_kwargs: { enable_thinking: false } } };
-      return send(deps, target, request, model.prepare(request), null, config.modelOptions);
-    },
+    send: async (request) => send(deps, target(), request, model.prepare(request), null, config.modelOptions),
+    stream: async (request, live) => send(deps, target(), request, model.prepare(request), null, config.modelOptions, live),
   };
   return model;
 }
 
-function remoteModel(config: Config, deps: ModelDeps): ModelClient {
+function remoteModel(config: Config, deps: ModelDeps): StreamingClient {
   const missing: string[] = [];
   if (!config.remoteUrl) missing.push('skeinwise config remoteUrl https://api.example.com/v1');
   if (!config.remoteModel) missing.push('skeinwise config remoteModel <model name>');
@@ -165,6 +199,13 @@ function remoteModel(config: Config, deps: ModelDeps): ModelClient {
       confirmed();
       const { r, sent } = redactorFor(request);
       return send(deps, { engine: 'remote', url, key, model: config.remoteModel, extra: {} }, request, sent, r, config.modelOptions);
+    },
+    // Not streamed: its text has placeholders until the whole answer is back and restored. It can still be stopped.
+    stream: async (request, live) => {
+      confirmed();
+      const { r, sent } = redactorFor(request);
+      const quiet: Live = { ...(live.signal ? { signal: live.signal } : {}), ...(live.onRestart ? { onRestart: live.onRestart } : {}) };
+      return send(deps, { engine: 'remote', url, key, model: config.remoteModel, extra: {} }, request, sent, r, config.modelOptions, quiet);
     },
   };
 }
@@ -216,6 +257,11 @@ interface Target {
   extra: Record<string, unknown>;
 }
 
+type Message = { role: 'system' | 'user' | 'assistant'; content: string };
+
+/** One answer as it came back: usable, or bad with what to tell the model about it. */
+type Attempt = Reply & { content: string; bad: null | { message: string; repair: string } };
+
 async function send(
   deps: ModelDeps,
   target: Target,
@@ -223,27 +269,84 @@ async function send(
   sent: Sent,
   redactor: Redactor | null,
   options: ModelOptions,
-): Promise<{ answer: unknown; tokensIn: number; tokensOut: number }> {
+  live: Live = {},
+): Promise<Reply> {
+  const first = await attempt(deps, target, request, sent, redactor, options, [], live);
+  if (!first.bad) return { answer: first.answer, tokensIn: first.tokensIn, tokensOut: first.tokensOut };
+  // Once more, with the bad answer and what was wrong with it. The conversation so far is the server's cached prompt,
+  // so only the new turn is read again. The remote engine's note is redacted like the rest: a check's reason can
+  // quote the restored answer.
+  live.onRestart?.(first.bad.message);
+  const note = `That answer can't be used: ${first.bad.repair}. Answer again with only the JSON object asked for, in the shape asked for.`;
+  const repair: Message[] = [
+    { role: 'assistant', content: first.content },
+    { role: 'user', content: redactor ? redactor.redact(note) : note },
+  ];
+  let second: Attempt;
+  try {
+    second = await attempt(deps, target, request, sent, redactor, options, repair, live);
+  } catch (err) {
+    if (err instanceof AnswerError) {
+      err.tokensIn += first.tokensIn;
+      err.tokensOut += first.tokensOut;
+      throw err;
+    }
+    if (target.engine === 'remote') {
+      // The first answer was spent at a provider that bills it, so its tokens go with the error.
+      const spent = new AnswerError((err as Error).message);
+      spent.tokensIn = first.tokensIn;
+      spent.tokensOut = first.tokensOut;
+      throw spent;
+    }
+    throw err;
+  }
+  const tokensIn = first.tokensIn + second.tokensIn;
+  const tokensOut = first.tokensOut + second.tokensOut;
+  if (!second.bad) return { answer: second.answer, tokensIn, tokensOut };
+  const err = new BadAnswerError(second.bad.message);
+  err.tokensIn = tokensIn;
+  err.tokensOut = tokensOut;
+  throw err;
+}
+
+async function attempt(
+  deps: ModelDeps,
+  target: Target,
+  request: ModelRequest,
+  sent: Sent,
+  redactor: Redactor | null,
+  options: ModelOptions,
+  more: Message[],
+  live: Live,
+): Promise<Attempt> {
   const { url, key } = target;
   const { max_tokens: lower, ...sampling } = samplers(options);
   const maxTokens = Math.min(request.maxTokens, lower ?? request.maxTokens);
+  // Only the local engine streams: a remote answer has placeholders in it until it is whole and restored.
+  const streamed = !!live.onText && target.engine === 'local';
+  const messages: Message[] = [{ role: 'system', content: sent.system }, { role: 'user', content: sent.user }, ...more];
   // Settings go first, so nothing in them can change the model, the messages, the length or the format.
   const body = {
     temperature: 0,
     ...sampling,
     model: target.model,
-    messages: [
-      { role: 'system', content: sent.system },
-      { role: 'user', content: sent.user },
-    ],
+    messages,
     max_tokens: maxTokens,
     response_format: { type: 'json_object' },
+    ...(streamed ? { stream: true, stream_options: { include_usage: true } } : {}),
     ...target.extra,
   };
-  const estimateIn = Math.ceil((sent.system.length + sent.user.length) / 4);
+  const estimateIn = Math.ceil(messages.reduce((n, m) => n + m.content.length, 0) / 4);
   /** Server text made safe for a message or the runs table: no key, no secrets, one short line. */
   const clean = (text: string) => scrubSecrets(text, [key]).replace(/\s+/g, ' ').slice(0, 300);
+  let content = '';
   const failed = (err: unknown): never => {
+    if (live.signal?.aborted) {
+      const stopped = new ModelCancelledError(`Stopped during ${request.purpose}.`);
+      stopped.tokensIn = estimateIn;
+      stopped.tokensOut = Math.ceil(content.length / 4);
+      throw stopped;
+    }
     const e = err as Error & { cause?: { message?: unknown } };
     const timedOut = e.name === 'TimeoutError';
     const redirected = /redirect/i.test(`${e.message} ${String(e.cause?.message ?? '')}`);
@@ -257,17 +360,26 @@ async function send(
     throw timeout;
   };
   const headers: Record<string, string> = { 'content-type': 'application/json', ...keyHeader(key) };
+  const timeout = AbortSignal.timeout(REQUEST_MS);
   let res: Response;
-  let raw: string;
+  let raw = '';
+  let events: StreamEnd | null = null;
   try {
     res = await deps.fetch(`${url}/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
       redirect: 'error',
-      signal: AbortSignal.timeout(REQUEST_MS),
+      signal: live.signal ? AbortSignal.any([live.signal, timeout]) : timeout,
     });
-    raw = await res.text();
+    if (streamed && res.ok && /^text\/event-stream\b/.test(res.headers.get('content-type') ?? '')) {
+      events = await readEvents(res, (piece) => {
+        content += piece;
+        live.onText!(piece);
+      });
+    } else {
+      raw = await res.text();
+    }
   } catch (err) {
     return failed(err);
   }
@@ -281,27 +393,99 @@ async function send(
     throw err;
   };
   const most = target.engine === 'remote' ? maxTokens : 0;
-  let reply: { choices?: { message?: { content?: unknown }; finish_reason?: unknown }[]; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } };
-  try {
-    reply = JSON.parse(raw);
-  } catch {
-    return fail(`${url} sent something that isn't a chat completion during ${request.purpose}: ${clean(raw)}`, estimateIn, most);
+  let finish: unknown;
+  let usage: { prompt_tokens?: unknown; completion_tokens?: unknown } | undefined;
+  if (events) {
+    if (events.error !== null) fail(`${url} stopped with an error during ${request.purpose}: ${clean(events.error)}`, estimateIn, Math.ceil(content.length / 4));
+    finish = events.finish;
+    usage = events.usage;
+  } else {
+    let reply: { choices?: { message?: { content?: unknown }; finish_reason?: unknown }[]; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } };
+    try {
+      reply = JSON.parse(raw);
+    } catch {
+      return fail(`${url} sent something that isn't a chat completion during ${request.purpose}: ${clean(raw)}`, estimateIn, most);
+    }
+    const choice = reply?.choices?.[0];
+    const text = choice?.message?.content;
+    if (typeof text !== 'string') return fail(`${url} sent no answer text during ${request.purpose}: ${clean(raw)}`, estimateIn, most);
+    content = text;
+    finish = choice?.finish_reason;
+    usage = reply.usage;
+    // A server that answered whole when asked to stream: its text arrives in one piece.
+    if (streamed) live.onText!(content);
   }
-  const choice = reply?.choices?.[0];
-  const content = choice?.message?.content;
-  if (typeof content !== 'string') return fail(`${url} sent no answer text during ${request.purpose}: ${clean(raw)}`, estimateIn, most);
-  const tokensIn = reported(reply.usage?.prompt_tokens) ?? estimateIn;
-  const tokensOut = reported(reply.usage?.completion_tokens) ?? (target.engine === 'remote' ? maxTokens : Math.ceil(content.length / 4));
-  if (choice?.finish_reason === 'length') {
-    fail(`The model's answer for ${request.purpose} was cut off at ${maxTokens} tokens. Try a narrower --scope, or a model that writes less.`, tokensIn, tokensOut);
+  const tokensIn = reported(usage?.prompt_tokens) ?? estimateIn;
+  const tokensOut = reported(usage?.completion_tokens) ?? (target.engine === 'remote' ? maxTokens : Math.ceil(content.length / 4));
+  const bad = (message: string, repair: string): Attempt => ({ answer: null, tokensIn, tokensOut, content, bad: { message: scrubSecrets(message, [key]), repair } });
+  if (finish === 'length') {
+    return bad(`The model's answer for ${request.purpose} was cut off at ${maxTokens} tokens. Try a narrower --scope, or a model that writes less.`, `it was cut off at ${maxTokens} tokens, so write less`);
   }
   let answer: unknown;
   try {
     answer = parseAnswer(request.purpose, content);
   } catch (err) {
-    fail(scrubSecrets((err as Error).message, [key]), tokensIn, tokensOut);
+    return bad((err as Error).message, 'it is not one JSON object');
   }
-  return { answer: redactor ? redactor.restore(answer) : answer, tokensIn, tokensOut };
+  if (redactor) answer = redactor.restore(answer);
+  try {
+    request.check(answer);
+  } catch (err) {
+    const message = (err as Error).message;
+    return bad(message, message.replace(/^The model's answer for .*? doesn't fit: /, ''));
+  }
+  return { answer, tokensIn, tokensOut, content, bad: null };
+}
+
+interface StreamEnd {
+  finish: unknown;
+  usage: { prompt_tokens?: unknown; completion_tokens?: unknown } | undefined;
+  /** An error the server sent in the stream, or null. */
+  error: string | null;
+}
+
+/** Reads a chat completion stream (server-sent events), handing each piece of answer text over as it arrives. */
+async function readEvents(res: Response, onText: (piece: string) => void): Promise<StreamEnd> {
+  const end: StreamEnd = { finish: undefined, usage: undefined, error: null };
+  if (!res.body) return end;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = '';
+  const line = (text: string): boolean => {
+    if (!text.startsWith('data:')) return true;
+    const data = text.slice(text.startsWith('data: ') ? 6 : 5);
+    if (data === '[DONE]') return false;
+    let event: { choices?: { delta?: { content?: unknown }; finish_reason?: unknown }[]; usage?: StreamEnd['usage']; error?: unknown };
+    try {
+      event = JSON.parse(data);
+    } catch {
+      end.error = `an event that isn't JSON: ${data}`;
+      return false;
+    }
+    if (event.error !== undefined) {
+      end.error = typeof event.error === 'object' && event.error && 'message' in event.error ? String(event.error.message) : JSON.stringify(event.error);
+      return false;
+    }
+    const choice = event.choices?.[0];
+    const piece = choice?.delta?.content;
+    if (typeof piece === 'string' && piece) onText(piece);
+    if (choice?.finish_reason) end.finish = choice.finish_reason;
+    if (event.usage) end.usage = event.usage;
+    return true;
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
+    const lines = pending.split(/\r\n|\r|\n/);
+    pending = done ? '' : lines.pop()!;
+    for (const l of lines) {
+      if (!line(l)) {
+        await reader.cancel().catch(() => {});
+        return end;
+      }
+    }
+    if (done) return end;
+  }
 }
 
 /** The JSON object in an answer, after any thinking block and code fence around it. Anything else fails. */

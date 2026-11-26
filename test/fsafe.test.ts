@@ -246,6 +246,27 @@ describe('openZipSafe', () => {
     zip.close();
   });
 
+  it('refuses an entry whose packed bytes are cut off or damaged, with its own refusal, not the inflater\'s error', () => {
+    const text = strToU8('Seed swap on Saturday. Bring beans, peas and labels.\n'.repeat(40));
+    const packed = deflateSync(text);
+    // Half a stream (fflate's "unexpected EOF", code 0) and a block of the type deflate doesn't have (code 1).
+    const cut = packed.subarray(0, packed.length >> 1);
+    const badBlock = new Uint8Array([0x07, 0, 0, 0]);
+    const path = write('damaged.zip', buildZip([
+      { name: 'cut.md', data: cut, size: text.length },
+      { name: 'bad.md', data: badBlock, size: text.length },
+      { name: 'good.md', data: packed, size: text.length },
+    ]));
+    const zip = openZipSafe(path);
+    for (const [name, why] of [['cut.md', 'unexpected EOF'], ['bad.md', 'invalid block type']] as const) {
+      const error = refused(() => zip.read(zip.entries.find((e) => e.name === name)!));
+      expect(error.reason).toBe('zip');
+      expect(error.message).toContain(`(${name}): refused, its packed bytes are damaged (${why})`);
+    }
+    expect(zip.read(zip.entries.find((e) => e.name === 'good.md')!)).toEqual(text);
+    zip.close();
+  });
+
   it('reads zip64 entries whose sizes are honest', () => {
     const body = strToU8('[{"chat_messages":[]}]');
     const path = write('z64.zip', buildZip([{ name: 'conversations.json', data: deflateSync(body), size: body.length }], { zip64: true }));

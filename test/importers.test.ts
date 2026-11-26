@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { deflateSync, strToU8, zipSync } from 'fflate';
 import { buildZip } from './fsafe-zip.ts';
 import { parseChatGPT, parseClaude, parseClaudeCodeSession, parseCodexSession, parseGemini } from '../src/importers/chats.ts';
-import { accountFingerprint, readFilesUnder, readImports, readImportsInWorker, sniffExport, sniffSession } from '../src/importers/detect.ts';
+import { accountFingerprint, NothingToImportError, readFilesUnder, readImports, readImportsInWorker, sniffExport, sniffSession } from '../src/importers/detect.ts';
 import { UnsafeFileError } from '../src/fsafe.ts';
 import { parseFrontMatter, parseNote } from '../src/importers/notes.ts';
 import { toIso } from '../src/importers/util.ts';
@@ -257,6 +257,54 @@ describe('readImports', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
       rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('skips a note in a zip whose packed bytes are cut off, with a warning, and imports the rest', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-cut-'));
+    try {
+      const text = strToU8('# Seed swap\n\nBring beans, peas and labels.\n'.repeat(20));
+      const packed = deflateSync(text);
+      const path = join(dir, 'notes.zip');
+      writeFileSync(path, buildZip([
+        { name: 'notes/cut.md', data: packed.subarray(0, packed.length >> 1), size: text.length },
+        { name: 'notes/whole.md', data: packed, size: text.length },
+      ]));
+      const warnings: string[] = [];
+      const batches = readImports(path, { onWarning: (m) => warnings.push(m) });
+      expect(JSON.stringify(batches)).toContain('Bring beans, peas and labels.');
+      expect(batches.flatMap((b) => b.entries ?? []).map((e) => e.externalId)).toEqual(['notes/whole.md']);
+      expect(warnings).toEqual([expect.stringMatching(/notes\.zip \(notes\/cut\.md\): refused, its packed bytes are damaged \(unexpected EOF\)/)]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('says there is nothing to import with an error of its own, in a worker too', async () => {
+    const thrown = (fn: () => unknown): unknown => {
+      try {
+        fn();
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    };
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-nothing-'));
+    try {
+      const empty = join(dir, 'empty');
+      mkdirSync(empty);
+      const zip = join(dir, 'pictures.zip');
+      writeFileSync(zip, zipSync({ 'img.png': new Uint8Array([1]) }));
+      for (const path of [empty, zip]) {
+        for (const error of [thrown(() => readImports(path)), await readImportsInWorker(path).catch((e: unknown) => e)]) {
+          expect(error).toBeInstanceOf(NothingToImportError);
+          expect((error as NothingToImportError).path).toBe(path);
+          expect((error as Error).message).toBe(`Nothing to import in ${path}`);
+        }
+      }
+      expect(readImports(empty, { emptyOk: true })).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 

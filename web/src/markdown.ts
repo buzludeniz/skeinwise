@@ -87,9 +87,27 @@ export function renderMarkdown(src: string): string {
   return out.join('\n');
 }
 
-/** Turns a search snippet ("…the [rye] loaf…") into safe HTML with the matches marked. */
+/**
+ * The marks around each match in a search snippet (src/store/store.ts, search). In 1.0 the search marks with brackets,
+ * so a [bracket] in the note reads as a match too. The 1.1 change marks with the control characters U+0002 and U+0003
+ * instead, so a [[link]] reads as itself. A snippet holding either control character is read the new way, and any
+ * other snippet the old way.
+ */
+const MATCH = /\u0002([^\u0002\u0003]{1,200})\u0003/g;
+const MARK = /[\u0002\u0003]/g;
+const HAS_MARK = /[\u0002\u0003]/;
+const BRACKETED = /\[([^\]]{1,200})\]/g;
+
+/** Turns a search snippet ("…the [rye] loaf…", or "…the \u0002rye\u0003 loaf…") into safe HTML with the matches marked. */
 export function snippetHtml(snippet: string): string {
-  return escapeHtml(snippet.replace(/\s+/g, ' ')).replace(/\[([^\]]{1,200})\]/g, '<mark>$1</mark>');
+  const safe = escapeHtml(snippet.replace(/\s+/g, ' '));
+  if (!HAS_MARK.test(snippet)) return safe.replace(BRACKETED, '<mark>$1</mark>');
+  return safe.replace(MATCH, '<mark>$1</mark>').replace(MARK, '');
+}
+
+/** A search snippet as plain text, with the match marks dropped. */
+export function snippetText(snippet: string): string {
+  return snippet.replace(MARK, '').replace(/\s+/g, ' ');
 }
 
 /** The [[link]] targets in a note. */

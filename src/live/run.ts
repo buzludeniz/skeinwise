@@ -34,6 +34,12 @@ export interface LiveOptions {
    * are off in v1.0, and both callers (`skeinwise live` and the web app's Record live) leave it out.
    */
   poll?: (store: Store, home: string) => Promise<PollReport[]>;
+  /**
+   * Runs each background pass in a child process, so live idles at what capture needs (see src/live/organise.ts).
+   * Defaults to on while watching with the real fetch; off with `once` (the process ends with the pass) and when the
+   * caller hands in its own fetch, which a child process can't use.
+   */
+  isolate?: boolean;
 }
 
 export interface LiveRun {
@@ -44,8 +50,11 @@ export interface LiveRun {
   first: LiveStatus;
   /** The start-up connector pull; with `once`, await it before `background.idle()`. */
   pulled: Promise<void>;
-  /** Stops watching and organising; a run cut off mid-way is marked failed. */
-  stop: () => void;
+  /**
+   * Stops watching and organising, and resolves once the pass under way has ended (see Background.stop). A run cut off
+   * mid-way is marked failed.
+   */
+  stop: () => Promise<void>;
 }
 
 /**
@@ -67,6 +76,7 @@ export function startLive(store: Store, home: string, options: LiveOptions = {})
         ...(options.progress ? { progress: options.progress } : {}),
         onWarning: warn,
         onDone: () => options.onOrganised?.(loadStatus(statusFile, warn)),
+        isolate: options.isolate ?? (!options.once && (options.fetch === undefined || options.fetch === globalThis.fetch)),
       })
     : null;
   const targets = defaultTargets(config.liveFolders, options.userHome, { downloads: config.liveDownloads });
@@ -117,7 +127,7 @@ export function startLive(store: Store, home: string, options: LiveOptions = {})
       stopped = true;
       if (timer) clearInterval(timer);
       capture.stop();
-      background?.stop();
+      return background ? background.stop() : Promise.resolve();
     },
   };
 }

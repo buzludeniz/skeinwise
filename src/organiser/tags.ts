@@ -7,7 +7,7 @@ import { withoutNoteExt } from '../importers/note-ext.ts';
 import { safeLine } from '../safe-text.ts';
 import type { Entry } from '../store/store.ts';
 import { type Existing, type Group, groupName, groupUnits, namingRequest } from './groups.ts';
-import { invalid, isRecord, list, type ModelRequest, type Plan, type Product, round, type TaskContext } from './plan.ts';
+import { invalid, isRecord, list, type ModelRequest, noRequest, type Plan, type Product, round, type TaskContext } from './plan.ts';
 import { linkTargets, type RecordView } from './record.ts';
 import { replacedRuns } from './runs.ts';
 import { cosine, tokenize } from './text.ts';
@@ -43,10 +43,12 @@ function planTopics(ctx: TaskContext, schema: Schema): Plan {
   const fresh = groups.filter((g) => !g.existing);
   const request = ctx.model && fresh.length ? namingRequest(record, fresh, 'topic', 'one or two words', 'topic names') : undefined;
   const given = frontMatterTags(ctx.db, ctx.entries);
+  const noModelNames = () => uniqueNames(record, fresh, live.map((t) => t.name));
   return {
     requests: request ? [request] : [],
+    fallback: noModelNames,
     finish: (answers) => {
-      const names = request ? (answers[0] as string[]) : uniqueNames(record, fresh, live.map((t) => t.name));
+      const names = request ? (answers[0] as string[]) : noModelNames();
       const tags: NewTag[] = [];
       const taggings: Tagging[] = [];
       for (const g of groups) {
@@ -160,18 +162,27 @@ function planProjects(ctx: TaskContext, schema: Schema): Plan {
   const tags: NewTag[] = [];
   const taggings: Tagging[] = [];
   const seen = new Set<string>();
+  const named: { note: Entry; from: Set<number>; name: string; stems: string[] }[] = [];
   for (const { note, from } of projects) {
     const name = projectName(note);
     if (seen.has(name.toLowerCase())) continue;
     seen.add(name.toLowerCase());
-    const stems = [...new Set(tokenize(name))];
+    named.push({ note, from, name, stems: [...new Set(tokenize(name))] });
+  }
+  // Each entry is tokenized once, and only the stems of project names are kept: tokenizing every entry again for each
+  // project took most of an hour at 50,000 entries.
+  const holding = entriesHolding(ctx.entries, new Set(named.flatMap((p) => p.stems)));
+  const position = new Map(ctx.entries.map((e, i) => [e.id, i]));
+  for (const { note, from, name, stems } of named) {
     tags.push({ name, description: `The note "${name}", linked from ${from.size} entries.` });
-    for (const e of ctx.entries) {
-      if (e.id === note.id || from.has(e.id)) taggings.push({ entryId: e.id, name, score: 1 });
-      else if (stems.length && hasAll(stemSet(e), stems)) taggings.push({ entryId: e.id, name, score: 0.8 });
+    const linked = [note.id, ...from].flatMap((id) => (position.has(id) ? [position.get(id)!] : []));
+    const matched = stems.length ? stems.map((s) => holding.get(s) ?? []).reduce(intersect) : [];
+    for (const i of [...new Set([...linked, ...matched])].sort((a, b) => a - b)) {
+      const e = ctx.entries[i]!;
+      taggings.push({ entryId: e.id, name, score: e.id === note.id || from.has(e.id) ? 1 : 0.8 });
     }
   }
-  return { requests: [], finish: () => product(ctx, schema, tags, taggings) };
+  return { requests: [], fallback: noRequest, finish: () => product(ctx, schema, tags, taggings) };
 }
 
 function projectName(note: Entry): string {
@@ -216,6 +227,8 @@ function planDefined(ctx: TaskContext, schema: Schema): Plan {
   const requests = batches.map((b, i) => unsureRequest(schema, b, `${schema.name} check ${i + 1} of ${batches.length}`));
   return {
     requests,
+    // Without the model, an entry that matched a tag by one word stays untagged.
+    fallback: () => [],
     finish: (answers) => {
       const taggings = [...sure];
       answers.forEach((a) => taggings.push(...(a as Tagging[])));
@@ -265,21 +278,30 @@ function unsureRequest(schema: Schema, batch: { entry: Entry; tags: string[] }[]
 // Saving and counting
 
 function product(ctx: TaskContext, schema: Schema, tags: NewTag[], taggings: Tagging[], message?: string): Product {
-  const unique = dedupe(taggings);
-  const pairs = new Set(unique.map(pairKey));
+  // A Projects run can make over a million taggings at 50,000 entries, so no step keeps a string per pair: one key
+  // string per tagging, twice over, took `run all` past its memory budget.
+  const best = dedupe(taggings);
+  const unique = ordered(best, taggings);
   const live = livePairs(ctx.db, schema.id, null);
   const replaced = livePairs(ctx.db, schema.id, replacedRuns(ctx.db, 'tag', schema.id, ctx.scope));
-  const used = new Set(unique.map((t) => t.name.toLowerCase()));
+  const used = new Set(best.keys());
   const tagged = new Set(unique.map((t) => t.entryId)).size;
+  let unchanged = 0;
+  if (live.size) for (const t of unique) if (live.has(pairKey(t))) unchanged++;
+  let removed = 0;
+  for (const p of replaced) {
+    const at = p.indexOf(':');
+    if (!best.get(p.slice(at + 1))?.has(Number(p.slice(0, at)))) removed++;
+  }
   return {
     counts: {
       entries: ctx.entries.length,
       tagged,
       coverage: ctx.entries.length ? Math.round((100 * tagged) / ctx.entries.length) : 0,
       tags: used.size,
-      added: [...pairs].filter((p) => !live.has(p)).length,
-      removed: [...replaced].filter((p) => !pairs.has(p)).length,
-      unchanged: [...pairs].filter((p) => live.has(p)).length,
+      added: unique.length - unchanged,
+      removed,
+      unchanged,
     },
     ...(message ? { message } : {}),
     save: (db, runId) => {
@@ -295,19 +317,53 @@ function product(ctx: TaskContext, schema: Schema, tags: NewTag[], taggings: Tag
         ids.set(t.name.toLowerCase(), id);
       }
       const insert = db.prepare('INSERT INTO entry_tags (entry_id, tag_id, run_id, score) VALUES (?, ?, ?, ?)');
-      for (const t of unique) insert.run(t.entryId, ids.get(t.name.toLowerCase())!, runId, t.score);
+      const lower = lowerCase();
+      for (const t of unique) insert.run(t.entryId, ids.get(lower(t.name))!, runId, t.score);
     },
   };
 }
 
-function dedupe(taggings: Tagging[]): Tagging[] {
-  const best = new Map<string, Tagging>();
+/** The best-scored tagging of each entry and tag name (lowercased), the first of equals kept, by name then entry. */
+function dedupe(taggings: Tagging[]): Map<string, Map<number, Tagging>> {
+  const best = new Map<string, Map<number, Tagging>>();
+  const lower = lowerCase();
   for (const t of taggings) {
-    const k = pairKey(t);
-    const had = best.get(k);
-    if (!had || t.score > had.score) best.set(k, t);
+    const name = lower(t.name);
+    let byEntry = best.get(name);
+    if (!byEntry) best.set(name, (byEntry = new Map()));
+    const had = byEntry.get(t.entryId);
+    if (!had || t.score > had.score) byEntry.set(t.entryId, t);
   }
-  return [...best.values()].sort((a, b) => a.entryId - b.entryId || a.name.localeCompare(b.name));
+  return best;
+}
+
+/**
+ * The taggings by entry, then by name as localeCompare orders it: the order the save has always used. One comparison
+ * per name rather than per pair. When two different names compare equal, the old sort's tie order (the order the pairs
+ * were first seen) decides, so that case sorts the old way.
+ */
+function ordered(best: Map<string, Map<number, Tagging>>, taggings: Tagging[]): Tagging[] {
+  const all: Tagging[] = [];
+  for (const byEntry of best.values()) for (const t of byEntry.values()) all.push(t);
+  const names = [...new Set(all.map((t) => t.name))].sort((a, b) => a.localeCompare(b));
+  if (names.some((name, i) => i > 0 && names[i - 1]!.localeCompare(name) === 0)) {
+    const seen = new Set<string>();
+    const lower = lowerCase();
+    const inOrder = taggings.flatMap((t) => (seen.has(pairKey(t)) ? [] : (seen.add(pairKey(t)), [best.get(lower(t.name))!.get(t.entryId)!])));
+    return inOrder.sort((a, b) => a.entryId - b.entryId || a.name.localeCompare(b.name));
+  }
+  const rank = new Map(names.map((name, i) => [name, i]));
+  return all.sort((a, b) => a.entryId - b.entryId || rank.get(a.name)! - rank.get(b.name)!);
+}
+
+/** toLowerCase, remembered per name: a run's taggings share a few thousand names. */
+function lowerCase(): (name: string) => string {
+  const seen = new Map<string, string>();
+  return (name) => {
+    let low = seen.get(name);
+    if (low === undefined) seen.set(name, (low = name.toLowerCase()));
+    return low;
+  };
 }
 
 const pairKey = (t: { entryId: number; name: string }) => `${t.entryId}:${t.name.toLowerCase()}`;
@@ -324,6 +380,32 @@ function livePairs(db: DatabaseSync, schemaId: number, runIds: number[] | null):
 
 function stemSet(e: Entry): Set<string> {
   return new Set(tokenize(`${e.title ?? ''}\n${e.body}`));
+}
+
+/** For each of these stems, the positions in entries (ascending) of the entries whose title or body holds it. */
+function entriesHolding(entries: Entry[], stems: Set<string>): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  if (!stems.size) return out;
+  entries.forEach((e, i) => {
+    for (const s of stemSet(e)) {
+      if (!stems.has(s)) continue;
+      const list = out.get(s);
+      if (list) list.push(i);
+      else out.set(s, [i]);
+    }
+  });
+  return out;
+}
+
+/** The numbers in both ascending lists, ascending. */
+function intersect(a: number[], b: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 0, j = 0; i < a.length && j < b.length; ) {
+    if (a[i]! < b[j]!) i++;
+    else if (a[i]! > b[j]!) j++;
+    else (out.push(a[i]!), i++, j++);
+  }
+  return out;
 }
 
 function hasAll(set: Set<string>, words: string[]): boolean {

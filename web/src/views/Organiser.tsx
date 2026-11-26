@@ -3,23 +3,25 @@
 
 import { useMemo, useState } from 'preact/hooks';
 import { Check, FolderTree, GitCompareArrows, ListChecks, Merge, Network, RotateCcw, SkipForward, Sparkles, Workflow } from 'lucide-preact';
-import { changed, engineName, loadRecord, message, openEntry, openNav, openPanel, organise, toast, undoRun } from '../actions.ts';
+import { changed, engineName, loadRecord, message, openEntry, openNav, openPanel, organise, postRunUndo, toast, undoRun, wordNotice } from '../actions.ts';
 import { api } from '../api.ts';
 import { fmtDate, fmtNum, plural, runMade } from '../format.ts';
 import { folderCounts } from '../nav.ts';
 import { useApp } from '../store.ts';
-import type { EntryDetail, Folder, ReviewItem, Run } from '../types.ts';
+import type { EntryDetail, Folder, ReviewItem, Run, SavedEntry } from '../types.ts';
 import { Button, Empty, Select } from '../ui/common.tsx';
 
 interface Resolution {
   item: ReviewItem;
   diff: string[];
   saved: boolean;
+  /** The note's file when it is a Word document, which the update left as it was. */
+  word: string | null;
 }
 
 /** Takes back a correction (a rename, a merge, a hub marked not useful): it is a run like any other. */
 async function undoCorrection(runId: number): Promise<void> {
-  await api.post(`runs/${runId}/undo`);
+  await postRunUndo(runId);
   await loadRecord();
 }
 
@@ -95,9 +97,10 @@ function ReviewCard({ item, title }: { item: ReviewItem; title: string }) {
       await loadRecord();
       if (before !== null) {
         changed(`Updated “${title}”`, `Put “${title}” back`, async () => {
-          await api.put(`entries/${item.noteEntry}`, { body: before });
+          wordNotice(await api.put<SavedEntry>(`entries/${item.noteEntry}`, { body: before }));
           await loadRecord();
         });
+        if (done.word) toast(`${done.word} is a Word document, which Skeinwise doesn’t write, so it doesn’t have this update.`);
       } else toast(action === 'holds' ? `“${title}” still holds. Those entries won’t flag it again.` : `Skipped “${title}” until the next review run.`);
     } catch (error) {
       toast(message(error), { tone: 'error' });
@@ -166,6 +169,7 @@ const TASKS: Record<Run['task'], string> = {
   review: 'Review',
   ask: 'Question',
   correction: 'Your correction',
+  note: 'Agent note',
 };
 
 export function RunsList() {

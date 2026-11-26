@@ -7,12 +7,11 @@
 // The three run before the record is opened (doctor must see a missing record as missing), so the CLI calls them
 // with a SetupCtx rather than through withStore.
 
-import { connect, type SetupCtx } from './connect.ts';
+import { commandWord, connect, type ConnectDeps, type SetupCtx } from './connect.ts';
 import { doctor } from './doctor.ts';
 import { UsageError } from './errors.ts';
 import { openHome } from './home.ts';
 import { readImports } from './importers/detect.ts';
-import { quoteArg } from './mcp/access.ts';
 import { safeLine } from './safe-text.ts';
 import { type Found, findAgents, findSources } from './server/found.ts';
 
@@ -31,8 +30,8 @@ function scanRoot(env: NodeJS.ProcessEnv): string {
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-/** `skeinwise setup [--yes] [--json]`. */
-export async function setup(ctx: SetupCtx): Promise<number> {
+/** `skeinwise setup [--yes] [--json]`. The platform is the one its printed commands are for (tests set it). */
+export async function setup(ctx: SetupCtx, deps: Pick<ConnectDeps, 'platform'> = {}): Promise<number> {
   if (ctx.args.length) throw new UsageError('setup takes no words. To bring in something it doesn\'t find, use: skeinwise import <path>');
   const { io } = ctx;
   const root = scanRoot(io.env);
@@ -78,7 +77,7 @@ export async function setup(ctx: SetupCtx): Promise<number> {
       }
     } else if (fresh.length) {
       say('\nBring them in with:\n');
-      for (const f of fresh) say(`  skeinwise import ${quoteArg(f.path)}\n`);
+      for (const f of fresh) say(`  skeinwise import ${commandWord(f.path, deps.platform ?? process.platform)}\n`);
       say('or all at once: skeinwise setup --yes\n');
     }
 
@@ -113,7 +112,7 @@ function bringIn(store: ReturnType<typeof openHome>, f: Found): Brought {
 }
 
 export const SETUP_COMMANDS: Record<string, (ctx: SetupCtx) => Promise<number>> = {
-  setup,
+  setup: (ctx) => setup(ctx),
   connect: (ctx) => connect(ctx),
   doctor: (ctx) => doctor(ctx),
 };
