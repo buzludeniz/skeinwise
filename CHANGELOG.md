@@ -16,7 +16,8 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
   other MCP clients:
   - seven read tools, plus five write tools for an agent you give write scope;
   - each agent has its own token and starts with read scope;
-  - `skeinwise mcp lock` stops every agent at once;
+  - `skeinwise mcp lock`, or Lock in the app, stops every agent at once and covers the app's window (one lock for
+    both, kept across restarts);
   - `skeinwise mcp log` shows every call;
   - the tools that change what is yours (`not_mine`, `undo_run`) wait for your yes.
 - **`skeinwise connect`, `setup` and `doctor`.** Connect an agent with one command, find the histories on this
@@ -25,8 +26,8 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
 - **The local model.** `skeinwise model fetch` downloads the suggested model, pinned to a commit and checked by size
   and SHA-256. `skeinwise model serve --run` starts llama-server locked to this record with its own key, and
   `skeinwise model check` checks it.
-- **Install with npm.** `npx skeinwise` and `npm install -g skeinwise`. On a Node older than 24, the command stops
-  with a link to install a current one.
+- **On npm at release.** 1.0.0 goes to npm, so `npx skeinwise` and `npm install -g skeinwise` work once it is out.
+  On a Node older than 24, the command stops with a link to install a current one.
 
 ### Changed
 
@@ -45,9 +46,10 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
 - Agents get results framed as untrusted data, with secrets redacted, cut to 20 entries and 32 KB.
 - `record.db` and its WAL files are readable by you only, on macOS and Linux.
 - Hubs and review no longer build on text planted to pass as your latest word.
-- Releases are built by GitHub Actions from a signed tag on main and published to npm with provenance, with no npm
-  token stored anywhere. Every action is pinned by commit, and CI runs on macOS, Windows and Ubuntu with Node 24
-  and 26. [docs/security.md](docs/security.md) describes the threat model and the limits.
+- The release workflow is set up to build from a signed tag on main and publish to npm with provenance, with no npm
+  token stored anywhere; no release has run through it yet. Every action is pinned by commit, and CI runs on macOS,
+  Windows and Ubuntu with Node 24 and 26. [docs/security.md](docs/security.md) describes the threat model and the
+  limits.
 
 ## [0.3.0] - 2026-11-25
 

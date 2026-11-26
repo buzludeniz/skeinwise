@@ -42,8 +42,11 @@ export function migrate(db: DatabaseSync): void {
   }
 }
 
-/** Runs the record's next migration inside the caller's transaction; false when the record is already up to date. */
-function migrateOnce(db: DatabaseSync): boolean {
+/**
+ * Runs the record's next migration inside the caller's transaction; false when the record is already up to date.
+ * Exported for bench/migrations.ts, which times each step as migrate runs it.
+ */
+export function migrateOnce(db: DatabaseSync): boolean {
   const v = schemaVersion(db);
   if (v >= MIGRATIONS.length) return false;
   db.exec(MIGRATIONS[v]!);

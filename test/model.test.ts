@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type Config, DEFAULT_CONFIG } from '../src/config.ts';
 import { UsageError } from '../src/errors.ts';
-import { createModel, ModelTimeoutError, parseAnswer, serverKeyPath } from '../src/organiser/model.ts';
+import { BadAnswerError, createModel, ModelCancelledError, ModelTimeoutError, parseAnswer, serverKeyPath } from '../src/organiser/model.ts';
+import { text } from '../src/organiser/plan.ts';
 import { previewRun, type RunOptions, runTask } from '../src/organiser/organise.ts';
 import { keyShaped } from './samples.ts';
 import { RecordView } from '../src/organiser/record.ts';
@@ -106,7 +107,8 @@ describe('organising with a model', () => {
 
     expect(server.calls[0]).toMatchObject({ method: 'GET', url: 'http://127.0.0.1:8731/v1/models' });
     const body = server.chats()[0]!.body!;
-    expect(body).toMatchObject({ model: 'models/fake-4b.gguf', temperature: 0, response_format: { type: 'json_object' }, chat_template_kwargs: { enable_thinking: false } });
+    expect(body).toMatchObject({ model: 'models/fake-4b.gguf', temperature: 0, response_format: { type: 'json_object' }, chat_template_kwargs: { enable_thinking: false }, cache_prompt: true });
+    expect(body.stream).toBeUndefined();
     expect(server.chats()[0]!.headers.authorization).toBeUndefined();
   });
 
@@ -114,8 +116,10 @@ describe('organising with a model', () => {
     const prose = fakeServer(() => 'Sure! The subject is rye baking.');
     const client = createModel(config(), 'local', { fetch: prose.fetch, env: {} });
     await expect(runTask(store, new RecordView(store), options('hub', client))).rejects.toThrow(/answer for hub 1 of 2 is not JSON: Sure!/);
+    // Asked once more with what was wrong, then failed: both answers' tokens count.
+    expect(prose.chats()).toHaveLength(2);
     let run = listRuns(store.db)[0]!;
-    expect(run).toMatchObject({ status: 'failed', tokensIn: 100, tokensOut: 20 });
+    expect(run).toMatchObject({ status: 'failed', tokensIn: 200, tokensOut: 40 });
     expect(run.message).toMatch(/not JSON/);
     expect(liveHubs(store.db)).toHaveLength(0);
 
@@ -126,6 +130,91 @@ describe('organising with a model', () => {
     run = listRuns(store.db)[0]!;
     expect(run.status).toBe('failed');
     expect(liveHubs(store.db)).toHaveLength(0);
+  });
+
+  it('asks once more after a bad answer, with the answer and what was wrong, and uses the second', async () => {
+    let n = 0;
+    const server = fakeServer((u) => (n++ === 0 ? hubAnswer(u).replace('"S2"]', '"S99"]') : hubAnswer(u)));
+    const client = createModel(config(), 'local', { fetch: server.fetch, env: {} });
+    const run = await runTask(store, new RecordView(store), options('hub', client));
+    expect(run).toMatchObject({ status: 'done', tokensIn: 300, tokensOut: 60 });
+    expect(liveHubs(store.db)).toHaveLength(2);
+    expect(server.chats()).toHaveLength(3);
+    const repair = server.chats()[1]!.body!.messages;
+    expect(repair.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
+    expect(repair.slice(0, 2)).toEqual(server.chats()[0]!.body!.messages);
+    expect(repair[2]!.content).toContain('"S99"');
+    expect(repair[3]!.content).toMatch(/^That answer can't be used: "in_short\.cites" cites "S99", which it wasn't shown\. Answer again with only the JSON object/);
+  });
+
+  it('throws a BadAnswerError after a second bad answer, and does not ask a third time', async () => {
+    const server = fakeServer(() => '{"name": ""}');
+    const client = createModel(config(), 'local', { fetch: server.fetch, env: {} });
+    await client.probe();
+    const err = await client.send({ purpose: 'p', system: 's', user: 'u', maxTokens: 50, check: (a) => text('p', (a as { name?: unknown }).name, 'name') }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadAnswerError);
+    expect((err as BadAnswerError).message).toMatch(/"name" must be non-empty text/);
+    expect(err).toMatchObject({ tokensIn: 200, tokensOut: 40 });
+    expect(server.chats()).toHaveLength(2);
+    // A stream is told when its text so far is void.
+    const restarts: string[] = [];
+    await client.stream({ purpose: 'p', system: 's', user: 'u', maxTokens: 50, check: (a) => text('p', (a as { name?: unknown }).name, 'name') }, { onRestart: (why) => restarts.push(why) }).catch(() => {});
+    expect(restarts).toEqual([expect.stringMatching(/"name" must be non-empty text/)]);
+  });
+
+  it('streams the answer text as it comes, and reads the usage at the end', async () => {
+    const events = ['{"ans', 'wer": "Rye', ' loaf"}'].map((c) => `data: ${JSON.stringify({ choices: [{ delta: { content: c }, finish_reason: null }] })}\n\n`);
+    events.push(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 70, completion_tokens: 9 } })}\n\n`, 'data: [DONE]\n\n');
+    const sent: { stream?: unknown }[] = [];
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/models')) return Response.json({ data: [{ id: 'm' }] });
+      sent.push(JSON.parse(String(init!.body)));
+      const encoder = new TextEncoder();
+      // Cut mid-line, to show lines are put back together.
+      const bytes = encoder.encode(events.join(''));
+      return new Response(new ReadableStream({ start: (c) => { c.enqueue(bytes.slice(0, 17)); c.enqueue(bytes.slice(17)); c.close(); } }), { headers: { 'content-type': 'text/event-stream' } });
+    }) as typeof globalThis.fetch;
+    const client = createModel(config(), 'local', { fetch, env: {} });
+    await client.probe();
+    const pieces: string[] = [];
+    const reply = await client.stream({ purpose: 'p', system: 's', user: 'u', maxTokens: 50, check: (a) => a }, { onText: (p) => pieces.push(p) });
+    expect(sent[0]).toMatchObject({ stream: true, stream_options: { include_usage: true } });
+    expect(pieces).toEqual(['{"ans', 'wer": "Rye', ' loaf"}']);
+    expect(reply).toEqual({ answer: { answer: 'Rye loaf' }, tokensIn: 70, tokensOut: 9 });
+  });
+
+  it('stops a streamed request when its signal fires, and counts what was written', async () => {
+    const stop = new AbortController();
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/models')) return Response.json({ data: [{ id: 'm' }] });
+      const signal = init!.signal!;
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: '{"answer": "the first eight' } }] })}\n\n`));
+            signal.addEventListener('abort', () => c.error(signal.reason));
+          },
+        }),
+        { headers: { 'content-type': 'text/event-stream' } },
+      );
+    }) as typeof globalThis.fetch;
+    const client = createModel(config(), 'local', { fetch, env: {} });
+    await client.probe();
+    const err = await client.stream({ purpose: 'the answer', system: 's', user: 'u', maxTokens: 50, check: (a) => a }, { onText: () => stop.abort(), signal: stop.signal }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ModelCancelledError);
+    expect(err).toMatchObject({ message: 'Stopped during the answer.', tokensOut: 7 });
+  });
+
+  it('does not stream the remote engine: its text has placeholders until the answer is whole', async () => {
+    const server = fakeServer(() => '{"answer": "ok"}');
+    const client = createModel(config({ remoteUrl: 'https://models.example.com/v1', remoteModel: 'big-1', apiKeyEnv: 'SKEINWISE_REMOTE_API_KEY', remoteHosts: ['models.example.com'] }), 'remote', {
+      fetch: server.fetch,
+      env: { SKEINWISE_REMOTE_API_KEY: keyShaped('s', 'k-test-made-up-0123456789abcdef') },
+    });
+    const pieces: string[] = [];
+    await client.stream({ purpose: 'p', system: 's', user: 'u', maxTokens: 50, check: (a) => a }, { onText: (p) => pieces.push(p) });
+    expect(pieces).toEqual([]);
+    expect(server.chats()[0]!.body!.stream).toBeUndefined();
   });
 
   it('reads an answer wrapped in a thinking block or a code fence, and nothing looser', () => {
