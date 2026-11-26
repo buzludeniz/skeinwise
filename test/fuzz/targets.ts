@@ -1,7 +1,8 @@
 // Every fuzz target by name: the import parsers this track owns, the shared code they use, and the planted targets the
-// harness's own tests run to show it catches a crash, a hang, a heap that runs out and a write outside the folder.
+// harness's own tests run to show it catches a crash, a hang (a loop, or a promise that never settles), a heap that
+// runs out, and a write outside the folder or outside where a target may write.
 
-import { openSync, writeFileSync } from 'node:fs';
+import { mkdirSync, openSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Target } from './engine.ts';
 import { IMPORTER_TARGETS } from './importers.ts';
@@ -29,11 +30,21 @@ export const PLANTED: Target[] = [
   planted('hang', (input) => {
     if (input[0] === 0) for (;;);
   }),
+  planted('stall', () => new Promise<void>(() => {})),
   planted('heap', () => {
     const kept: number[][] = [];
     for (;;) kept.push(Array.from({ length: 1e5 }, (_, i) => i));
   }),
   planted('write', (_input, file) => writeFileSync(join(dirname(file), '..', 'outside.txt'), 'x'), { fileName: 'input.bin' }),
+  // May write only in inner/, which its set-up makes: the first write is allowed, the second refused.
+  planted(
+    'narrow',
+    (_input, file) => {
+      writeFileSync(join(dirname(file), 'inner', 'narrow.txt'), 'x');
+      writeFileSync(join(dirname(file), 'wide.txt'), 'x');
+    },
+    { fileName: 'input.bin', setUp: (folder) => mkdirSync(join(folder, 'inner'), { recursive: true }), writesIn: (folder) => join(folder, 'inner') },
+  ),
   // Opens its input and never closes it; the worker's end closes it.
   planted('leak', (_input, file) => void openSync(file, 'r'), { fileName: 'input.bin' }),
 ];

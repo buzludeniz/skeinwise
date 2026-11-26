@@ -79,15 +79,15 @@ describe('the fuzz harness catches', () => {
     ...extra,
   });
 
-  it('a broken rule and a slow input, and lets a promised refusal pass', () => {
+  it('a broken rule and a slow input, and lets a promised refusal pass', async () => {
     const dir = folder('planted-inline');
-    expect(runOne(planted(() => void (null as unknown as { x: number }).x), new Uint8Array(1), dir, 1000)).toMatchObject({ kind: 'error', error: expect.stringMatching(/^TypeError/) });
+    expect(await runOne(planted(() => void (null as unknown as { x: number }).x), new Uint8Array(1), dir, 1000)).toMatchObject({ kind: 'error', error: expect.stringMatching(/^TypeError/) });
     const refusal = planted(() => { throw new RangeError('no'); }, { refused: (e) => e instanceof RangeError });
-    const refused = runOne(refusal, new Uint8Array(1), dir, 1000);
+    const refused = await runOne(refusal, new Uint8Array(1), dir, 1000);
     expect(refused.refused).toBe(true);
     expect(refused.kind).toBeUndefined();
     const slow = planted(() => { const end = performance.now() + 30; while (performance.now() < end); });
-    expect(runOne(slow, new Uint8Array(1), dir, 5)).toMatchObject({ kind: 'slow', error: expect.stringMatching(/past the 5 ms budget/) });
+    expect(await runOne(slow, new Uint8Array(1), dir, 5)).toMatchObject({ kind: 'slow', error: expect.stringMatching(/past the 5 ms budget/) });
   });
 
   it('a worker that exits, and carries on with the next input in a new one', async () => {
@@ -110,6 +110,12 @@ describe('the fuzz harness catches', () => {
     expect(runs).toBe(8);
   }, TIMEOUT);
 
+  it('a promise that never settles, as a hang', async () => {
+    const { runs, findings } = await fuzzTarget('planted-stall', options('planted-stall', 1, { hangMs: 300 }));
+    expect(findings.map((f) => [f.kind, f.iteration])).toEqual([['hang', 0]]);
+    expect(runs).toBe(1);
+  }, TIMEOUT);
+
   it('a heap that runs out', async () => {
     const { findings } = await fuzzTarget('planted-heap', options('planted-heap', 1, { heapMb: 32 }));
     expect(findings).toHaveLength(1);
@@ -124,11 +130,21 @@ describe('the fuzz harness catches', () => {
     expect(existsSync(join(dir, '..', 'outside.txt'))).toBe(false);
   }, TIMEOUT);
 
-  it('memory an input keeps, past its budget', () => {
+  it('a write in its folder but outside where the target may write, after the set-up it asked for', async () => {
+    const dir = folder('planted-narrow');
+    const { findings } = await fuzzTarget('planted-narrow', { ...options('planted-narrow', 1), folder: dir });
+    expect(findings.map((f) => f.kind)).toEqual(['write']);
+    expect(findings[0]!.error).toContain('wide.txt');
+    expect(findings[0]!.error).not.toContain('narrow.txt');
+    expect(existsSync(join(dir, 'inner', 'narrow.txt'))).toBe(true);
+    expect(existsSync(join(dir, 'wide.txt'))).toBe(false);
+  }, TIMEOUT);
+
+  it('memory an input keeps, past its budget', async () => {
     const kept: Buffer[] = [];
     const findings: Finding[] = [];
     const greedy = planted(() => void kept.push(Buffer.alloc(200 * 1024 ** 2, 1)));
-    loop(greedy, { seed: SEED, start: 0, iterations: 1, deadline: Infinity, folder: folder('planted-memory'), budgetMs: 60_000, onFinding: (f) => findings.push(f) });
+    await loop(greedy, { seed: SEED, start: 0, iterations: 1, deadline: Infinity, folder: folder('planted-memory'), budgetMs: 60_000, onFinding: (f) => findings.push(f) });
     kept.length = 0;
     expect(findings.map((f) => f.kind)).toEqual(['memory']);
   });
