@@ -261,7 +261,10 @@ class SpecRefused extends Error {}
 const viewSpec: Target = {
   name: 'view-spec',
   owner: 'src/viewspec/spec.ts',
-  memoryMiB: 256,
+  // At about 13k inputs a second the process itself sits some 250 MiB above where the run started, and its peak was
+  // seen to jump to 433 MiB on one run while no input held more than 18 MiB and none replays past 256 alone (seed
+  // 1684760261). So the budget is the process's own room plus an input's caps.
+  memoryMiB: 512,
   seeds: () => [chart, split, list, month, ...BUILTINS.map((b) => b.spec)].map((s) => strToU8(JSON.stringify(s))),
   tokens: JSON_TOKENS,
   mutate: (rng, seed, generic) => mutateJson(rng, seed, generic, (nested) => nested),
