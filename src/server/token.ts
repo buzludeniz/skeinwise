@@ -1,10 +1,10 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { chmodSync, closeSync, constants, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 
 const TOKEN = /^[0-9a-f]{64}$/;
 
-/** The per-install token the page sends with every API call. Made once, kept in the home folder, owner-only. */
+/** The token kept from the last run, or a new one when there is none: `serve --keep-token`. */
 export function loadToken(home: string): string {
   const file = join(home, 'token');
   try {
@@ -19,7 +19,32 @@ export function loadToken(home: string): string {
   return token;
 }
 
+/**
+ * A new token for this run of the server, written to the record folder (owner-only) for the agents' window server
+ * to read. A URL from an earlier run stops working (L9). The file is replaced, never written through, so a symlink at
+ * its name can't send the token anywhere else.
+ */
+export function newToken(home: string): string {
+  const file = join(home, 'token');
+  const tmp = `${file}.${process.pid}.tmp`;
+  const token = randomBytes(32).toString('hex');
+  rmSync(tmp, { force: true });
+  const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try {
+    writeSync(fd, `${token}\n`);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(tmp, file);
+  return token;
+}
+
+/**
+ * Whether the header holds the token. Both sides are hashed first, so the comparison takes the same time whatever was
+ * sent, and a header of any length or alphabet is just a wrong token (L10), never an error.
+ */
 export function sameToken(given: string | undefined, token: string): boolean {
-  if (!given || given.length !== token.length) return false;
-  return timingSafeEqual(Buffer.from(given), Buffer.from(token));
+  if (typeof given !== 'string' || !given) return false;
+  const digest = (value: string) => createHash('sha256').update(value, 'utf8').digest();
+  return timingSafeEqual(digest(given), digest(token));
 }

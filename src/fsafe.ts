@@ -7,8 +7,9 @@
 // - The open uses O_NONBLOCK and the open file must be a regular file, so a FIFO can't hang the process.
 // - With a root, the file's real path must sit inside the root's real path, and must be the file that was opened.
 // - Files and zip entries are capped in bytes. A zip is read through its central directory first: too many entries, too
-//   many bytes declared in all, or a ratio past ZIP_MAX_RATIO refuse it before anything is inflated. Inflation counts
-//   the bytes it really produces and stops at the size the entry declared.
+//   many bytes declared in all, or a ratio past ZIP_MAX_RATIO (over the archive, or over any entry) refuse it before
+//   anything is inflated. Inflation counts the bytes it really produces, stops at the size the entry declared, and
+//   stops when they pass ZIP_MAX_RATIO times the packed bytes really read, by more than ZIP_RATIO_FLOOR in all.
 
 import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync, statSync, type Stats } from 'node:fs';
@@ -189,6 +190,8 @@ export interface ZipOptions extends SafeOptions {
   maxEntries?: number;
   maxTotalBytes?: number;
   maxRatio?: number;
+  /** Bytes a zip may unpack past the ratio before it is refused. Default ZIP_RATIO_FLOOR. */
+  ratioFloor?: number;
 }
 
 function zipError(path: string, why: string): UnsafeFileError {
@@ -286,6 +289,7 @@ export function openZipSafe(path: string, options: ZipOptions = {}): SafeZip {
     const maxTotal = options.maxTotalBytes ?? ZIP_MAX_TOTAL_BYTES;
     const maxRatio = options.maxRatio ?? ZIP_MAX_RATIO;
     const maxBytes = options.maxBytes ?? DEFAULT_MAX_FILE_BYTES;
+    const floor = options.ratioFloor ?? ZIP_RATIO_FLOOR;
     const where = findDirectory(fd, stat.size, abs);
     if (where.count > maxEntries) throw zipError(abs, `it holds ${where.count} files, more than the ${maxEntries} limit`);
     if (where.length > ZIP_MAX_DIRECTORY_BYTES) throw zipError(abs, `its list of files takes ${mib(where.length)}`);
@@ -302,14 +306,39 @@ export function openZipSafe(path: string, options: ZipOptions = {}): SafeZip {
     if (declared > maxTotal) throw zipError(abs, `it would unpack to ${mib(declared)}, more than the ${mib(maxTotal)} limit`);
     // Against the archive's real size too: entries that share one packed stream each claim its full length.
     const packed = Math.max(1, Math.min(compressed, stat.size));
-    if (declared > ZIP_RATIO_FLOOR && declared > maxRatio * packed) {
+    if (declared > floor && declared > maxRatio * packed) {
       const ratio = Math.round(declared / packed);
       throw zipError(abs, `it would unpack to ${ratio} times its packed size (${mib(declared)}), past the ${maxRatio}:1 limit`);
+    }
+    // Each entry against its own packed size as well, so a stored padding entry can't lift a bomb beside it under the
+    // archive's ratio. What the entries unpack past the ratio is added up, so many small bombs don't each get a floor.
+    let past = 0;
+    let worst: ZipEntry | undefined;
+    let worstOver = 0;
+    for (const e of entries) {
+      const over = e.size - maxRatio * Math.max(1, e.compressedSize);
+      if (over <= 0) continue;
+      past += over;
+      if (over > worstOver) [worst, worstOver] = [e, over];
+    }
+    if (worst && past > floor) {
+      const ratio = Math.round(worst.size / Math.max(1, worst.compressedSize));
+      throw zipError(abs, `${worst.name} would unpack to ${ratio} times its packed size (${mib(worst.size)}), past the ${maxRatio}:1 limit`);
+    }
+    // No two entries share packed bytes: each ends before the next local header, or the list of files, starts. Without
+    // this, entries that all read one small stream count it once each, and unread padding props up the archive's ratio.
+    const ends = new Map<ZipEntry, number>();
+    const byOffset = [...all].sort((a, b) => a.localOffset - b.localOffset);
+    for (const [i, e] of byOffset.entries()) {
+      const end = Math.min(byOffset[i + 1]?.localOffset ?? stat.size, e.localOffset < where.offset ? where.offset : stat.size);
+      if (e.localOffset + 30 + e.compressedSize > end) throw zipError(abs, `${e.name} shares packed bytes with another entry`);
+      ends.set(e, end);
     }
     // The hash of the archive as it is on disk, read a chunk at a time.
     const hash = createHash('sha256');
     for (let at = 0; at < stat.size; at += READ_CHUNK) hash.update(readAt(fd, Math.min(READ_CHUNK, stat.size - at), at));
     let open = true;
+    const limits: InflateLimits = { maxRatio, floor, past: 0 };
     return {
       path: abs,
       size: stat.size,
@@ -318,7 +347,9 @@ export function openZipSafe(path: string, options: ZipOptions = {}): SafeZip {
       entries,
       read: (entry) => {
         if (!open) throw new Error(`${abs} is closed`);
-        return inflateEntry(fd, stat.size, entry, abs);
+        const end = ends.get(entry);
+        if (end === undefined) throw new Error(`${entry.name} is not an entry of ${abs}`);
+        return inflateEntry(fd, end, entry, abs, limits);
       },
       close: () => {
         if (open) closeSync(fd);
@@ -331,32 +362,57 @@ export function openZipSafe(path: string, options: ZipOptions = {}): SafeZip {
   }
 }
 
-function inflateEntry(fd: number, fileSize: number, entry: ZipEntry, path: string): Uint8Array {
+/** The ratio as inflation measures it, shared by the reads of one zip: `past` is what earlier entries unpacked past it. */
+interface InflateLimits {
+  maxRatio: number;
+  floor: number;
+  past: number;
+}
+
+/**
+ * Inflates one entry, reading only its own packed bytes (up to `end`). It stops at the size the entry declared (itself
+ * under the per-file limit), and when the bytes it has produced pass `maxRatio` times the packed bytes read so far by
+ * more than the floor, counting what earlier entries of the zip went past, so a bomb at the front of a long entry stops
+ * after a chunk or two instead of unpacking in full.
+ */
+function inflateEntry(fd: number, end: number, entry: ZipEntry, path: string, limits: InflateLimits): Uint8Array {
   const label = `${path} (${entry.name})`;
   if (entry.encrypted) throw zipError(label, 'it is encrypted');
   if (entry.method !== 0 && entry.method !== 8) throw zipError(label, `it uses compression method ${entry.method}`);
   const head = readAt(fd, 30, entry.localOffset);
   if (head.length < 30 || head.readUInt32LE(0) !== LOCAL) throw zipError(label, 'its local header is damaged');
   const dataAt = entry.localOffset + 30 + head.readUInt16LE(26) + head.readUInt16LE(28);
-  if (dataAt + entry.compressedSize > fileSize) throw zipError(label, 'it points past the end of the file');
+  // `end` is where the next entry, the list of files or the file itself starts, so no entry reads another's bytes.
+  if (dataAt + entry.compressedSize > end) throw zipError(label, 'its packed bytes run into another entry or past the end of the file');
   if (entry.method === 0) {
     if (entry.compressedSize !== entry.size) throw zipError(label, 'its stored size and declared size differ');
     return readAt(fd, entry.size, dataAt);
   }
   const out = new Uint8Array(entry.size);
   let produced = 0;
+  let read = 0;
+  let peak = 0;
   const inflater = new Inflate((chunk) => {
     if (produced + chunk.length > entry.size) throw zipError(label, `it unpacks past the ${entry.size} bytes it declared`);
     out.set(chunk, produced);
     produced += chunk.length;
+    peak = Math.max(peak, produced - limits.maxRatio * read);
+    if (peak > 0 && limits.past + peak > limits.floor) {
+      const ratio = Math.round(produced / Math.max(1, read));
+      throw zipError(label, `it unpacked to ${ratio} times its packed size (${mib(produced)} so far), past the ${limits.maxRatio}:1 limit`);
+    }
   });
-  for (let read = 0; read < entry.compressedSize; ) {
-    const length = Math.min(INFLATE_CHUNK, entry.compressedSize - read);
-    const chunk = readAt(fd, length, dataAt + read);
-    // The file was cut short after it was opened: without this the loop would wait forever for bytes that never come.
-    if (!chunk.length) throw zipError(label, 'it was cut short while it was being read');
-    read += chunk.length;
-    inflater.push(chunk, read >= entry.compressedSize);
+  try {
+    while (read < entry.compressedSize) {
+      const length = Math.min(INFLATE_CHUNK, entry.compressedSize - read);
+      const chunk = readAt(fd, length, dataAt + read);
+      // The file was cut short after it was opened: without this the loop would wait forever for bytes that never come.
+      if (!chunk.length) throw zipError(label, 'it was cut short while it was being read');
+      read += chunk.length;
+      inflater.push(chunk, read >= entry.compressedSize);
+    }
+  } finally {
+    limits.past += peak;
   }
   if (produced !== entry.size) throw zipError(label, `it unpacked to ${produced} bytes, not the ${entry.size} it declared`);
   return out;

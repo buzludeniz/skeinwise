@@ -60,7 +60,7 @@ export class AppLive {
         });
         this.error = null;
       } catch (error) {
-        this.error = `Record live couldn't start: ${text(error)}`;
+        this.error = `Live capture couldn't start: ${text(error)}`;
       }
     });
   }

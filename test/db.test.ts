@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -278,3 +279,122 @@ describe('busy records (M8)', () => {
     expect(db.isTransaction).toBe(false);
   });
 });
+
+describe('two processes opening one old record', () => {
+  /** A migration-4 record on disk, as an older Skeinwise left it, with an entry from a planted future. */
+  function oldRecord(file: string): void {
+    const db = new DatabaseSync(file);
+    db.exec('PRAGMA journal_mode = WAL');
+    for (const m of MIGRATIONS.slice(0, 4)) db.exec(m);
+    db.exec(`
+      PRAGMA user_version = 4;
+      INSERT INTO sources (id, kind, label, location, added_at) VALUES (1, 'claude-code', 'Claude Code', '/p', '2026-05-01T00:00:00.000Z');
+      INSERT INTO entries (id, source_id, external_id, kind, speaker, created_at) VALUES
+        (1, 1, 's1', 'message', 'you', '2026-09-01T10:00:00.000Z'),
+        (2, 1, 's2', 'message', 'you', '2030-01-01T00:00:00.000Z');
+      INSERT INTO versions (entry_id, version, body, content_hash, editor, edited_at) VALUES
+        (1, 1, 'later', 'h1', 'import', '2026-09-01T10:00:00.000Z'),
+        (2, 1, 'planted', 'h2', 'import', '2030-01-01T00:00:00.000Z');
+    `);
+    db.close();
+  }
+
+  function upgradedOnce(file: string): void {
+    const db = new DatabaseSync(file);
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+    expect(db.prepare('SELECT id, created_at, claimed_at, time_flag FROM entries ORDER BY id').all()).toEqual([
+      { id: 1, created_at: '2026-09-01T10:00:00.000Z', claimed_at: '2026-09-01T10:00:00.000Z', time_flag: null },
+      { id: 2, created_at: '2026-05-01T00:00:00.000Z', claimed_at: '2030-01-01T00:00:00.000Z', time_flag: 'future' },
+    ]);
+    expect(db.prepare('SELECT entry_id, version, body FROM versions ORDER BY id').all()).toEqual([
+      { entry_id: 1, version: 1, body: 'later' },
+      { entry_id: 2, version: 1, body: 'planted' },
+    ]);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'pa\\_%' ESCAPE '\\' ORDER BY name").all().map((r) => r.name)).toEqual(['pa_briefs', 'pa_found', 'pa_loops', 'pa_tasks']);
+    db.close();
+  }
+
+  it('runs each migration once when another process upgrades the record between its check and its lock', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-migrate-'));
+    try {
+      const file = join(dir, 'record.db');
+      oldRecord(file);
+      const a = new DatabaseSync(file);
+      const b = new DatabaseSync(file);
+      // b has read version 4 and is about to start its transaction when a upgrades the record.
+      let raced = false;
+      const late = new Proxy(b, {
+        get(target, key) {
+          if (key === 'exec') {
+            return (sql: string) => {
+              if (!raced && sql.startsWith('BEGIN')) {
+                raced = true;
+                migrate(a);
+              }
+              return target.exec(sql);
+            };
+          }
+          const value = Reflect.get(target, key, target) as unknown;
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      migrate(late);
+      expect(raced).toBe(true);
+      a.close();
+      b.close();
+      upgradedOnce(file);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('upgrades it once when two processes open it at the same time', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-migrate-'));
+    try {
+      const file = join(dir, 'record.db');
+      oldRecord(file);
+      // Hold the write lock until both processes have started opening the record, so both find it at version 4.
+      const holder = new DatabaseSync(file);
+      holder.exec('BEGIN IMMEDIATE');
+      const opens = [openInProcess(file), openInProcess(file)];
+      await Promise.all(opens.map((o) => o.ready));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      holder.exec('COMMIT');
+      holder.close();
+      const results = await Promise.all(opens.map((o) => o.done));
+      expect(results).toEqual([
+        { code: 0, out: `ready\nversion ${MIGRATIONS.length}\n` },
+        { code: 0, out: `ready\nversion ${MIGRATIONS.length}\n` },
+      ]);
+      upgradedOnce(file);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+/** Opens `file` with openDb in a Node process of its own; `ready` once it is about to open, `done` when it exits. */
+function openInProcess(file: string): { ready: Promise<void>; done: Promise<{ code: number | null; out: string }> } {
+  const script = `
+    import { writeSync } from 'node:fs';
+    const [module, file] = process.argv.slice(1);
+    const { openDb, schemaVersion } = await import(module);
+    writeSync(1, 'ready\\n');
+    const db = openDb(file, { busyTimeoutMs: 20000 });
+    writeSync(1, 'version ' + schemaVersion(db) + '\\n');
+    db.close();
+  `;
+  const module = new URL('../src/store/db.ts', import.meta.url).href;
+  const child = spawn(process.execPath, ['--no-warnings', '--input-type=module', '-e', script, module, file], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  let markReady = () => {};
+  const ready = new Promise<void>((resolve) => (markReady = resolve));
+  child.stdout.on('data', (chunk: Buffer) => {
+    out += chunk.toString('utf8');
+    if (out.startsWith('ready')) markReady();
+  });
+  child.stderr.on('data', (chunk: Buffer) => (out += chunk.toString('utf8')));
+  const done = new Promise<{ code: number | null; out: string }>((resolve) => child.on('close', (code) => resolve({ code, out })));
+  void done.then(markReady);
+  return { ready, done };
+}

@@ -176,6 +176,54 @@ describe('openZipSafe', () => {
     expect(refused(() => openZipSafe(path, { maxTotalBytes: 8 * 1024 * MiB })).message).toMatch(/times its packed size/);
   });
 
+  it('refuses a bomb entry that a stored padding entry would lift under the archive’s ratio', () => {
+    // 2 MiB of padding gives the archive room for 400 MiB at 200:1; the bomb claims 300 MiB from a few dozen bytes.
+    const padding = new Uint8Array(2 * MiB).fill(32);
+    const path = write(
+      'padded-bomb.zip',
+      buildZip([
+        { name: 'padding.json', data: padding, method: 0, size: padding.length },
+        { name: 'conversations.json', data: deflateSync(new Uint8Array(4096)), size: 300 * MiB },
+      ]),
+    );
+    expect(refused(() => openZipSafe(path)).message).toMatch(
+      /refused, conversations\.json would unpack to \d+ times its packed size \(300 MiB\), past the 200:1 limit/,
+    );
+  });
+
+  it('stops a bomb at the front of a long entry while it inflates, against the packed bytes really read', () => {
+    // 16 MiB of zeros packs to about 16 KiB, but the entry claims 300 KiB of packed bytes, so the directory sees 55:1.
+    // The first 64 KiB read unpacks to all 16 MiB, 256 times what was read. The floor is 1 MiB to keep the test small.
+    const data = new Uint8Array(300 * 1024);
+    data.set(deflateSync(new Uint8Array(16 * MiB)));
+    const path = write('front-bomb.zip', buildZip([{ name: 'conversations.json', data, size: 16 * MiB }]));
+    const zip = openZipSafe(path, { ratioFloor: MiB });
+    expect(refused(() => zip.read(zip.entries[0]!)).message).toMatch(
+      /\(conversations\.json\): refused, it unpacked to 256 times its packed size \(16 MiB so far\), past the 200:1 limit/,
+    );
+    zip.close();
+  });
+
+  it('refuses entries that share packed bytes, whatever padding sits beside them', () => {
+    // b, c and d point at a's local header: each would read a's stream, and the padding keeps every ratio honest.
+    const stream = deflateSync(new Uint8Array(64 * 1024).fill(32));
+    const padding = new Uint8Array(2 * MiB).fill(32);
+    const zip = buildZip([
+      ...['a', 'b', 'c', 'd'].map((n) => ({ name: `${n}.json`, data: n === 'a' ? stream : new Uint8Array(0), size: 64 * 1024 })),
+      { name: 'padding.json', data: padding, method: 0, size: padding.length },
+    ]);
+    let at = zip.readUInt32LE(zip.length - 22 + 16);
+    for (const n of [0, 1, 2, 3]) {
+      if (n > 0) {
+        zip.writeUInt32LE(stream.length, at + 20);
+        zip.writeUInt32LE(0, at + 42);
+      }
+      at += 46 + zip.readUInt16LE(at + 28);
+    }
+    const path = write('shared-bytes.zip', zip);
+    expect(refused(() => openZipSafe(path)).message).toMatch(/refused, [abcd]\.json shares packed bytes with another entry/);
+  });
+
   it('stops an entry that unpacks past the size it declared, and one that comes up short', () => {
     const real = deflateSync(new Uint8Array(4 * MiB).fill(32));
     const liar = write('liar.zip', buildZip([{ name: 'a.json', data: real, size: 1000 }]));
