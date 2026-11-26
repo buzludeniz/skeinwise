@@ -1,6 +1,6 @@
 // The reader: one entry with its layers, neighbours and history, or a whole thread.
 
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { BotMessageSquare, Copy, History, Link2, Network, PencilLine, UserX } from 'lucide-preact';
 import { changed, engineName, loadRecord, message, openEditor, openEntry, openPanel, openThread, toast } from '../actions.ts';
 import { api } from '../api.ts';
@@ -8,7 +8,8 @@ import { fmtDate, plural, speakerName } from '../format.ts';
 import { renderMarkdown } from '../markdown.ts';
 import { useApp } from '../store.ts';
 import type { Brief, Entry, EntryDetail, EntryOrganised, LayerName, Thread } from '../types.ts';
-import { Button, Empty, SidePanel } from '../ui/common.tsx';
+import { Button, Empty, SidePanel, TabList } from '../ui/common.tsx';
+import { tabPanel } from '../ui/tabs.ts';
 import { OrganiseButton } from './Organiser.tsx';
 
 type ReaderTarget = { kind: 'entry'; id: number } | { kind: 'thread'; id: number; focus?: number };
@@ -75,6 +76,7 @@ function EntryReader({ id }: { id: number }) {
   const [error, setError] = useState<string | null>(null);
   const [layer, setLayer] = useState<(typeof LAYERS)[number][0]>('original');
   const [showVersion, setShowVersion] = useState<number | null>(null);
+  const layersId = useId();
 
   useEffect(() => {
     let live = true;
@@ -143,25 +145,17 @@ function EntryReader({ id }: { id: number }) {
         </Button>
       </div>
 
-      <div class="tabs" role="tablist" aria-label="Layers">
-        {LAYERS.map(([key, label]) => {
-          // A dot marks the organiser's tabs that hold a layer for this entry.
-          const has = key !== 'original' && layers.some((l) => l.layer === key);
-          return (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={layer === key}
-              class={`${layer === key ? 'on' : ''}${has ? ' tab-has' : ''}`}
-              onClick={() => setLayer(key)}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
-      <div role="tabpanel" class="layer">
+      <TabList
+        id={layersId}
+        label="Layers"
+        tabs={LAYERS}
+        value={layer}
+        onChange={setLayer}
+        // A dot marks the organiser's tabs that hold a layer for this entry.
+        dotted={(key) => key !== 'original' && layers.some((l) => l.layer === key)}
+      />
+      {/* The panel takes focus itself: a layer is text to read, often with nothing in it to focus. */}
+      <div {...tabPanel(layersId, layer)} tabIndex={0} class="layer">
         {layer === 'original' ? (
           <>
             {showVersion !== null && (
@@ -312,7 +306,7 @@ export function Reader({ target }: { target: ReaderTarget }) {
 
 export function ReaderPanel({ panel, onClose }: { panel: ReaderTarget; onClose: () => void }) {
   return (
-    <SidePanel title={panel.kind === 'entry' ? 'Entry' : 'Thread'} label="Reader" onClose={onClose} wide>
+    <SidePanel title={panel.kind === 'entry' ? 'Entry' : 'Thread'} label="Reader" onClose={onClose} wide shows={`${panel.kind}:${panel.id}`}>
       <Reader target={panel} />
     </SidePanel>
   );

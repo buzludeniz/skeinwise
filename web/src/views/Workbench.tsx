@@ -1,7 +1,7 @@
 // The Workbench: the table builder (two properties on the axes, a third as a filter, six forms) and Activity.
 
 import type { JSX } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useMemo, useRef, useState } from 'preact/hooks';
 import { Brain, Save, X } from 'lucide-preact';
 import { changed, go, light, message, openEntry, openThread, saveConfig, toast } from '../actions.ts';
 import { api, qs } from '../api.ts';
@@ -10,7 +10,8 @@ import { fmtDate, fmtMonth, fmtNum, plural, speakerName } from '../format.ts';
 import { setState, useApp } from '../store.ts';
 import { palette, pointColors, theme } from '../themes.ts';
 import type { EntryRow, LabView, Series, Table, TableProp } from '../types.ts';
-import { Button, Empty, Segmented, Select } from '../ui/common.tsx';
+import { Button, Empty, Segmented, Select, TabList } from '../ui/common.tsx';
+import { tabPanel } from '../ui/tabs.ts';
 import { useWidth } from '../ui/useWidth.ts';
 
 const PROPS: [TableProp, string][] = [
@@ -466,20 +467,23 @@ function ActivityLines() {
 
 export function Workbench() {
   const tab = useApp((s) => s.workbenchTab);
+  const tabsId = useId();
   return (
     <section class="view workbench" aria-label="Workbench">
       <header class="view-head">
         <h1>Workbench</h1>
-        <div class="tabs" role="tablist" aria-label="Workbench">
-          <button type="button" role="tab" aria-selected={tab === 'table'} class={tab === 'table' ? 'on' : ''} onClick={() => setState({ workbenchTab: 'table' })}>
-            Table builder
-          </button>
-          <button type="button" role="tab" aria-selected={tab === 'activity'} class={tab === 'activity' ? 'on' : ''} onClick={() => setState({ workbenchTab: 'activity' })}>
-            Activity
-          </button>
-        </div>
+        <TabList
+          id={tabsId}
+          label="Workbench"
+          tabs={[
+            ['table', 'Table builder'],
+            ['activity', 'Activity'],
+          ]}
+          value={tab}
+          onChange={(workbenchTab) => setState({ workbenchTab })}
+        />
       </header>
-      {tab === 'table' ? <TableBuilder /> : <ActivityLines />}
+      <div {...tabPanel(tabsId, tab)}>{tab === 'table' ? <TableBuilder /> : <ActivityLines />}</div>
     </section>
   );
 }

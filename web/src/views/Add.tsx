@@ -170,7 +170,7 @@ export function AddPanel({ guide }: { guide?: Guide }) {
   const known = found?.filter((f) => f.inRecord) ?? [];
 
   return (
-    <SidePanel title={guide ? `Add from ${GUIDES[guide].name}` : 'Add'} label="Add" onClose={closePanel}>
+    <SidePanel title={guide ? `Add from ${GUIDES[guide].name}` : 'Add'} label="Add" onClose={closePanel} shows={guide ?? ''}>
       {guide ? (
         <GuideView guide={guide} found={found ?? []} />
       ) : (
