@@ -37,16 +37,27 @@ jobs:
       - uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
         with:
           install: false
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
-      - run: pnpm pack:check
+      - id: deps
+        run: pnpm install --frozen-lockfile
+      # Each check runs when what it needs passed, so one run shows every failure on every OS (a red test on
+      # Windows doesn't hide whether the package builds and installs there). Any failed step still fails the job.
+      - if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: pnpm typecheck
+      - if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: pnpm test
+      - id: build
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        run: pnpm build
+      - id: pack
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: pnpm pack:check
       # Plan 7.1's packaging test: the tarball, installed the way npm installs it for a user, runs the demo.
       - name: Install the packed tarball and run the demo
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
         shell: bash
         run: |
           tmp="$RUNNER_TEMP"; if command -v cygpath >/dev/null; then tmp="$(cygpath -u "$RUNNER_TEMP")"; fi
+          mkdir -p "$tmp/pkg"
           npm pack --ignore-scripts --pack-destination "$tmp/pkg"
           npm install --global --prefix "$tmp/prefix" "$tmp"/pkg/skeinwise-*.tgz
           export PATH="$tmp/prefix/bin:$tmp/prefix:$PATH" SKEINWISE_HOME="$tmp/record"

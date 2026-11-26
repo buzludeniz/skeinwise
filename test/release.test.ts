@@ -147,7 +147,8 @@ describe('the workflows', () => {
     const publishJob = release.slice(release.indexOf('\n  publish:'), release.indexOf('\n  github-release:'));
     expect(publishJob).toContain('id-token: write');
     expect(publishJob).toContain('environment: npm');
-    expect(publishJob).toMatch(/npm publish "skeinwise-\$VERSION\.tgz" --tag "\$DIST_TAG"/);
+    expect(publishJob).toContain(`tgz="skeinwise-$VERSION.tgz"`);
+    expect(publishJob).toContain(`npm publish "$tgz" --tag "$DIST_TAG" --access public`);
     expect(release).toMatch(/^permissions: \{\}$/m);
   });
 });

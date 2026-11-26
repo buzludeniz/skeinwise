@@ -115,11 +115,25 @@ jobs:
           v=$(npm --version)
           node -e 'const [a, b, c] = process.argv[1].split(".").map(Number); process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1)' "$v" \
             || { echo "::error::npm $v can't publish over OIDC; it needs 11.5.1 or later."; exit 1; }
+      # Safe to re-run. When this version is already on npm with these exact bytes (Deniz published this run's own
+      # tarball by hand, the checklist's path when there is no rc), it passes and the GitHub release follows; when
+      # the bytes differ, it refuses.
       - name: Publish
         env:
           VERSION: ${{ needs.build.outputs.version }}
           DIST_TAG: ${{ needs.build.outputs.dist-tag }}
-        run: npm publish "skeinwise-$VERSION.tgz" --tag "$DIST_TAG" --access public
+        run: |
+          tgz="skeinwise-$VERSION.tgz"
+          ours=$(node -e 'const { createHash } = require("node:crypto"); console.log("sha512-" + createHash("sha512").update(require("node:fs").readFileSync(process.argv[1])).digest("base64"))' "$tgz")
+          theirs=$(npm view "skeinwise@$VERSION" dist.integrity 2>/dev/null || true)
+          if [ -z "$theirs" ]; then
+            npm publish "$tgz" --tag "$DIST_TAG" --access public
+          elif [ "$theirs" = "$ours" ]; then
+            echo "skeinwise@$VERSION is already on npm with these bytes; nothing to publish."
+          else
+            echo "::error::skeinwise@$VERSION is already on npm with other bytes ($theirs, ours $ours)."
+            exit 1
+          fi
 
   github-release:
     name: GitHub release

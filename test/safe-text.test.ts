@@ -89,7 +89,9 @@ describe('safeBlock', () => {
     expect(safeBlock(`${ESC}Pkept\u0018 too`)).toBe('kept too');
   });
 
-  it('cleans in one linear pass: 200,000 hostile characters in well under 50 ms each', () => {
+  // Linear, not quadratic: a quadratic pass over 200,000 characters takes seconds. The best of five passes keeps a
+  // busy machine or a slow CI runner from failing it (it failed at 50 ms on one pass under load, Nov 25).
+  it('cleans in one linear pass: 200,000 hostile characters, the best of five passes under 250 ms each', () => {
     const hostile = [
       `${ESC}]`.repeat(100_000),
       `${ESC}[${'1;'.repeat(100_000)}`,
@@ -100,9 +102,14 @@ describe('safeBlock', () => {
     ];
     for (const text of hostile) {
       safeBlock(text); // warm up
-      const start = performance.now();
-      const got = safeBlock(text);
-      expect(performance.now() - start).toBeLessThan(50);
+      let best = Infinity;
+      let got = '';
+      for (let pass = 0; pass < 5; pass++) {
+        const start = performance.now();
+        got = safeBlock(text);
+        best = Math.min(best, performance.now() - start);
+      }
+      expect(best).toBeLessThan(250);
       expect(unsafeAt(got, true)).toBe(-1);
     }
   });
