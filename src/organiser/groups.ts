@@ -5,7 +5,7 @@
 import type { Entry } from '../store/store.ts';
 import { isDailyNote, linkTargets, type RecordView, type Unit } from './record.ts';
 import { invalid, isRecord, list, type ModelRequest, text } from './plan.ts';
-import { centroid, chooseK, cosine, kmeans, type Vec } from './text.ts';
+import { centroid, chooseK, cosine, kmeans, normalise, type Vec } from './text.ts';
 
 /** A group a live run already made (a hub, folder or topic tag), and the entries in it. */
 export interface Existing {
@@ -56,7 +56,8 @@ export function groupUnits(record: RecordView, entries: Entry[], existing: Exist
     ...(ex ? { existing: ex } : {}),
   });
   const daily = units.filter((u) => u.entries.every(isDailyNote));
-  const rest = units.filter((u) => !daily.includes(u));
+  const isDaily = new Set(daily);
+  const rest = units.filter((u) => !isDaily.has(u));
   let groups: { members: Unit[]; existing?: Existing }[];
   let loose: Unit[];
   if (!existing.length) {
@@ -68,8 +69,9 @@ export function groupUnits(record: RecordView, entries: Entry[], existing: Exist
     const placed = new Map<Existing, Unit[]>(existing.map((ex) => [ex, []]));
     const left: Unit[] = [];
     const centres = existing.map((ex) => centroid(unitsOf(record, ex.entryIds).map((u) => record.unitVector(u))));
+    const held = existing.map((ex) => new Set(ex.entryIds));
     for (const unit of rest) {
-      const target = continued(unit, existing) ?? nearest(record.unitVector(unit), existing, centres);
+      const target = continued(unit, existing, held) ?? nearest(record.unitVector(unit), existing, centres);
       if (target) placed.get(target)!.push(unit);
       else left.push(unit);
     }
@@ -78,10 +80,11 @@ export function groupUnits(record: RecordView, entries: Entry[], existing: Exist
     loose = fresh.loose;
   }
   // A daily note is a log of the day: it goes with the note it links to, not with other daily notes.
+  const homes = new Homes(record, groups);
   for (const unit of daily) {
-    const home = linkedGroup(record, unit, groups) ?? nearestGroup(record, unit, groups);
-    if (home) home.members.push(unit);
-    else loose.push(unit);
+    const home = homes.linked(unit) ?? homes.nearest(unit);
+    if (home === undefined) loose.push(unit);
+    else homes.add(home, unit);
   }
   return {
     groups: groups.filter((g) => g.members.length).map((g) => make(g.members, g.existing)),
@@ -91,23 +94,65 @@ export function groupUnits(record: RecordView, entries: Entry[], existing: Exist
 
 type Draft = { members: Unit[]; existing?: Existing };
 
-/** The group holding a note this unit links to. */
-function linkedGroup(record: RecordView, unit: Unit, groups: Draft[]): Draft | undefined {
-  for (const e of unit.entries) {
-    for (const target of linkTargets(e.body)) {
-      const note = record.resolveLink(target);
-      const home = note && record.unitOf(note.id);
-      const group = home && groups.find((g) => g.members.includes(home) || g.existing?.entryIds.includes(note.id));
-      if (group) return group;
-    }
+/**
+ * Where daily notes go, with what each check needs kept as it goes rather than rebuilt per note: which group holds
+ * each unit, which existing group first holds each entry, and each group's centre, which moves as notes join it. A
+ * centre is the running sum of its members' vectors, normalised, as centroid() would make it from the whole list.
+ */
+class Homes {
+  private readonly record: RecordView;
+  private readonly groups: Draft[];
+  private readonly groupOfUnit = new Map<Unit, number>();
+  private readonly groupOfEntry = new Map<number, number>();
+  private readonly sums: Vec[];
+  private readonly centres: Vec[];
+
+  constructor(record: RecordView, groups: Draft[]) {
+    this.record = record;
+    this.groups = groups;
+    groups.forEach((g, i) => {
+      for (const u of g.members) this.groupOfUnit.set(u, i);
+      for (const id of g.existing?.entryIds ?? []) if (!this.groupOfEntry.has(id)) this.groupOfEntry.set(id, i);
+    });
+    this.sums = groups.map((g) => {
+      const sum: Vec = new Map();
+      for (const u of g.members) addTo(sum, record.unitVector(u));
+      return sum;
+    });
+    this.centres = this.sums.map(normalise);
   }
-  return undefined;
+
+  /** The first group holding a note this unit links to (by its unit, or by an existing group's entries). */
+  linked(unit: Unit): number | undefined {
+    for (const e of unit.entries) {
+      for (const target of linkTargets(e.body)) {
+        const note = this.record.resolveLink(target);
+        const home = note && this.record.unitOf(note.id);
+        if (!home) continue;
+        const a = this.groupOfUnit.get(home);
+        const b = this.groupOfEntry.get(note.id);
+        if (a !== undefined || b !== undefined) return Math.min(a ?? Infinity, b ?? Infinity);
+      }
+    }
+    return undefined;
+  }
+
+  nearest(unit: Unit): number | undefined {
+    const best = nearest(this.record.unitVector(unit), this.groups.map((_, i) => ({ id: i, name: '', entryIds: [] })), this.centres);
+    return best?.id;
+  }
+
+  add(i: number, unit: Unit): void {
+    this.groups[i]!.members.push(unit);
+    this.groupOfUnit.set(unit, i);
+    addTo(this.sums[i]!, this.record.unitVector(unit));
+    this.centres[i] = normalise(this.sums[i]!);
+  }
 }
 
-function nearestGroup(record: RecordView, unit: Unit, groups: Draft[]): Draft | undefined {
-  const centres = groups.map((g) => centroid(g.members.map((u) => record.unitVector(u))));
-  const best = nearest(record.unitVector(unit), groups.map((_, i) => ({ id: i, name: '', entryIds: [] })), centres);
-  return best ? groups[best.id] : undefined;
+/** Adds v into sum in place, as centroid() sums. */
+function addTo(sum: Vec, v: Vec): void {
+  for (const [i, w] of v) sum.set(i, (sum.get(i) ?? 0) + w);
 }
 
 function unitsOf(record: RecordView, entryIds: number[]): Unit[] {
@@ -120,11 +165,11 @@ function unitsOf(record: RecordView, entryIds: number[]): Unit[] {
 }
 
 /** The existing group already holding most of this unit's entries: a thread stays where it started. */
-function continued(unit: Unit, existing: Existing[]): Existing | undefined {
+function continued(unit: Unit, existing: Existing[], held: Set<number>[]): Existing | undefined {
   let best: Existing | undefined;
   let most = 0;
-  for (const ex of existing) {
-    const ids = new Set(ex.entryIds);
+  for (const [i, ex] of existing.entries()) {
+    const ids = held[i]!;
     const n = unit.entries.filter((e) => ids.has(e.id)).length;
     if (n > most) {
       most = n;
@@ -156,7 +201,8 @@ function cluster(record: RecordView, units: Unit[], k: number): { groups: Unit[]
   units.forEach((u, i) => {
     const g = assign[i]!;
     if (g < 0) loose.push(u);
-    else byGroup.set(g, [...(byGroup.get(g) ?? []), u]);
+    else if (byGroup.has(g)) byGroup.get(g)!.push(u);
+    else byGroup.set(g, [u]);
   });
   const groups: Unit[][] = [];
   for (const members of byGroup.values()) {

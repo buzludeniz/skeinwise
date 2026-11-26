@@ -5,6 +5,8 @@ import {
   chooseK,
   cosine,
   distinctiveTerms,
+  KMEANS_EXACT,
+  KMEANS_SAMPLE,
   kmeans,
   pickDiverse,
   sentences,
@@ -12,8 +14,10 @@ import {
   summarize,
   tokenize,
   topTerms,
+  type Vec,
   vectorize,
 } from '../src/organiser/text.ts';
+import { mulberry32 } from '../src/random.ts';
 
 const GARDEN = [
   'The allotment plots need a waiting list. Plot holders pay rent each spring.',
@@ -96,6 +100,89 @@ describe('k-means', () => {
     const result = kmeans(vectors, 5, 1);
     expect(result.assign[2]).toBe(-1);
     expect(result.centroids.length).toBeLessThanOrEqual(2);
+  });
+
+  /** n normalised vectors in `clusters` clear groups: vector i draws most terms from group i % clusters's own range. */
+  function grouped(n: number, clusters: number, seed: number): Vec[] {
+    const rand = mulberry32(seed);
+    return Array.from({ length: n }, (_, i) => {
+      const v: Vec = new Map();
+      for (let t = 0; t < 12; t++) {
+        const term = rand() < 0.95 ? (i % clusters) * 20 + Math.floor(rand() * 20) : clusters * 20 + Math.floor(rand() * 200);
+        v.set(term, (v.get(term) ?? 0) + 0.5 + rand());
+      }
+      return centroid([v]);
+    });
+  }
+
+  /** k-means as it was written before its centres were held dense: what kmeans() must still give up to KMEANS_EXACT. */
+  function plainKmeans(vectors: Vec[], k: number, seed: number, restarts: number) {
+    const usable = vectors.map((v, i) => (v.size ? i : -1)).filter((i) => i >= 0);
+    let best: { score: number; assign: number[]; centroids: Vec[] } | undefined;
+    for (let r = 0; r < restarts; r++) {
+      const rand = mulberry32(seed * 7919 + r);
+      let centres = [vectors[usable[Math.floor(rand() * usable.length)]!]!];
+      const near = usable.map((i) => 1 - cosine(vectors[i]!, centres[0]!));
+      while (centres.length < k) {
+        const weights = near.map((d) => d * d);
+        const total = weights.reduce((a, b) => a + b, 0);
+        let pick = 0;
+        if (total > 0) {
+          let x = rand() * total;
+          while (pick < weights.length - 1 && x >= weights[pick]!) x -= weights[pick++]!;
+        } else pick = Math.floor(rand() * usable.length);
+        const c = vectors[usable[pick]!]!;
+        centres.push(c);
+        usable.forEach((i, n) => (near[n] = Math.min(near[n]!, 1 - cosine(vectors[i]!, c))));
+      }
+      const assign = vectors.map(() => -1);
+      for (let iter = 0; iter < 50; iter++) {
+        let moved = false;
+        for (const i of usable) {
+          let bestJ = 0;
+          let bestSim = -Infinity;
+          centres.forEach((c, j) => {
+            const s = cosine(vectors[i]!, c);
+            if (s > bestSim + 1e-12) [bestSim, bestJ] = [s, j];
+          });
+          if (assign[i] !== bestJ) [assign[i], moved] = [bestJ, true];
+        }
+        centres = centres.map((old, j) => {
+          const members = usable.filter((i) => assign[i] === j).map((i) => vectors[i]!);
+          return members.length ? centroid(members) : old;
+        });
+        if (!moved) break;
+      }
+      const score = usable.reduce((s, i) => s + cosine(vectors[i]!, centres[assign[i]!]!), 0);
+      if (!best || score > best.score + 1e-12) best = { score, assign, centroids: centres };
+    }
+    return best!;
+  }
+
+  it('gives exactly what the plain algorithm gives, up to KMEANS_EXACT vectors', () => {
+    const vectors = [...grouped(400, 6, 3), new Map(), ...index.vectors];
+    for (const [k, seed, restarts] of [[6, 1, 4], [9, 5, 16], [2, 7, 3]] as const) {
+      const want = plainKmeans(vectors, k, seed, restarts);
+      const got = kmeans(vectors, k, seed, restarts);
+      expect(got.assign).toEqual(want.assign);
+      expect(got.centroids.map((c) => [...c])).toEqual(want.centroids.map((c) => [...c]));
+    }
+  });
+
+  it('above KMEANS_EXACT, fits on a sample yet places every vector, the same way every time', () => {
+    expect(KMEANS_SAMPLE).toBeGreaterThan(KMEANS_EXACT);
+    const vectors = grouped(KMEANS_SAMPLE + 1000, 8, 11);
+    vectors[17] = new Map();
+    const a = kmeans(vectors, 8, 1, 16);
+    expect(kmeans(vectors, 8, 1, 16).assign).toEqual(a.assign);
+    expect(a.assign[17]).toBe(-1);
+    expect(a.assign.filter((g, i) => i !== 17 && (g < 0 || g > 7))).toEqual([]);
+    expect(a.centroids).toHaveLength(8);
+    // Each of the eight groups comes out whole: the vectors drawn from one range share one group.
+    for (let c = 0; c < 8; c++) {
+      const groups = new Set(a.assign.filter((_, i) => i % 8 === c && i !== 17));
+      expect(groups.size).toBe(1);
+    }
   });
 
   it('picks k near the square root of n/2', () => {
