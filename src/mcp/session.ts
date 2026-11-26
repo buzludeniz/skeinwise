@@ -3,11 +3,16 @@
 // time), then the scope: a read-scope token lists and runs only the read tools. What a tool returns goes out framed as
 // untrusted data, redacted and cut to fit (frame.ts), and the session stops at MAX_SESSION_BYTES. Every call, served or
 // refused, goes in the MCP log (log.ts).
+//
+// A change a writing tool has made is never reported as refused or failed, or the agent would ask again and the change
+// would be made twice. So a writing tool is refused before it runs when the session hasn't WRITE_ROOM left for its
+// result, and when the log can't be written after the change, the result still goes out, saying so, and the person is
+// told on the server's error output.
 
 import type { Store } from '../store/store.ts';
 import { AccessError, checkAccess, quoteArg, type Session } from './access.ts';
 import { FitError, frame, MAX_CALL_BYTES, MAX_SESSION_BYTES } from './frame.ts';
-import { type LogRecord, logArgs, logCall } from './log.ts';
+import { LogError, LOG_FILE, type LogRecord, logArgs, logCall } from './log.ts';
 import type { Tool } from './protocol.ts';
 import { type MemoryCtx, MEMORY_TOOLS } from './tools.ts';
 
@@ -22,6 +27,18 @@ export interface SessionOptions {
   /** The token from the agent's MCP config (SKEINWISE_AGENT_TOKEN), if it gave one. */
   token: string | undefined;
   now: () => string;
+  /** Tells the person something the agent's result can't: a change made but missing from the MCP log. */
+  warn?: (text: string) => void;
+}
+
+/** Bytes a writing tool's result needs at most, framed: it is refused before it runs when the session has less left. */
+export const WRITE_ROOM = 4096;
+
+interface Served {
+  text: string;
+  fields: Record<string, unknown>;
+  entries: unknown[];
+  room: number;
 }
 
 /** The tools whose entries are hubs, so the log names them as hubs. */
@@ -54,20 +71,36 @@ export class MemorySession {
 
   private async run(tool: Tool<MemoryCtx>, caller: Caller, args: Record<string, unknown>): Promise<string> {
     const record: LogRecord = { at: this.o.now(), agent: null, label: caller.label, tool: tool.name, args: logArgs(args), bytes: 0, truncated: false, outcome: 'ok' };
-    let text: string;
+    let served: Served;
     try {
-      text = await this.serve(tool, caller, args, record);
+      served = await this.serve(tool, caller, args, record);
     } catch (err) {
       record.outcome = err instanceof AccessError ? 'refused' : 'error';
       record.reason = (err as Error).message.slice(0, 500);
       logCall(this.o.home, record);
       throw err;
     }
-    logCall(this.o.home, record);
-    return text;
+    try {
+      logCall(this.o.home, record);
+    } catch (err) {
+      if (tool.readOnly || !(err instanceof LogError)) throw err;
+      return this.unlogged(tool, record, served, err);
+    }
+    return served.text;
   }
 
-  private async serve(tool: Tool<MemoryCtx>, caller: Caller, args: Record<string, unknown>, record: LogRecord): Promise<string> {
+  /** A writing tool's result when its change is made but the log refused the call: the result, saying the log failed. */
+  private unlogged(tool: Tool<MemoryCtx>, record: LogRecord, served: Served, err: LogError): string {
+    const failed = `Skeinwise couldn't write its MCP log (${LOG_FILE}: ${err.code})`;
+    this.o.warn?.(
+      `skeinwise mcp: ${record.agent} called ${tool.name} and its change was made, but ${failed}, so the call is missing from it. Check that the disk has room and the record folder can be written.\n`,
+    );
+    const framed = frame(tool.name, { ...served.fields, log_error: `The change was made, but ${failed}. Tell the user.` }, served.entries, served.room);
+    this.served += framed.bytes - record.bytes;
+    return framed.text;
+  }
+
+  private async serve(tool: Tool<MemoryCtx>, caller: Caller, args: Record<string, unknown>, record: LogRecord): Promise<Served> {
     const { home, store, token, now } = this.o;
     const who = checkAccess(home, token, caller.label);
     record.agent = who.agent;
@@ -77,7 +110,7 @@ export class MemorySession {
       );
     }
     const room = Math.min(MAX_CALL_BYTES, MAX_SESSION_BYTES - this.served);
-    if (room <= 0) throw new AccessError(FULL);
+    if (room <= 0 || (!tool.readOnly && room < WRITE_ROOM)) throw new AccessError(FULL);
     const value = (await tool.run({ store, home, agent: who.agent, now }, args)) as Record<string, unknown>;
     const { entries, ...fields } = value;
     try {
@@ -89,7 +122,7 @@ export class MemorySession {
       if (ids.length) record[HUB_TOOLS.has(tool.name) ? 'hub_ids' : 'entry_ids'] = ids;
       record.bytes = framed.bytes;
       record.truncated = framed.truncated;
-      return framed.text;
+      return { text: framed.text, fields, entries: Array.isArray(entries) ? entries : [], room };
     } catch (err) {
       if (err instanceof FitError) throw new AccessError(FULL);
       throw err;

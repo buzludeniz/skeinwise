@@ -76,7 +76,7 @@ function token(ctx: Ctx): string | undefined {
  * the next call, without restarting the server. The agent is the one whose token the client's environment carries.
  */
 export function memoryServer(ctx: Ctx): McpServer<Caller> {
-  const session = new MemorySession({ store: ctx.store, home: ctx.home, token: token(ctx), now: clock(ctx) });
+  const session = new MemorySession({ store: ctx.store, home: ctx.home, token: token(ctx), now: clock(ctx), warn: (text) => ctx.io.err(text) });
   return new McpServer<Caller>({
     name: 'skeinwise',
     version: version(),

@@ -53,7 +53,16 @@ export function logArgs(args: Record<string, unknown>): Record<string, unknown> 
   return keep(args, 0) as Record<string, unknown>;
 }
 
-/** Adds one record. Throws when the log can't be written, so no result goes out unlogged. */
+/** The log couldn't be written. `code` is the system's error code; the message names the file but not its path. */
+export class LogError extends Error {
+  readonly code: string;
+  constructor(code: string) {
+    super(`Skeinwise couldn't write its MCP log (${LOG_FILE}: ${code}), so it sent no result.`);
+    this.code = code;
+  }
+}
+
+/** Adds one record. Throws a LogError when the log can't be written, so no read's result goes out unlogged. */
 export function logCall(home: string, record: LogRecord): void {
   const file = join(home, LOG_FILE);
   try {
@@ -63,7 +72,7 @@ export function logCall(home: string, record: LogRecord): void {
     if (fresh) chmodSync(file, 0o600);
   } catch (err) {
     // The agent sees this, so it names the file and the error code but not the path, which holds the user's name.
-    throw new Error(`Skeinwise couldn't write its MCP log (${LOG_FILE}: ${(err as NodeJS.ErrnoException).code ?? 'unknown error'}), so it sent no result.`);
+    throw new LogError((err as NodeJS.ErrnoException).code ?? 'unknown error');
   }
 }
 
