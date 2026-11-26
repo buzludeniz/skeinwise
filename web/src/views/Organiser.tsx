@@ -3,7 +3,7 @@
 
 import { useMemo, useState } from 'preact/hooks';
 import { Check, FolderTree, GitCompareArrows, ListChecks, Merge, Network, RotateCcw, SkipForward, Sparkles, Workflow } from 'lucide-preact';
-import { changed, engineName, loadRecord, message, openEntry, openNav, openPanel, organise, toast, undoRun, wordNotice } from '../actions.ts';
+import { changed, engineName, loadRecord, message, openEntry, openNav, openPanel, organise, postRunUndo, toast, undoRun, wordNotice } from '../actions.ts';
 import { api } from '../api.ts';
 import { fmtDate, fmtNum, plural, runMade } from '../format.ts';
 import { folderCounts } from '../nav.ts';
@@ -21,7 +21,7 @@ interface Resolution {
 
 /** Takes back a correction (a rename, a merge, a hub marked not useful): it is a run like any other. */
 async function undoCorrection(runId: number): Promise<void> {
-  await api.post(`runs/${runId}/undo`);
+  await postRunUndo(runId);
   await loadRecord();
 }
 

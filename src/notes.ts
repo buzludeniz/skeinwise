@@ -28,7 +28,7 @@ import { pathInside, readImports } from './importers/detect.ts';
 import { parseFrontMatter } from './importers/notes.ts';
 import { currentMark, finishRun, startRun } from './organiser/runs.ts';
 import { inTransaction } from './store/db.ts';
-import type { Entry, Store } from './store/store.ts';
+import type { Entry, Store, Version } from './store/store.ts';
 
 export interface NoteWrite {
   path: string;
@@ -199,10 +199,14 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
   }
   const same = (name: string) => name.toLowerCase() === agent.toLowerCase(); // agent names match as allowAgent matches them
   if (!same(owner)) throw new UsageError(`${file} was written by ${owner}, and only ${owner} can change it. Pick another title.`);
-  const last = store.history(entryOf(store, dir, path)).at(-1);
+  const history = store.history(entryOf(store, dir, path));
+  const last = history.at(-1);
   // An agent name has no colon (access.ts), so `agent:<name>` and an older save's plain name can't be confused.
   const byAgent = (editor: string) => same(editorName(editor));
-  if (last && !byAgent(last.editor)) {
+  // A later version that holds text this agent wrote (an undo of its own change puts its earlier text back, as yours)
+  // has no one else's words in it, so the agent may change the note again.
+  const itsText = (v: Version) => history.some((w) => byAgent(w.editor) && w.contentHash === v.contentHash);
+  if (last && !byAgent(last.editor) && !itsText(last)) {
     throw new UsageError(`${file} was changed by ${last.editor} after ${agent} wrote it, so it stays as it is. Pick another title.`);
   }
   const before = fileBytes(notePath(dir, path));

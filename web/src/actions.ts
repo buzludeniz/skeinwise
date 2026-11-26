@@ -225,9 +225,14 @@ export function changed(text: string, undoLabel: string, run: UndoStep['run']): 
   });
 }
 
+/** Says that a note's Word document was left as it is: Skeinwise only reads those. */
+function wordLeft(file: string): void {
+  toast(`${file} is a Word document, which Skeinwise doesn’t write, so it was left as it is.`);
+}
+
 /** After a note's save (PUT entries/:id): says so when its file is a Word document, which the save left as it is. */
 export function wordNotice(saved: SavedEntry): void {
-  if (saved.word) toast(`${saved.word} is a Word document, which Skeinwise doesn’t write, so it was left as it is.`);
+  if (saved.word) wordLeft(saved.word);
 }
 
 // The organiser.
@@ -244,15 +249,24 @@ export function engineName(engine: string, model: string | null): string {
   return engineLabel(engine, model && modelName(model));
 }
 
+/**
+ * Undoes one run on the server. A note it puts back that is kept as a Word document keeps its file as it was, because
+ * Skeinwise doesn't write Word files, and a toast says so for each one, as the CLI does.
+ */
+export async function postRunUndo(runId: number): Promise<void> {
+  const { word = [] } = await api.post<{ word?: string[] }>(`runs/${runId}/undo`);
+  for (const file of word) wordLeft(file);
+}
+
 /** Takes back runs newest first, so no run is undone before the ones built on it. */
 async function undoRuns(runs: Run[]): Promise<void> {
-  for (const r of [...runs].reverse()) await api.post(`runs/${r.id}/undo`);
+  for (const r of [...runs].reverse()) await postRunUndo(r.id);
   await loadRecord();
 }
 
 /** "Undo run": removes all a run made. */
 export async function undoRun(run: Run): Promise<void> {
-  await api.post(`runs/${run.id}/undo`);
+  await postRunUndo(run.id);
   await loadRecord();
   toast(`Run ${run.id} undone.`);
 }
