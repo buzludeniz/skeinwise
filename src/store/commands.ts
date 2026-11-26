@@ -1,14 +1,18 @@
-// The record's own commands from the store's track: bringing back an old version of an entry. src/cli.ts wires them
-// in as it does SYNC_COMMANDS: STORE_FLAGS into its flags, STORE_HELP into its help, STORE_COMMANDS into its table.
+// The record's own commands from the store's track: bringing back an old version of an entry, and search's project
+// filter. src/cli.ts wires them in as it does SYNC_COMMANDS: STORE_FLAGS into its flags, STORE_HELP into its help,
+// STORE_COMMANDS into its table.
 import type { Ctx } from '../cli-organiser.ts';
 import { needId, UsageError } from '../errors.ts';
 
 type Command = (ctx: Ctx) => number | Promise<number>;
 
-/** None of its own: `--json` is the CLI's. */
-export const STORE_FLAGS = {} as const;
+/** `--project <name>` for search and ask: spread into the CLI's flags, and pass `values.project` to `store.search`. */
+export const STORE_FLAGS = { project: { type: 'string' } } as const;
 
 const line = (command: string, text: string) => `  ${command.padEnd(26)}${text}\n`;
+
+/** The help line for `--project`, to sit under search's flags and ask's. */
+export const STORE_SEARCH_HELP = `      --project <name>      Only coding sessions run in that folder (a name or a path)\n`;
 
 export const STORE_HELP =
   line('restore <entry> <version>', 'Bring back an old version of an entry (see history <entry>). It is') +

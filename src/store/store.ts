@@ -183,6 +183,11 @@ export interface SearchOptions {
   to?: string;
   /** Only entries holding every word; no fill-up with entries holding some of them. */
   strict?: boolean;
+  /**
+   * Only agent-session entries run in this project. A folder name ("plotline") matches that name anywhere in the
+   * working folder's path, so its subfolders too; a full path matches that folder and what is under it.
+   */
+  project?: string;
 }
 
 export interface TimelineOptions {
@@ -493,6 +498,12 @@ export class Store {
       .prepare('SELECT 1 FROM versions WHERE entry_id = ? AND content_hash = ?')
       .get(existing.id, hash);
     if (known) {
+      // An entry imported before sessions kept their folder and branch gains them here; one already set stays.
+      if (input.project || input.gitBranch) {
+        this.db
+          .prepare('UPDATE entries SET project = COALESCE(project, ?), git_branch = COALESCE(git_branch, ?) WHERE id = ? AND (project IS NULL OR git_branch IS NULL)')
+          .run(input.project ?? null, input.gitBranch ?? null, existing.id);
+      }
       result.unchanged++;
       return;
     }
@@ -929,6 +940,18 @@ export class Store {
     if (options.to) {
       where.push('e.created_at <= ?');
       params.push(options.to);
+    }
+    if (options.project !== undefined) {
+      // Whole folder names only, compared as text: "plot" doesn't match "plotline", and % or _ mean nothing here.
+      const name = options.project.trim().replace(/\/+$/, '');
+      if (!name) throw new Error('Give a project: a folder name or a path.');
+      if (name.startsWith('/')) {
+        where.push("instr(e.project || '/', ?) = 1");
+        params.push(`${name}/`);
+      } else {
+        where.push("instr('/' || e.project || '/', ?) > 0");
+        params.push(`/${name}/`);
+      }
     }
     params.push(options.limit ?? 20);
     // bm25 is negative (lower is better); scaling it up for your own words ranks them first.
