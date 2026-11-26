@@ -1,6 +1,7 @@
 // liveTags merges a schema's tag rows by name and each tag's entries, dropping repeats. It used to find a repeat by
 // scanning the arrays it was building, quadratic in a tag's size at worst; the checks now use Sets beside the arrays.
-// The output must not move: these pins are what the build before the change (f15e013) gives.
+// The output must not move: the pins were taken from the build before the change (f15e013), then taken again when the
+// Projects name rule (a name tags an entry only when it stands out) took 9 demo entries off Projects.
 import { createHash } from 'node:crypto';
 import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -93,15 +94,15 @@ describe('liveTags on the demo record', () => {
 
   it('gives every schema the same tags, in the same order, with the same ids and entries as before', () => {
     expect(points.map((p) => [p.label, p.stats])).toEqual([
-      ['all', [['Topics', 18, 18, 596, 0], ['Projects', 4, 4, 25, 0], ['Moods', 1, 1, 2, 0], ['Areas', 2, 2, 21, 0]]],
-      ['new', [['Topics', 22, 26, 603, 4], ['Projects', 5, 6, 29, 1], ['Moods', 1, 1, 2, 0], ['Areas', 2, 2, 21, 0]]],
-      ['source and since', [['Topics', 28, 46, 693, 16], ['Projects', 5, 11, 69, 5], ['Moods', 1, 1, 2, 0], ['Areas', 2, 2, 21, 0]]],
+      ['all', [['Topics', 18, 18, 596, 0], ['Projects', 4, 4, 16, 0], ['Moods', 1, 1, 2, 0], ['Areas', 2, 2, 21, 0]]],
+      ['new', [['Topics', 22, 26, 603, 4], ['Projects', 5, 6, 20, 1], ['Moods', 1, 1, 2, 0], ['Areas', 2, 2, 21, 0]]],
+      ['source and since', [['Topics', 28, 46, 693, 16], ['Projects', 5, 11, 60, 5], ['Moods', 1, 1, 2, 0], ['Areas', 2, 2, 21, 0]]],
     ]);
     // The whole output, names as first seen, ids and entries in their order, and the tags in theirs.
     expect(points.map((p) => p.digest)).toEqual([
-      '3d6ac8d870d1613fc043f7913c491fa36b24f712289935c3c499f4e846a1e005',
-      '3eb8503994b6bc6c1f3916949dae7ed7d34413b9fd40559af2464d342161182d',
-      '107a024c5ffb2ba20b1742faf4b6f0b4353e513dbdba584db7aed4605249d874',
+      '322bab9e117d7af9ebca476ed5b0557552ae18cab416d88281eccb63829326cb',
+      '00e5e77102ea53b3970ea0cd094d21ec73dd9150c2a5d600d5ae1e32d692fc14',
+      '995db1075c69b3f165e186c76c0c7162705ded4648ad1bf5ad54514028df010d',
     ]);
   });
 
