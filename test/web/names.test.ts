@@ -36,7 +36,7 @@ function files(path: string): string[] {
   if (!statSync(full).isDirectory()) return [path];
   return readdirSync(full)
     .filter((name) => !SKIPPED.has(name))
-    .flatMap((name) => files(join(path, name)));
+    .flatMap((name) => files(`${path}/${name}`)); // '/' on every OS, as in ALLOWED and SCANNED
 }
 
 const sources = SCANNED.flatMap(files).filter((f) => /\.(tsx?|css|html|md)$/.test(f));
