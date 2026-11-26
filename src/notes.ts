@@ -127,20 +127,29 @@ export function appendDailyNote(store: Store, home: string, text: string, now: D
   const day = localDay(now);
   const path = join(dir, 'daily', `${day}.md`);
   const item = `- ${agent ? `${agent}: ` : ''}${line.replace(/\r?\n/g, '\n  ')}\n`;
-  if (agent) readNotes(store, home);
-  const created = !present(path);
-  mkdirSync(dirname(path), { recursive: true });
-  let before: Buffer | null = null;
-  if (created) {
-    createNoteFile(dir, path, `# ${day}\n\n${item}`);
-  } else {
+  const write = (): { created: boolean; before: Buffer | null } => {
+    const created = !present(path);
+    mkdirSync(dirname(path), { recursive: true });
+    if (created) {
+      createNoteFile(dir, path, `# ${day}\n\n${item}`);
+      return { created, before: null };
+    }
     const full = notePath(dir, path);
-    before = fileBytes(full);
+    const before = fileBytes(full);
     const old = before.toString('utf8');
     withFile(full, O_WRONLY | O_APPEND, (fd) => writeFileSync(fd, old && !old.endsWith('\n') ? `\n${item}` : item));
+    return { created, before };
+  };
+  if (!agent) {
+    const { created } = write();
+    return { path, created, entryId: readBack(store, dir, path) };
   }
-  if (!agent) return { path, created, entryId: readBack(store, dir, path) };
-  return { path, created, ...saveOrPutBack(store, dir, path, agent, { speaker: false, created, now }, before) };
+  // Written and saved under the record's write lock, as every agent's note write is (asAgent).
+  return asAgent(store, () => {
+    readNotes(store, home);
+    const { created, before } = write();
+    return { path, created, ...saveOrPutBack(store, dir, path, agent, { speaker: false, created, now }, before) };
+  });
 }
 
 /** A file name from a title: lower case letters and digits joined by dashes. */
@@ -184,21 +193,34 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
   const dir = notesDir(home);
   const path = join(dir, `${slug}.md`);
   const content = `# ${name}\n\n${text}\n`;
-  readNotes(store, home);
-  if (!present(path)) {
-    mkdirSync(dir, { recursive: true });
-    createNoteFile(dir, path, `---\ncreated: ${now.toISOString()}\nagent: ${agent}\n---\n\n${content}`);
-    // Live capture may read the new file first and file it as yours; the version and the front matter still name the
-    // agent, and the importer reading `agent:` would close that gap.
-    return { path, created: true, ...saveOrPutBack(store, dir, path, agent, { speaker: true, created: true, now }, null) };
-  }
+  // Checked, written and saved under the record's write lock (asAgent). A refusal is thrown once the lock is let go,
+  // so the edits readNotes filed stay filed.
+  const done = asAgent(store, (): NoteWrite | UsageError => {
+    readNotes(store, home);
+    if (!present(path)) {
+      mkdirSync(dir, { recursive: true });
+      createNoteFile(dir, path, `---\ncreated: ${now.toISOString()}\nagent: ${agent}\n---\n\n${content}`);
+      return { path, created: true, ...saveOrPutBack(store, dir, path, agent, { speaker: true, created: true, now }, null) };
+    }
+    const refused = refusal(store, dir, path, agent);
+    if (refused) return refused;
+    const before = fileBytes(notePath(dir, path));
+    rewriteNoteFile(path, content);
+    return { path, created: false, ...saveOrPutBack(store, dir, path, agent, { speaker: false, created: false, now }, before) };
+  });
+  if (done instanceof UsageError) throw done;
+  return done;
+}
+
+/** Why an agent may not change the note at path, or null when it may. */
+function refusal(store: Store, dir: string, path: string, agent: string): UsageError | null {
   const owner = parseFrontMatter(readNoteFile(notePath(dir, path))).meta.agent;
   const file = pathInside(dir, path);
   if (typeof owner !== 'string' || !owner) {
-    throw new UsageError(`${file} is your note, and agents can't change your notes. Pick another title, or add a line to today's note.`);
+    return new UsageError(`${file} is your note, and agents can't change your notes. Pick another title, or add a line to today's note.`);
   }
   const same = (name: string) => name.toLowerCase() === agent.toLowerCase(); // agent names match as allowAgent matches them
-  if (!same(owner)) throw new UsageError(`${file} was written by ${owner}, and only ${owner} can change it. Pick another title.`);
+  if (!same(owner)) return new UsageError(`${file} was written by ${owner}, and only ${owner} can change it. Pick another title.`);
   const history = store.history(entryOf(store, dir, path));
   const last = history.at(-1);
   // An agent name has no colon (access.ts), so `agent:<name>` and an older save's plain name can't be confused.
@@ -207,11 +229,9 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
   // has no one else's words in it, so the agent may change the note again.
   const itsText = (v: Version) => history.some((w) => byAgent(w.editor) && w.contentHash === v.contentHash);
   if (last && !byAgent(last.editor) && !itsText(last)) {
-    throw new UsageError(`${file} was changed by ${last.editor} after ${agent} wrote it, so it stays as it is. Pick another title.`);
+    return new UsageError(`${file} was changed by ${last.editor} after ${agent} wrote it, so it stays as it is. Pick another title.`);
   }
-  const before = fileBytes(notePath(dir, path));
-  rewriteNoteFile(path, content);
-  return { path, created: false, ...saveOrPutBack(store, dir, path, agent, { speaker: false, created: false, now }, before) };
+  return null;
 }
 
 /**
@@ -221,13 +241,45 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
 export function readNotes(store: Store, home: string): void {
   const dir = notesDir(home);
   if (!existsSync(dir)) return;
-  for (const batch of readImports(dir, { emptyOk: true })) if (batch.source.kind === 'notes') store.ingest(batch, { editor: 'you', ownFiles: true });
+  ingestNotes(store, dir, { emptyOk: true });
 }
 
 /** Reads the notes folder into the record, and returns the entry for one file in it. */
 function readBack(store: Store, dir: string, path: string): number {
-  for (const batch of readImports(dir)) if (batch.source.kind === 'notes') store.ingest(batch, { editor: 'you', ownFiles: true });
+  ingestNotes(store, dir, {});
   return entryOf(store, dir, path);
+}
+
+/**
+ * Runs an agent's note write under the record's write lock (BEGIN IMMEDIATE), from its read of the folder and its
+ * checks through the file write to its save. Another process that reads the notes folder meanwhile (the app, the CLI,
+ * another agent's server) waits on the lock to file what it read, and then finds the agent's text already known, so it
+ * never files the agent's words as yours and the run keeps its version. A busy record fails before anything is
+ * written. A failed save puts the file back before the lock goes (saveOrPutBack), so a second run of fn, inTransaction's
+ * one retry when busy, starts from the files as they were.
+ */
+function asAgent<T>(store: Store, fn: () => T): T {
+  return inTransaction(store.db, fn);
+}
+
+/** The newest agent note save's run, or 0. It changes with every agent's note save (saveAsAgent). */
+function lastAgentSave(store: Store): number {
+  return Number((store.db.prepare(`SELECT COALESCE(MAX(id), 0) AS id FROM runs WHERE task = 'note'`).get() as { id: number }).id);
+}
+
+/**
+ * Files the notes folder as your words. The folder is read before the record's write lock is taken, as reading it can
+ * take a while. An agent that saved a note in between (asAgent) may have changed a file after it was read, and filing
+ * the text read would put the agent's older text back as yours. So when an agent saved meanwhile, the folder is read
+ * again under the lock.
+ */
+function ingestNotes(store: Store, dir: string, options: { emptyOk?: boolean }): void {
+  const seen = lastAgentSave(store);
+  let batches = readImports(dir, options);
+  inTransaction(store.db, () => {
+    if (lastAgentSave(store) !== seen) batches = readImports(dir, options);
+    for (const batch of batches) if (batch.source.kind === 'notes') store.ingest(batch, { editor: 'you', ownFiles: true });
+  });
 }
 
 /**
@@ -277,10 +329,10 @@ function saveAsAgent(
 }
 
 /**
- * Saves the file an agent just wrote as its run (saveAsAgent). When the save fails (the record busy past its wait,
- * say), the file goes back to what it held before, `before`, or away if the agent made it: left as the agent wrote it,
- * the next read would file the agent's text as yours. A file changed again in the meantime is someone else's text and
- * stays.
+ * Saves the file an agent just wrote as its run (saveAsAgent), under the write lock asAgent holds. When the save fails
+ * (a full disk, say), the file goes back to what it held before, `before`, or away if the agent made it, while the lock
+ * is still held: left as the agent wrote it, the next read would file the agent's text as yours. A file changed again
+ * in the meantime is someone else's text and stays.
  */
 function saveOrPutBack(
   store: Store,
