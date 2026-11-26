@@ -6,6 +6,7 @@
 import type { Readable } from 'node:stream';
 import { UsageError } from '../errors.ts';
 import { safeJson } from '../safe-text.ts';
+import { isBusy } from '../store/db.ts';
 import { AccessError } from './access.ts';
 
 /** Versions that carry everything in each request's _meta. */
@@ -170,12 +171,17 @@ export class McpServer<C> {
       const value = await tool.run(ctx, args);
       return { content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }] };
     } catch (err) {
-      // Refusals and mistakes go back to the agent as the tool's own result, so it can tell you or try again.
+      // Refusals and mistakes go back to the agent as the tool's own result, so it can tell you or try again. A record
+      // busy past its wait (another process writing) is no fault: the write tools leave nothing behind, so say that.
+      if (isBusy(err)) return { content: [{ type: 'text', text: BUSY }], isError: true };
       if (!(err instanceof UsageError || err instanceof AccessError)) this.options.log(`skeinwise mcp: ${tool.name}: ${(err as Error).stack ?? String(err)}\n`);
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
   }
 }
+
+/** What a tool says when another process held the record's write lock past the busy wait. */
+export const BUSY = 'The record is busy with another write (live capture or a run, say), so nothing was saved. Try again in a moment.';
 
 function complete(result: Record<string, unknown>, modern: boolean): Record<string, unknown> {
   return modern ? { resultType: 'complete', ...result } : result;

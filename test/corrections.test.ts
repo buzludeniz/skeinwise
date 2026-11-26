@@ -1,15 +1,20 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { strToU8, zipSync } from 'fflate';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { main } from '../src/cli.ts';
+import { loadConfig, saveConfig } from '../src/config.ts';
 import { DEMO_NOW, writeDemo } from '../src/demo/demo.ts';
+import { openHome } from '../src/home.ts';
 import { readImports } from '../src/importers/detect.ts';
-import { newNote, rewriteNoteFile } from '../src/notes.ts';
+import { newNote, notesDir, readNotes, rewriteNoteFile } from '../src/notes.ts';
 import { defineTag, deleteHub, findFolder, mergeFolders, removeTag, renameHub, resolveReview } from '../src/organiser/corrections.ts';
 import { type RunOptions, runSteps, runTask, steps } from '../src/organiser/organise.ts';
 import { RecordView } from '../src/organiser/record.ts';
-import { finishRun, getRun, startRun, undoRun } from '../src/organiser/runs.ts';
+import { currentMark, finishRun, getRun, startRun, undoRun } from '../src/organiser/runs.ts';
 import { definedTags, findSchema, getLiveHub, getReviewItem, heldEntries, liveFolders, liveHubs, liveTags, openReviewItems } from '../src/organiser/views.ts';
+import { startServer } from '../src/server/serve.ts';
 import { openDb } from '../src/store/db.ts';
 import { Store } from '../src/store/store.ts';
 
@@ -231,6 +236,108 @@ describe('undoing a review update to a note in the record folder', () => {
       expect(store.getEntry(note.entryId)!.body).toBe('# Garden plan');
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('a note kept as a Word document', () => {
+  /** A one-paragraph Word document: a zip of XML parts, which Markdown written over it would ruin. */
+  function docx(text: string): Uint8Array {
+    return zipSync({
+      '_rels/.rels': strToU8(
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+          '</Relationships>',
+      ),
+      'word/document.xml': strToU8(
+        `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`,
+      ),
+    });
+  }
+
+  it('is never written: accepting a review update and undoing it change only the record, and say so', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'skeinwise-word-'));
+    try {
+      const store = openHome(home, () => DEMO_NOW);
+      const path = join(notesDir(home), 'Garden plan.docx');
+      writeFileSync(path, docx('Beans by the fence.'));
+      const bytes = readFileSync(path);
+      readNotes(store, home);
+      const note = store.allEntries().find((e) => e.kind === 'note')!;
+      const original = note.body;
+      const run = startRun(store.db, { task: 'review', engine: 'none', model: null, scope: 'all', mark: currentMark(store.db), now: DEMO_NOW });
+      finishRun(store.db, run, { counts: {}, tokensIn: 0, tokensOut: 0, now: DEMO_NOW });
+      const item = Number(
+        store.db
+          .prepare('INSERT INTO review_items (note_entry, reasons, proposed, run_id) VALUES (?, ?, ?, ?)')
+          .run(note.id, '[]', `${original}\n\nPeas by the shed.`, run).lastInsertRowid,
+      );
+      store.db.close();
+      const sw = async (...argv: string[]) => {
+        let out = '';
+        let err = '';
+        const code = await main(argv, { out: (t) => (out += t), err: (t) => (err += t), env: { SKEINWISE_HOME: home }, now: () => DEMO_NOW });
+        return { code, out, err };
+      };
+      // The record's "/" path (pathInside), on Windows too.
+      const shown = 'notes/Garden plan.docx';
+
+      const saved = await sw('review', '--resolve', String(item), 'update', '--yes');
+      expect(saved).toMatchObject({ code: 0, err: '' });
+      expect(saved.out).toContain(`Saved note #${note.id} as version 2. The text before stays in its history`);
+      expect(saved.out).toContain(`${shown} is a Word document, which Skeinwise doesn't write, so it doesn't have this update.\n`);
+      expect(readFileSync(path)).toEqual(bytes);
+
+      const undone = await sw('undo', String(run));
+      expect(undone).toMatchObject({ code: 0, err: '' });
+      expect(undone.out).toContain(`Put back the text of #${note.id}.`);
+      expect(undone.out).toContain(`${shown} is a Word document, which Skeinwise doesn't write, so it was left as it is.\n`);
+      expect(readFileSync(path)).toEqual(bytes);
+
+      // Anything that calls rewriteNoteFile on one later fails loudly instead.
+      expect(() => rewriteNoteFile(path, 'Peas by the shed.')).toThrow(`${path} is a Word document, which Skeinwise doesn't write. Nothing was saved.`);
+      expect(readFileSync(path)).toEqual(bytes);
+
+      const after = openHome(home, () => DEMO_NOW);
+      try {
+        expect(after.history(note.id).map((v) => v.body)).toEqual([original, `${original}\n\nPeas by the shed.`, original]);
+      } finally {
+        after.db.close();
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("is never written by an edit in the app: PUT /api/entries/:id saves a version only, and names the file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-word-put-'));
+    const home = join(dir, 'home');
+    try {
+      const store = openHome(home, () => DEMO_NOW);
+      const path = join(notesDir(home), 'Report.docx');
+      writeFileSync(path, docx('Quarterly report.'));
+      const bytes = readFileSync(path);
+      readNotes(store, home);
+      const note = store.allEntries().find((e) => e.kind === 'note')!;
+      store.db.close();
+      // No-AI, and a pretend home directory for the app's live capture.
+      saveConfig(home, { ...loadConfig(home), engine: 'none' });
+      mkdirSync(join(dir, 'scan'));
+      const app = await startServer({ home, port: 0, webDir: null, scanRoot: join(dir, 'scan') });
+      try {
+        const res = await fetch(`http://127.0.0.1:${app.port}/api/entries/${note.id}`, {
+          method: 'PUT',
+          headers: { 'X-Skeinwise-Token': app.token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body: 'Edited in the app' }),
+        });
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ wroteFile: false, word: 'notes/Report.docx', version: { version: 2, editor: 'you' } });
+      } finally {
+        await app.close();
+      }
+      expect(readFileSync(path)).toEqual(bytes);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

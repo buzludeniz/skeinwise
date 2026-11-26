@@ -4,6 +4,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { posix } from 'node:path';
 import { withoutNoteExt } from '../importers/note-ext.ts';
+import { editorName } from '../notes.ts';
 import type { Entry, SearchHit, Store, Version } from '../store/store.ts';
 import { parseQuestion } from '../organiser/ask.ts';
 import { findSchema, hubEntryIds, liveHubs, liveLinks, liveTags } from '../organiser/views.ts';
@@ -352,7 +353,7 @@ export function entryDetail(store: Store, id: number): EntryDetail | undefined {
   return {
     entry,
     history,
-    editedByAgent: agent ? agent.editor : null,
+    editedByAgent: agent ? editorName(agent.editor) : null,
     thread,
     before: before ? brief(before) : null,
     after: after ? brief(after) : null,

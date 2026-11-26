@@ -111,10 +111,36 @@ export function shellWord(word: string): string {
   return /^[A-Za-z0-9._@%+=:,/-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
 }
 
-/** The variables the server needs: the token, and the record folder when it isn't the default. */
-function serverEnv(env: NodeJS.ProcessEnv, token: string): Record<string, string> {
+/**
+ * One word for PowerShell, Windows' own shell, quoted only when it has to be. Double quotes when nothing inside is
+ * special to PowerShell or to cmd.exe, so a path with spaces reads the same in both; otherwise PowerShell's single
+ * quotes, which take everything as it is, with each quote mark doubled (PowerShell counts the curly ones as quotes
+ * too). `--` is quoted as well: bare, PowerShell takes it as the end of its own parameters and drops it before a
+ * script such as npm's claude.ps1 sees it. A quoted first word would need `&` before it in PowerShell; the commands
+ * printed with this start with `claude` or `skeinwise`, which are never quoted.
+ */
+export function windowsWord(word: string): string {
+  if (word === '--') return '"--"';
+  if (/^[A-Za-z0-9._+=:\\/-]+$/.test(word)) return word;
+  if (!/["$`%\u201c\u201d\u201e]/.test(word)) return `"${word}"`;
+  return `'${word.replace(/['\u2018\u2019\u201a\u201b]/g, '$&$&')}'`;
+}
+
+/** One word of a command printed for the person to paste: PowerShell's form on Windows, a POSIX shell's elsewhere. */
+export function commandWord(word: string, platform: NodeJS.Platform): string {
+  return platform === 'win32' ? windowsWord(word) : shellWord(word);
+}
+
+/**
+ * The variables the server needs: the token, and the record folder when it isn't the default. On Windows, SystemRoot
+ * too: an agent may start the server with only the variables its config names, and Windows child processes and
+ * networking fail without it.
+ */
+function serverEnv(env: NodeJS.ProcessEnv, token: string, platform: NodeJS.Platform): Record<string, string> {
   const out: Record<string, string> = { [TOKEN_ENV]: token };
   if (env.SKEINWISE_HOME) out.SKEINWISE_HOME = resolve(env.SKEINWISE_HOME);
+  const root = env.SystemRoot ?? env.SYSTEMROOT;
+  if (platform === 'win32' && root) out.SystemRoot = root;
   return out;
 }
 
@@ -207,14 +233,27 @@ function stamp(now: string): string {
   return now.replace(/\.\d+Z$/, 'Z').replace(/[-:]/g, '');
 }
 
-/** Copies the file as it is now beside itself (owner-only: it may hold other tokens) and returns the copy's path. */
+/**
+ * Copies the file as it is now beside itself (owner-only: it may hold other tokens) and returns the copy's path. The copy
+ * is always a new file: an earlier backup from the same second gets a -2, -3… after it, and a link left at the path is
+ * never written through.
+ */
 function backup(file: string, now: string): string | null {
   if (!existsSync(file)) return null;
-  const copy = `${file}.skeinwise-backup-${stamp(now)}`;
-  // Written owner-only from the start, never copied at the original's mode first.
-  writeFileSync(copy, readFileSync(file), { mode: 0o600 });
-  chmodSync(copy, 0o600);
-  return copy;
+  const text = readFileSync(file);
+  for (let n = 1; ; n++) {
+    const copy = `${file}.skeinwise-backup-${stamp(now)}${n > 1 ? `-${n}` : ''}`;
+    try {
+      // Written owner-only from the start, never copied at the original's mode first. 'wx' refuses any existing path,
+      // a link included, even one to nowhere.
+      writeFileSync(copy, text, { mode: 0o600, flag: 'wx' });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
+      throw err;
+    }
+    chmodSync(copy, 0o600);
+    return copy;
+  }
 }
 
 function writeOwnerOnly(file: string, text: string): void {
@@ -279,11 +318,11 @@ export async function connect(ctx: SetupCtx, deps: ConnectDeps = defaultDeps()):
 
   mkdirSync(ctx.home, { recursive: true, mode: 0o700 });
   const allowed = allowAgent(ctx.home, client.key, now, ctx.values.write ? 'write' : 'read');
-  const env = serverEnv(io.env, allowed.token);
+  const env = serverEnv(io.env, allowed.token, deps.platform ?? process.platform);
   const file = client.configFile(io.env, deps.platform ?? process.platform);
   const setup =
     client.key === 'claude-code'
-      ? `claude ${claudeAddArgs(launch, env).map(shellWord).join(' ')}`
+      ? `claude ${claudeAddArgs(launch, env).map((w) => commandWord(w, deps.platform ?? process.platform)).join(' ')}`
       : client.key === 'codex'
         ? codexBlock(launch, env)
         : `${JSON.stringify({ mcpServers: { [SERVER_NAME]: jsonEntry(launch, env) } }, null, 2)}\n`;

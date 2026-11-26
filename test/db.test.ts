@@ -214,6 +214,43 @@ describe('openDb', () => {
     ]);
   });
 
+  // Migration 7 (MCP-5): note runs, on a record with the assistant's tables (6) pointing at runs too.
+  it('upgrades a record to note runs, keeping every run, its versions and what points at it', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec('PRAGMA foreign_keys = ON');
+    const before = MIGRATIONS.length - 1;
+    for (const m of MIGRATIONS.slice(0, before)) db.exec(m);
+    db.exec(`PRAGMA user_version = ${before}`);
+    db.exec(`
+      INSERT INTO runs (id, task, engine, model, scope, schema_id, status, counts, started_at) VALUES
+        (7, 'tag', 'none', NULL, 'all', 1, 'done', '{"tags":1}', 'x'),
+        (8, 'tag', 'agent', 'claude-code', 'agent', 1, 'done', '{}', 'x');
+      INSERT INTO tags (schema_id, name, run_id) VALUES (1, 'bread', 7);
+      INSERT INTO pa_tasks (title, run_id, created_at, updated_at) VALUES ('bake', 7, 'x', 'x');
+      INSERT INTO sources (id, kind, label, location, added_at) VALUES (1, 'notes', 'Notes', '/n', 'x');
+      INSERT INTO entries (id, source_id, external_id, kind, speaker, created_at) VALUES (1, 1, 'a.md', 'note', 'you', 'x');
+      INSERT INTO versions (entry_id, version, body, content_hash, editor, edited_at, observed_at, run_id)
+        VALUES (1, 1, 'rye', 'h1', 'claude-code', 'x', 'x', 8);
+    `);
+    expect(() => db.prepare("INSERT INTO runs (task, engine, scope, status, started_at) VALUES ('note', 'agent', 'agent', 'done', 'x')").run()).toThrow(/CHECK/);
+    migrate(db);
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    expect(db.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
+    expect(db.prepare('SELECT id, task, engine, model, counts FROM runs ORDER BY id').all()).toEqual([
+      { id: 7, task: 'tag', engine: 'none', model: null, counts: '{"tags":1}' },
+      { id: 8, task: 'tag', engine: 'agent', model: 'claude-code', counts: '{}' },
+    ]);
+    expect(db.prepare('SELECT run_id FROM versions').all()).toEqual([{ run_id: 8 }]);
+    expect(db.prepare('SELECT run_id FROM pa_tasks').all()).toEqual([{ run_id: 7 }]);
+    const note = Number(db.prepare("INSERT INTO runs (task, engine, model, scope, status, started_at) VALUES ('note', 'agent', 'claude-code', 'agent', 'done', 'x')").run().lastInsertRowid);
+    expect(db.prepare('SELECT id FROM live_runs ORDER BY id').all()).toEqual([{ id: 7 }, { id: 8 }]);
+    expect(note).toBe(9);
+    expect(() => db.prepare("INSERT INTO runs (task, engine, scope, status, started_at) VALUES ('nap', 'agent', 'agent', 'done', 'x')").run()).toThrow(/CHECK/);
+    expect(() => db.prepare("INSERT INTO tags (schema_id, name, run_id) VALUES (1, 'rye', 99)").run()).toThrow(/FOREIGN KEY/);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'runs' AND sql IS NOT NULL").all()).toEqual([{ name: 'runs_task' }]);
+  });
+
   it('refuses a migration that would leave a broken reference, and changes nothing', () => {
     const db = new DatabaseSync(':memory:');
     db.exec(MIGRATIONS[0]!);
@@ -277,6 +314,104 @@ describe('busy records (M8)', () => {
     expect(begins).toBe(2);
     expect(() => inTransaction(db, () => { throw new Error('boom'); })).toThrow('boom');
     expect(db.isTransaction).toBe(false);
+  });
+});
+
+describe('inTransaction inside inTransaction', () => {
+  const insert = (db: DatabaseSync, label: string) =>
+    db.prepare("INSERT INTO sources (kind, label, location, added_at) VALUES ('notes', ?, ?, 'x')").run(label, `/${label}`);
+  const labels = (db: DatabaseSync) => (db.prepare('SELECT label FROM sources ORDER BY id').all() as { label: string }[]).map((r) => r.label);
+
+  it('joins the transaction it opened, so the outer commit saves both writes', () => {
+    const db = openDb(':memory:');
+    inTransaction(db, () => {
+      insert(db, 'outer');
+      inTransaction(db, () => insert(db, 'inner'));
+      expect(db.isTransaction).toBe(true);
+    });
+    expect(labels(db)).toEqual(['outer', 'inner']);
+    expect(db.isTransaction).toBe(false);
+  });
+
+  it('rolls everything back when an inner call throws, even if the outer one catches it', () => {
+    const db = openDb(':memory:');
+    expect(() =>
+      inTransaction(db, () => {
+        insert(db, 'outer');
+        try {
+          inTransaction(db, () => {
+            insert(db, 'inner');
+            throw new Error('inner failed');
+          });
+        } catch {
+          // The outer call carries on as if nothing happened.
+        }
+        insert(db, 'after');
+      }),
+    ).toThrow('inner failed');
+    expect(labels(db)).toEqual([]);
+    expect(db.isTransaction).toBe(false);
+    // The connection is usable again, with nothing left over from the failed transaction.
+    inTransaction(db, () => insert(db, 'next'));
+    expect(labels(db)).toEqual(['next']);
+  });
+
+  it('rolls the inner writes back with the outer ones when the outer call fails after them', () => {
+    const db = openDb(':memory:');
+    expect(() =>
+      inTransaction(db, () => {
+        inTransaction(db, () => insert(db, 'inner'));
+        throw new Error('later');
+      }),
+    ).toThrow('later');
+    expect(labels(db)).toEqual([]);
+  });
+
+  it('keeps the outer writes out when SQLite itself rolled back under a failed inner call', () => {
+    const db = openDb(':memory:');
+    expect(() =>
+      inTransaction(db, () => {
+        insert(db, 'outer');
+        try {
+          inTransaction(db, () => {
+            insert(db, 'inner');
+            // What SQLite does on its own on a full disk or an I/O error.
+            db.exec('ROLLBACK');
+            throw new Error('disk full');
+          });
+        } catch {
+          // The outer call carries on.
+        }
+        insert(db, 'after');
+        inTransaction(db, () => insert(db, 'nested'));
+      }),
+    ).toThrow('disk full');
+    expect(labels(db)).toEqual([]);
+    expect(db.isTransaction).toBe(false);
+    inTransaction(db, () => insert(db, 'next'));
+    expect(labels(db)).toEqual(['next']);
+  });
+
+  it('refuses a nested call once SQLite rolled back under a statement the outer call caught', () => {
+    const db = openDb(':memory:');
+    expect(() =>
+      inTransaction(db, () => {
+        insert(db, 'outer');
+        db.exec('ROLLBACK');
+        inTransaction(db, () => insert(db, 'nested'));
+      }),
+    ).toThrow("The record's write transaction was rolled back by an earlier error, so nothing more is written.");
+    expect(labels(db)).toEqual([]);
+    inTransaction(db, () => insert(db, 'next'));
+    expect(labels(db)).toEqual(['next']);
+  });
+
+  it('refuses to join a transaction opened with a raw BEGIN', () => {
+    const db = openDb(':memory:');
+    db.exec('BEGIN');
+    expect(() => inTransaction(db, () => insert(db, 'joined'))).toThrow(/within a transaction/);
+    db.exec('ROLLBACK');
+    expect(labels(db)).toEqual([]);
   });
 });
 

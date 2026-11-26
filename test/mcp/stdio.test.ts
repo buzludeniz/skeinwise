@@ -72,7 +72,7 @@ it('serves a whole session over stdio: initialize, list tools, search, write a n
   const store = openHome(home);
   try {
     expect(store.getEntry(note.entry_id)).toMatchObject({ speaker: 'stdio-test', title: 'From the session' });
-    expect(store.history(note.entry_id).map((v) => v.editor)).toEqual(['stdio-test']);
+    expect(store.history(note.entry_id).map((v) => v.editor)).toEqual(['agent:stdio-test']);
   } finally {
     store.db.close();
   }

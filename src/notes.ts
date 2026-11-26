@@ -1,17 +1,33 @@
 // Your notes in the record folder: Markdown files under <home>/notes, one daily note per day in notes/daily. Writing
 // one reads the notes folder back into the record as your own words, so a change made here or in any editor becomes a
 // version of the same entry. An agent writing through the memory server reads your edits in first, so they stay
-// yours, and then saves only its own file as a version under its name.
+// yours, and then saves only its own file as a version under its name (`agent:<name>`). Each such save is a run of its
+// own (task 'note'), so `skeinwise undo <run>` takes it back, file and all.
 //
 // A note file is written only inside the notes folder and never through a link (L8): its folder must resolve inside
 // notes/, and the file itself is opened with O_NOFOLLOW, so a link planted at a note's name, or a linked notes/daily,
 // can't send a write to a file elsewhere.
 
-import { closeSync, constants, existsSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import {
+  closeSync,
+  constants,
+  existsSync,
+  ftruncateSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { UsageError } from './errors.ts';
 import { pathInside, readImports } from './importers/detect.ts';
 import { parseFrontMatter } from './importers/notes.ts';
+import { currentMark, finishRun, startRun } from './organiser/runs.ts';
+import { inTransaction } from './store/db.ts';
 import type { Entry, Store } from './store/store.ts';
 
 export interface NoteWrite {
@@ -19,6 +35,18 @@ export interface NoteWrite {
   entryId: number;
   /** True when the file was new. */
   created: boolean;
+  /** An agent's save: the run it is, which `skeinwise undo <run>` takes back. */
+  runId?: number;
+}
+
+/** The editor an agent's versions carry. Saves made before runs named the agent alone. */
+export function agentEditor(agent: string): string {
+  return `agent:${agent}`;
+}
+
+/** The agent's own name in an editor agentEditor made; any other editor as it is. */
+export function editorName(editor: string): string {
+  return editor.startsWith('agent:') ? editor.slice('agent:'.length) : editor;
 }
 
 export function notesDir(home: string): string {
@@ -102,14 +130,17 @@ export function appendDailyNote(store: Store, home: string, text: string, now: D
   if (agent) readNotes(store, home);
   const created = !present(path);
   mkdirSync(dirname(path), { recursive: true });
+  let before: Buffer | null = null;
   if (created) {
     createNoteFile(dir, path, `# ${day}\n\n${item}`);
   } else {
     const full = notePath(dir, path);
-    const old = readNoteFile(full);
+    before = fileBytes(full);
+    const old = before.toString('utf8');
     withFile(full, O_WRONLY | O_APPEND, (fd) => writeFileSync(fd, old && !old.endsWith('\n') ? `\n${item}` : item));
   }
-  return { path, created, entryId: agent ? readBackAs(store, dir, path, agent, false) : readBack(store, dir, path) };
+  if (!agent) return { path, created, entryId: readBack(store, dir, path) };
+  return { path, created, ...saveOrPutBack(store, dir, path, agent, { speaker: false, created, now }, before) };
 }
 
 /** A file name from a title: lower case letters and digits joined by dashes. */
@@ -159,7 +190,7 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
     createNoteFile(dir, path, `---\ncreated: ${now.toISOString()}\nagent: ${agent}\n---\n\n${content}`);
     // Live capture may read the new file first and file it as yours; the version and the front matter still name the
     // agent, and the importer reading `agent:` would close that gap.
-    return { path, created: true, entryId: readBackAs(store, dir, path, agent, true) };
+    return { path, created: true, ...saveOrPutBack(store, dir, path, agent, { speaker: true, created: true, now }, null) };
   }
   const owner = parseFrontMatter(readNoteFile(notePath(dir, path))).meta.agent;
   const file = pathInside(dir, path);
@@ -169,11 +200,14 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
   const same = (name: string) => name.toLowerCase() === agent.toLowerCase(); // agent names match as allowAgent matches them
   if (!same(owner)) throw new UsageError(`${file} was written by ${owner}, and only ${owner} can change it. Pick another title.`);
   const last = store.history(entryOf(store, dir, path)).at(-1);
-  if (last && !same(last.editor)) {
+  // An agent name has no colon (access.ts), so `agent:<name>` and an older save's plain name can't be confused.
+  const byAgent = (editor: string) => same(editorName(editor));
+  if (last && !byAgent(last.editor)) {
     throw new UsageError(`${file} was changed by ${last.editor} after ${agent} wrote it, so it stays as it is. Pick another title.`);
   }
+  const before = fileBytes(notePath(dir, path));
   rewriteNoteFile(path, content);
-  return { path, created: false, entryId: readBackAs(store, dir, path, agent, false) };
+  return { path, created: false, ...saveOrPutBack(store, dir, path, agent, { speaker: false, created: false, now }, before) };
 }
 
 /**
@@ -192,15 +226,120 @@ function readBack(store: Store, dir: string, path: string): number {
   return entryOf(store, dir, path);
 }
 
-/** Reads one file of the notes folder into the record as an agent's save; with `speaker`, a new entry is the agent's. */
-function readBackAs(store: Store, dir: string, path: string, agent: string, speaker: boolean): number {
+/**
+ * Reads one file of the notes folder into the record as an agent's save, which is a run of its own: task 'note', engine
+ * 'agent', the agent's name as the model. Its version names the agent (`agent:<name>`) and carries the run's id. The
+ * run records the file, whether the save made it, and the file's SHA-256, so undo removes only that file and only while
+ * it holds what the run wrote. The run starts and finishes in the save's transaction, so it is never left running, and
+ * it starts alongside an organiser run that is running. With `speaker`, a new entry is the agent's.
+ */
+function saveAsAgent(
+  store: Store,
+  dir: string,
+  path: string,
+  agent: string,
+  { speaker, created, now, sha256 }: { speaker: boolean; created: boolean; now: Date; sha256: string },
+): { entryId: number; runId: number } {
   const file = pathInside(dir, path);
-  for (const batch of readImports(dir)) {
-    if (batch.source.kind !== 'notes') continue;
-    const entries = (batch.entries ?? []).filter((e) => e.externalId === file).map((e) => (speaker ? { ...e, speaker: agent } : e));
-    store.ingest({ ...batch, threads: [], entries }, agent);
+  const batches = readImports(dir).filter((b) => b.source.kind === 'notes');
+  const db = store.db;
+  const at = now.toISOString();
+  return inTransaction(db, () => {
+    const runId = startRun(db, {
+      task: 'note',
+      engine: 'agent',
+      model: agent,
+      scope: 'agent',
+      mark: currentMark(db),
+      detail: { file, created, sha256 },
+      now: at,
+      alongside: true,
+    });
+    for (const batch of batches) {
+      const entries = (batch.entries ?? []).filter((e) => e.externalId === file).map((e) => (speaker ? { ...e, speaker: agent } : e));
+      store.ingest({ ...batch, threads: [], entries }, { editor: agentEditor(agent), runId });
+    }
+    const entryId = entryOf(store, dir, path);
+    const saved = Number((db.prepare('SELECT COUNT(*) AS n FROM versions WHERE run_id = ?').get(runId) as { n: number }).n);
+    finishRun(db, runId, {
+      counts: { versions: saved },
+      message: saved ? `${agent} ${created ? 'started' : 'changed'} note #${entryId}.` : `${agent} saved note #${entryId} unchanged.`,
+      tokensIn: 0,
+      tokensOut: 0,
+      now: at,
+    });
+    return { entryId, runId };
+  });
+}
+
+/**
+ * Saves the file an agent just wrote as its run (saveAsAgent). When the save fails (the record busy past its wait,
+ * say), the file goes back to what it held before, `before`, or away if the agent made it: left as the agent wrote it,
+ * the next read would file the agent's text as yours. A file changed again in the meantime is someone else's text and
+ * stays.
+ */
+function saveOrPutBack(
+  store: Store,
+  dir: string,
+  path: string,
+  agent: string,
+  save: { speaker: boolean; created: boolean; now: Date },
+  before: Buffer | null,
+): { entryId: number; runId: number } {
+  const sha256 = fileSha256(path);
+  try {
+    return saveAsAgent(store, dir, path, agent, { ...save, sha256 });
+  } catch (error) {
+    const file = pathInside(dir, path);
+    try {
+      if (present(path) && fileSha256(path) === sha256) {
+        if (before === null) unlinkSync(notePath(dir, path));
+        else withFile(notePath(dir, path), O_WRONLY, (fd) => (ftruncateSync(fd, 0), writeFileSync(fd, before)));
+      }
+    } catch (cause) {
+      throw new Error(`${file} wasn't saved (${(error as Error).message}), and it couldn't be put back as it was: ${(cause as Error).message}`);
+    }
+    throw error;
   }
-  return entryOf(store, dir, path);
+}
+
+/** A note file's bytes, read without following a link. */
+function fileBytes(path: string): Buffer {
+  return withFile(resolve(path), O_RDONLY, (fd) => readFileSync(fd));
+}
+
+/** The SHA-256 of a note file's bytes, read without following a link. */
+function fileSha256(path: string): string {
+  return createHash('sha256').update(fileBytes(path)).digest('hex');
+}
+
+/**
+ * The file an agent's run started, checked before undo removes it: the path the run recorded, in the notes folder with
+ * no link on the way or at the file, and still holding exactly what the run wrote. Null when the file is gone. Anything
+ * else is refused in plain words, before anything is removed.
+ */
+export function startedNoteFile(home: string, file: string, sha256: string, runId: number): string | null {
+  const dir = notesDir(home);
+  const full = resolve(dir, file);
+  const rel = relative(dir, full);
+  if (!rel || outside(rel)) throw new UsageError(`Run ${runId} recorded ${file}, which isn't in the notes folder. Nothing was removed.`);
+  const stat = lstatSync(full, { throwIfNoEntry: false });
+  if (!stat) return null;
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new UsageError(`${rel} is now a link or not a file, so it isn't what run ${runId} wrote. Nothing was removed.`);
+  }
+  if (outside(relative(realpathSync(dir), realpathSync(dirname(full))))) {
+    throw new UsageError(`${rel} leads out of the notes folder through a link. Nothing was removed.`);
+  }
+  if (fileSha256(full) !== sha256) {
+    throw new UsageError(`${rel} changed after run ${runId} wrote it, so it stays. Nothing was removed.`);
+  }
+  return full;
+}
+
+/** Removes a file startedNoteFile checked. unlink removes a link itself, never what it points at. */
+export function removeNoteFile(full: string): void {
+  unlinkSync(full);
 }
 
 function entryOf(store: Store, dir: string, path: string): number {
@@ -230,10 +369,21 @@ export function homeNoteFile(store: Store, home: string, entry: Entry): string |
 }
 
 /**
+ * The path in the record folder of a note file that is a Word document, or null for any other file. Skeinwise only
+ * reads a Word document, so whatever changes the note's text in the record leaves the file as it is and tells the
+ * person: rewriteNoteFile would write Markdown over it and ruin it.
+ */
+export function wordNoteFile(home: string, file: string): string | null {
+  return extname(file).toLowerCase() === '.docx' ? pathInside(home, file) : null;
+}
+
+/**
  * Replaces a note file's text below its front matter, which stays as it was. The path comes from homeNoteFile or
- * notePath, which keep it in the notes folder; a link at the file itself is refused here.
+ * notePath, which keep it in the notes folder; a link at the file itself is refused here, and so is a Word document
+ * (wordNoteFile), which this would ruin.
  */
 export function rewriteNoteFile(path: string, body: string): void {
+  if (extname(path).toLowerCase() === '.docx') throw new Error(`${path} is a Word document, which Skeinwise doesn't write. Nothing was saved.`);
   if (!present(path)) throw new Error(`The note file ${path} is gone, so it can't be updated. Nothing was saved.`);
   const front = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(readNoteFile(path))?.[0];
   // Truncated after the open, not with O_TRUNC: Windows refuses O_TRUNC without O_CREAT (EINVAL).
