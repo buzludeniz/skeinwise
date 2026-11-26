@@ -20,6 +20,7 @@ import {
 import { hash01, layoutFor, ringGuides, type Layout, type LayoutPoint } from '../layout.ts';
 import { bodyLayout, type BodyLayout } from './body.ts';
 import { bodyOutline, cordRings, nerveLines } from './bodyGeometry.ts';
+import { type Framing, framingBox } from './framing.ts';
 import { hexToRgb } from '../themes.ts';
 import type { SceneInput } from './input.ts';
 import { nearestPoint } from './pick.ts';
@@ -234,6 +235,8 @@ export class BrainScene {
   /** The body behind the brain layout, for its guides, and the now its cord's top month was set from. */
   private body: BodyLayout | null = null;
   private now = Date.now();
+  /** What the brain layout's camera fits in the full view: the whole body, the head or the cord. */
+  private framing: Framing = 'body';
   private layout: Layout = 'brain';
   /** Where every point is drawn now, once the current move ends. */
   private current = new Float32Array(0);
@@ -526,6 +529,13 @@ export class BrainScene {
     this.buildLines();
     this.selectDirty = true;
     this.dirty = true;
+  }
+
+  /** Fits the brain layout's camera to the whole body, the head or the cord. Only the full view frames; the strip doesn't. */
+  setFraming(framing: Framing): void {
+    if (framing === this.framing) return;
+    this.framing = framing;
+    if (this.layout === 'brain' && this.mode === 'full') this.fit(true);
   }
 
   setLayout(layout: Layout): void {
@@ -1074,6 +1084,12 @@ export class BrainScene {
   private fitOrbit(layout: Layout): Orbit {
     const pos = this.input ? this.layoutOf(layout) : new Float32Array(0);
     const sets = layout === 'brain' ? [pos, this.shell!.geometry.getAttribute('position').array as Float32Array] : [pos];
+    if (layout === 'brain' && this.mode === 'full' && this.framing !== 'body' && this.input) {
+      // The head or the cord: fit its box alone, whatever else the record holds.
+      this.body ??= bodyLayout(this.input.points, this.input.sources, this.now);
+      const { min, max } = framingBox(this.framing, this.body.cord);
+      sets.splice(0, sets.length, new Float32Array([...min, ...max]));
+    }
     let minY = Infinity;
     let maxY = -Infinity;
     let minX = Infinity;

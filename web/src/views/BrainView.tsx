@@ -7,6 +7,7 @@ import { clearLight, go, light, message, openEntry, openPanel, saveConfig, setGr
 import { api, qs } from '../api.ts';
 import { PartCard } from '../brain/PartCard.tsx';
 import { indexOfPoint, KIND_NAMES, type Part, partAt } from '../brain/parts.ts';
+import type { Framing } from '../brain/framing.ts';
 import { useBrainModel, useBrainScene } from '../brain/useBrain.ts';
 import '../brain/brain.css';
 import { fmtDate, fmtNum, plural, speakerName } from '../format.ts';
@@ -22,6 +23,12 @@ const LAYOUTS: [Layout, string][] = [
   ['clusters', 'Clusters'],
 ];
 
+const FRAMINGS: [Framing, string][] = [
+  ['body', 'Body'],
+  ['head', 'Head'],
+  ['cord', 'Cord'],
+];
+
 /** What the screen reader hears when a point is selected. */
 function selectedText(part: Part): string {
   return part.kind === 'entry'
@@ -32,6 +39,8 @@ function selectedText(part: Part): string {
 export function BrainView() {
   const host = useRef<HTMLDivElement>(null);
   const { scene, model, ok, loadFailed, hover } = useBrainScene(host, 'full');
+  const [framing, setFraming] = useState<Framing>('body');
+  useEffect(() => scene?.setFraming(framing), [scene, framing]);
   const brain = useApp((s) => s.brain);
   const layout = useApp((s) => s.layout);
   const lit = useApp((s) => s.lit);
@@ -169,6 +178,7 @@ export function BrainView() {
 
       <div class="brain-layouts">
         <Segmented label="Layout" options={LAYOUTS} value={layout} onChange={setLayout} />
+        {layout === 'brain' && <Segmented label="Framing" options={FRAMINGS} value={framing} onChange={setFraming} />}
         {layout !== 'brain' && (
           <Button
             icon={Info}
