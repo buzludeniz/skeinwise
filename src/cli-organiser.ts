@@ -10,6 +10,7 @@ import { modelCommand } from './model-commands.ts';
 import { appendDailyNote, newNote, readNotes } from './notes.ts';
 import { type AskKind, ask } from './organiser/ask.ts';
 import { defineTag, deleteHub, mergeFolders, REVIEW_ACTIONS, type ReviewAction, removeTag, renameHub, resolveReview } from './organiser/corrections.ts';
+import { collectGarbage } from './organiser/gc.ts';
 import { createModel } from './organiser/model.ts';
 import { type Preview, previewRun, type RunOptions, runTask, steps } from './organiser/organise.ts';
 import type { ModelClient } from './organiser/plan.ts';
@@ -153,6 +154,8 @@ const run: Command = async (ctx) => {
   const done: Run[] = [];
   try {
     for (const step of list) {
+      // Between steps over the whole record: src/organiser/gc.ts says why.
+      if (done.length) collectGarbage();
       const finished = await runTask(ctx.store, record, withStep(step));
       done.push(finished);
       if (!ctx.values.json) say(ctx, runLine(finished, names));

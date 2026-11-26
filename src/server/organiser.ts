@@ -7,6 +7,7 @@ import { ENGINES, type EngineName, loadConfig } from '../config.ts';
 import { UsageError } from '../errors.ts';
 import { readNotes } from '../notes.ts';
 import { ask, type AskResult } from '../organiser/ask.ts';
+import { collectGarbage } from '../organiser/gc.ts';
 import { createModel, type ModelDeps } from '../organiser/model.ts';
 import { previewRun, runTask, steps } from '../organiser/organise.ts';
 import type { ModelClient } from '../organiser/plan.ts';
@@ -239,6 +240,8 @@ export function startOrganise(store: Store, home: string, body: OrganiseRequest,
       readNotes(store, home);
       const record = new RecordView(store);
       for (const step of steps(store, task)) {
+        // Between steps over the whole record: src/organiser/gc.ts says why.
+        if (job.runs.length) collectGarbage();
         const run = await runTask(store, record, {
           task: step.task,
           ...(step.schema ? { schema: step.schema } : {}),
