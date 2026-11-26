@@ -52,9 +52,13 @@ export const PA_FLAGS = {
   since: { type: 'string' },
 } as const;
 
-const line = (command: string, text: string) => `  ${command.padEnd(26)}${text}\n`;
-const flag = (name: string, text: string) => `      ${name.padEnd(22)}${text}\n`;
-const more = (text: string) => `${' '.repeat(28)}${text}\n`;
+/** Help text starts in this column; a name too long for it puts its text on the next line. */
+const COLUMN = 28;
+const row = (head: string, text: string) =>
+  head.length <= COLUMN - 2 ? `${head.padEnd(COLUMN)}${text}\n` : `${head}\n${' '.repeat(COLUMN)}${text}\n`;
+const line = (command: string, text: string) => row(`  ${command}`, text);
+const flag = (name: string, text: string) => row(`      ${name}`, text);
+const more = (text: string) => `${' '.repeat(COLUMN)}${text}\n`;
 
 export const PA_HELP =
   'The assistant (works with no model; --engine as for run):\n' +

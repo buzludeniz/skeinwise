@@ -49,6 +49,9 @@ describe('the wiring', () => {
     expect(Object.keys(PA_COMMANDS).sort()).toEqual(['brief', 'loops', 'remind', 'reminders', 'task', 'tasks']);
     expect(Object.keys(PA_FLAGS).sort()).toEqual(['all', 'days', 'due', 'last', 'remind', 'since']);
     for (const c of Object.keys(PA_COMMANDS)) expect(PA_HELP).toMatch(new RegExp(`^  ${c}\\b`, 'm'));
+    // A long name never runs into its text ("<task>Finish"): the text goes on the next line, in the same column.
+    expect(PA_HELP).not.toMatch(/[a-z>\].][A-Z][a-z]/);
+    expect(PA_HELP).toMatch(/^ {2}task done\|drop\|reopen <task>\n {28}Finish/m);
   });
 });
 
