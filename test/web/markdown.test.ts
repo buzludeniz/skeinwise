@@ -28,17 +28,22 @@ describe('the Markdown renderer', () => {
     expect(wikiLinks('a [[One]] b [[Two|2]]')).toEqual(['One', 'Two']);
   });
 
+  it("marks the matches of 1.0's search, which brackets them", () => {
+    expect(snippetHtml('…the [rye] <loaf>…')).toBe('…the <mark>rye</mark> &lt;loaf&gt;…');
+    expect(snippetHtml('[rye] and [spelt]')).toBe('<mark>rye</mark> and <mark>spelt</mark>');
+  });
+
   it('marks search matches in snippets', () => {
     expect(snippetHtml('…the \u0002rye\u0003 <loaf>…')).toBe('…the <mark>rye</mark> &lt;loaf&gt;…');
     expect(snippetHtml('\u0002rye\u0003 and \u0002spelt\u0003')).toBe('<mark>rye</mark> and <mark>spelt</mark>');
   });
 
-  it('shows brackets in a snippet as the note has them, never as a match', () => {
+  it('shows brackets as the note has them in a snippet marked with control characters', () => {
     // A [[link]] once came out as a highlighted "[link" and a stray "]".
     expect(snippetHtml('…moved to [[Postgres]] for the \u0002waiting\u0003 list…')).toBe(
       '…moved to [[Postgres]] for the <mark>waiting</mark> list…',
     );
-    expect(snippetHtml('[a] [b]')).toBe('[a] [b]');
+    expect(snippetHtml('[a] \u0002b\u0003')).toBe('[a] <mark>b</mark>');
   });
 
   it('drops a mark left without its pair', () => {
