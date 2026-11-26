@@ -57,16 +57,19 @@ Trust boundaries:
 
 ## The Lock, and what it doesn't do
 
-There are two locks.
+There is one lock, for the app and the agents alike. Lock in the app (the menu, or `lock` in the command bar) and
+`skeinwise mcp lock` set the same lock:
 
-- **`skeinwise mcp lock`** stops every tool of every agent, from its next call, until `skeinwise mcp unlock`. It is
-  kept in the record folder, so it holds across restarts.
-- **The app's Lock** (the menu, or `lock` in the command bar) covers the window, and the app refuses its own requests
-  until you click Unlock. It is a curtain, not a password:
-  - Unlock takes one click, with no password.
-  - It lasts only while that `skeinwise serve` runs. Starting the app again starts it unlocked.
-  - It doesn't stop agents. Use `skeinwise mcp lock` for that.
-  - It doesn't encrypt anything, and the command line reads the record as usual.
+- **What it stops:** every tool of every agent, from its next call; and the app, which covers its window and refuses
+  its own requests. A lock set from the terminal closes an open window at once.
+- **How long:** until Unlock in the app or `skeinwise mcp unlock`, either of which lifts it everywhere. It is kept in
+  `agents.json` in the record folder, so it holds across restarts. If that file can't be read, the app stays locked and
+  agent calls fail until you fix or delete it.
+
+It is a curtain, not a password:
+
+- Unlock takes one click, with no password.
+- It doesn't encrypt anything, and the command line reads the record as usual.
 
 ## Agents: tokens and scopes
 
