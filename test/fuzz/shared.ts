@@ -1,5 +1,5 @@
-// The fuzz targets for code the import track uses but doesn't own: src/fsafe.ts's zip reader and src/safe-text.ts.
-// A finding in either goes to the lead with its seed, unfixed.
+// The fuzz targets for code the importers share: src/fsafe.ts's zip reader (ours since Nov 25) and src/safe-text.ts.
+// A finding in safe-text goes to the lead with its seed, unfixed.
 
 import { deflateSync, strToU8, zipSync } from 'fflate';
 import { openZipSafe, UnsafeFileError, ZIP_MAX_RATIO } from '../../src/fsafe.ts';
@@ -14,12 +14,9 @@ const MiB = 1024 ** 2;
 /** Caps small enough that a mutated 1 MiB input can reach every one of them. */
 const ZIP_CAPS = { maxBytes: 4 * MiB, maxTotalBytes: 8 * MiB, ratioFloor: 1 * MiB };
 
-/**
- * The reader's own refusal, or fflate's error for a damaged packed stream: a FlateError carries a numeric code (a
- * system error's code is a string). zip.read passes fflate's through; readDocx turns it into a refusal.
- */
+/** The reader's own refusal, and only that: a damaged packed stream is refused too, so fflate's error never gets out. */
 export function zipRefused(error: unknown): boolean {
-  return error instanceof UnsafeFileError || (error instanceof Error && typeof (error as { code?: unknown }).code === 'number');
+  return error instanceof UnsafeFileError;
 }
 
 function zipSeeds(): Uint8Array[] {

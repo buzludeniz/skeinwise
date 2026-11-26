@@ -1,14 +1,16 @@
 // The fuzz targets for the import parsers: decodeText, the line endings of a note, scanXml, readDocx (through the zip
-// reader) and parseFrontMatter/parseNote. Each takes a mutated input and returns, or refuses it the way it says it will
+// reader), parseFrontMatter/parseNote, and readImports on a whole zip of notes and exports. Each takes a mutated input and returns, or refuses it the way it says it will
 // (UnsafeFileError, XmlError); what it returns must also keep the rules written in its `run`. The seeds are built here
 // at run time, so nothing hostile is committed.
 
-import { strToU8, unzipSync, zipSync } from 'fflate';
+import { deflateSync, strToU8, unzipSync, zipSync } from 'fflate';
 import { UnsafeFileError } from '../../src/fsafe.ts';
+import { readImports } from '../../src/importers/detect.ts';
 import { docxNoteText, readDocx } from '../../src/importers/docx.ts';
 import { parseFrontMatter, parseNote } from '../../src/importers/notes.ts';
 import { decodeText, type TextEncoding } from '../../src/importers/text.ts';
 import { scanXml, XmlError } from '../../src/importers/xml.ts';
+import { buildZip } from '../fsafe-zip.ts';
 import { concat, int, MAX_INPUT, mutateZipField, pick, type Rng, type Target } from './engine.ts';
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -175,6 +177,32 @@ function noteRead(text: string): string {
 
 const notFile = (error: unknown) => error instanceof UnsafeFileError && error.reason === 'not-a-file';
 
+/** A ChatGPT export of one conversation, invented. */
+function chatgptExport(): string {
+  const node = (id: string, parent: string | null, role: string | null, text: string, t: number) => ({
+    id,
+    parent,
+    children: [],
+    message: role ? { id, author: { role }, create_time: t, content: { content_type: 'text', parts: [text] }, metadata: {} } : null,
+  });
+  const mapping = { root: node('root', null, null, '', 0), u1: node('u1', 'root', 'user', 'When do peas go in?', 1735725601), a1: node('a1', 'u1', 'assistant', 'Early spring.', 1735725602) };
+  return JSON.stringify([{ title: 'Allotment plans', create_time: 1735725600, conversation_id: 'c1', current_node: 'a1', mapping }]);
+}
+
+/** What a zip handed to the importer may hold: notes in folders, an export, a session, and names it skips. */
+function importParts(): Record<string, Uint8Array> {
+  const session = [{ type: 'user', sessionId: 's1', timestamp: '2025-03-01T10:00:00Z', message: { role: 'user', content: 'List the seeds' } }];
+  return {
+    'notes/Swap.md': strToU8(NOTE),
+    'notes/garden/Plan.txt': strToU8('Peas, beans, labels.\r\n'),
+    'export/conversations.json': strToU8(chatgptExport()),
+    'sessions/s1.jsonl': strToU8(session.map((l) => JSON.stringify(l)).join('\n')),
+    '__MACOSX/notes/._Swap.md': new Uint8Array([0, 5, 22, 7]),
+  };
+}
+
+const IMPORT_NAMES = ['../up.md', 'notes/../../up.md', '/abs.md', 'C:\\abs.md', 'notes\\back.md', 'notes/Report.docx', 'conversations.json', 'user.json', 'a.JSONL', '.hidden/x.md', ''];
+
 export const IMPORTER_TARGETS: Target[] = [
   {
     name: 'text',
@@ -262,6 +290,48 @@ export const IMPORTER_TARGETS: Target[] = [
       if (keys !== 'title' && keys !== 'created,title') throw new Error(`the document added front matter: ${keys}`);
     },
     refused: (error) => error instanceof UnsafeFileError,
+  },
+  {
+    name: 'import',
+    owner: 'src/importers/detect.ts (tab 9)',
+    fileName: 'input.zip',
+    // The zip reader's own caps (a note's text is read whole, an export up to its cap) and what is parsed from them.
+    memoryMiB: 1024,
+    seeds: () => [zipSync(importParts()), zipSync(importParts(), { level: 0 }), zipSync({ 'notes/Swap.md': strToU8(NOTE) })],
+    tokens: ['PK\x03\x04', 'PK\x01\x02', 'PK\x05\x06', '../', '\\', '{', '}', '[', ']', '"', ':', ',', '\n', '---\n', '"mapping"', '"sessionId"', '\\ud800', '\\u0000', '__proto__'],
+    mutate: (rng, seed, generic) => {
+      const r = rng();
+      if (r < 0.15) return generic(seed);
+      if (r < 0.3) return mutateZipField(rng, seed);
+      const parts: Record<string, Uint8Array> = unzipSync(seed);
+      const names = Object.keys(parts);
+      if (!names.length) return generic(seed);
+      const name = pick(rng, names);
+      if (r < 0.45) {
+        // One entry's packed stream cut short or broken, with its declared size kept: the inflater, not the zip's
+        // structure, finds it.
+        const others = names.filter((n) => n !== name).map((n) => ({ name: n, data: parts[n]!, method: 0 as const, size: parts[n]!.length }));
+        const packed = deflateSync(parts[name]!);
+        const data = rng() < 0.5 ? packed.subarray(0, int(rng, packed.length)) : generic(packed);
+        return buildZip([...others, { name, data, size: parts[name]!.length }]);
+      }
+      if (rng() < 0.2) {
+        parts[pick(rng, IMPORT_NAMES)] = parts[name]!;
+      } else {
+        parts[name] = generic(parts[name]!);
+      }
+      return zipSync(parts, { level: rng() < 0.5 ? 0 : 6 });
+    },
+    run: (_input, file) => {
+      const batches = readImports(file, { onWarning: (m) => void m.length });
+      for (const batch of batches) {
+        for (const e of batch.entries ?? []) if (typeof e.externalId !== 'string' || typeof e.body !== 'string') throw new Error('an entry without an id or a body');
+        for (const t of batch.threads) if (typeof t.externalId !== 'string') throw new Error('a thread without an id');
+      }
+      JSON.stringify(batches);
+    },
+    // A zip refused whole, or one with nothing in it the importer reads.
+    refused: (error) => error instanceof UnsafeFileError || (error instanceof Error && error.message.startsWith('Nothing to import in ')),
   },
   {
     name: 'frontmatter',
