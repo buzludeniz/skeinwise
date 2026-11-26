@@ -104,7 +104,7 @@ describe('restore', () => {
       const edited = `${front}# Garden plan\n\nRaised beds by July.\n`;
       writeFileSync(path, edited);
       expect(() => run([String(id), '2'])).toThrow(
-        `notes/garden-plan.md holds an edit the record hasn't read yet, so it stays as it is. Nothing was restored.`,
+        `${join('notes', 'garden-plan.md')} holds an edit the record hasn't read yet, so it stays as it is. Nothing was restored.`,
       );
       expect(readFileSync(path, 'utf8')).toBe(edited);
       expect(store.history(id)).toHaveLength(3);
@@ -123,7 +123,7 @@ describe('restore', () => {
       unlinkSync(path);
       symlinkSync(outside, path);
       expect(() => run([String(id), '1'])).toThrow(
-        "notes/garden-plan.md is a link, and Skeinwise doesn't write through links in the notes folder. Nothing was restored.",
+        `${join('notes', 'garden-plan.md')} is a link, and Skeinwise doesn't write through links in the notes folder. Nothing was restored.`,
       );
       expect(readFileSync(outside, 'utf8')).toBe('# Garden plan\n\nRaised beds by June.\n');
       expect(store.history(id)).toHaveLength(3);
@@ -146,7 +146,7 @@ describe('restore', () => {
       writeFileSync(docx, 'PK\u0003\u0004 not text');
       expect(run([String(word.id), '1']).out).toBe(
         `Entry ${word.id} reads as version 1 again, saved as version 3. Every version is kept.\n` +
-          "Its file notes/budget.docx is a Word document, which Skeinwise doesn't write, so it still holds the newer text.\n",
+          `Its file ${join('notes', 'budget.docx')} is a Word document, which Skeinwise doesn't write, so it still holds the newer text.\n`,
       );
       expect(readFileSync(docx, 'utf8')).toBe('PK\u0003\u0004 not text');
     });
