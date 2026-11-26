@@ -180,16 +180,20 @@ describe('undoing a review update to a note in the record folder', () => {
       const note = newNote(store, home, 'Garden plan', new Date(DEMO_NOW));
       const before = readFileSync(note.path, 'utf8');
       const run = accept(store, note.path, note.entryId, '# Garden plan\n\nRaised beds by May.');
-      store.editEntry(note.entryId, '# Garden plan\n\nRaised beds by June.', 'you');
+      // Every change to a note of the record folder writes its file too (a record-only change would be undone by the
+      // next read of the file), so the edit is made in the file and read in.
+      rewriteNoteFile(note.path, '# Garden plan\n\nRaised beds by June.');
+      readNotes(store, home);
 
       expect(() => undoRun(store.db, run, home)).toThrow(
         `Note #${note.entryId} changed after run ${run} updated it. Bring back the version you want with "skeinwise restore ${note.entryId} 1", then undo run ${run}.`,
       );
       expect(store.getEntry(note.entryId)!.body).toContain('June');
+      // As `skeinwise restore` does it: the file first, then the record.
+      rewriteNoteFile(note.path, store.history(note.entryId)[0]!.body);
       store.restoreVersion(note.entryId, 1);
       expect(undoRun(store.db, run, home)).toMatchObject({ restored: [], run: { status: 'undone' } });
       expect(store.history(note.entryId).length).toBe(4);
-      // restore changed only the record; the undo puts the file back to match it.
       expect(readFileSync(note.path, 'utf8')).toBe(before);
     } finally {
       rmSync(home, { recursive: true, force: true });

@@ -25,7 +25,7 @@ import {
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { UsageError } from './errors.ts';
 import { pathInside, readImports } from './importers/detect.ts';
-import { parseFrontMatter } from './importers/notes.ts';
+import { parseFrontMatter, splitFrontMatter } from './importers/notes.ts';
 import { currentMark, finishRun, startRun } from './organiser/runs.ts';
 import { inTransaction } from './store/db.ts';
 import type { Entry, Store, Version } from './store/store.ts';
@@ -221,12 +221,12 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
 export function readNotes(store: Store, home: string): void {
   const dir = notesDir(home);
   if (!existsSync(dir)) return;
-  for (const batch of readImports(dir, { emptyOk: true })) if (batch.source.kind === 'notes') store.ingest(batch, 'you');
+  for (const batch of readImports(dir, { emptyOk: true })) if (batch.source.kind === 'notes') store.ingest(batch, { editor: 'you', ownFiles: true });
 }
 
 /** Reads the notes folder into the record, and returns the entry for one file in it. */
 function readBack(store: Store, dir: string, path: string): number {
-  for (const batch of readImports(dir)) if (batch.source.kind === 'notes') store.ingest(batch, 'you');
+  for (const batch of readImports(dir)) if (batch.source.kind === 'notes') store.ingest(batch, { editor: 'you', ownFiles: true });
   return entryOf(store, dir, path);
 }
 
@@ -261,7 +261,7 @@ function saveAsAgent(
     });
     for (const batch of batches) {
       const entries = (batch.entries ?? []).filter((e) => e.externalId === file).map((e) => (speaker ? { ...e, speaker: agent } : e));
-      store.ingest({ ...batch, threads: [], entries }, { editor: agentEditor(agent), runId });
+      store.ingest({ ...batch, threads: [], entries }, { editor: agentEditor(agent), runId, ownFiles: true });
     }
     const entryId = entryOf(store, dir, path);
     const saved = Number((db.prepare('SELECT COUNT(*) AS n FROM versions WHERE run_id = ?').get(runId) as { n: number }).n);
@@ -389,10 +389,20 @@ export function wordNoteFile(home: string, file: string): string | null {
 export function rewriteNoteFile(path: string, body: string): void {
   if (extname(path).toLowerCase() === '.docx') throw new Error(`${path} is a Word document, which Skeinwise doesn't write. Nothing was saved.`);
   if (!present(path)) throw new Error(`The note file ${path} is gone, so it can't be updated. Nothing was saved.`);
-  const front = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(readNoteFile(path))?.[0];
+  const text = underFrontMatter(readNoteFile(path), body);
   // Truncated after the open, not with O_TRUNC: Windows refuses O_TRUNC without O_CREAT (EINVAL).
   withFile(resolve(path), O_WRONLY, (fd) => {
     ftruncateSync(fd, 0);
-    writeFileSync(fd, `${front ? `${front}\n` : ''}${body.trim()}\n`);
+    writeFileSync(fd, text);
   });
+}
+
+/**
+ * A note file's new text: `body` below the front matter `old` has, kept byte for byte as the reader found it
+ * (splitFrontMatter), with a blank line between. Every writer that keeps a note's front matter builds its text here.
+ */
+export function underFrontMatter(old: string, body: string): string {
+  const front = splitFrontMatter(old)?.front ?? '';
+  const closed = front && !front.endsWith('\n') ? `${front}\n` : front;
+  return `${closed ? `${closed}\n` : ''}${body.trim()}\n`;
 }

@@ -72,6 +72,13 @@ export interface IngestOptions {
   origin?: Origin | null;
   /** Overrides batch.account. */
   account?: string | null;
+  /**
+   * The batch is the record folder's notes/, whose files Skeinwise writes whenever a note changes, so what a note's
+   * file holds is the note: text an older version held, put back in the file, becomes a new version. Without it (an
+   * export, a chat, a folder Skeinwise never writes) text any version holds is an older copy and changes nothing. A
+   * Word document is only ever read, so its edits live in the record alone, and it keeps the older-copy rule either way.
+   */
+  ownFiles?: boolean;
 }
 
 export interface EditOptions {
@@ -402,7 +409,7 @@ export class Store {
       const known = this.knownAccount(batch.source);
       const reason: PendingReason | null =
         known !== null && account !== null && known !== account ? 'account' : opts.trusted === false ? 'unconfirmed' : null;
-      if (!reason) return this.apply(batch, context);
+      if (!reason) return this.apply(batch, context, opts.ownFiles === true);
       const plan = this.plan(batch);
       const pendingId = plan.proposed ? this.insertPending(plan.batch, plan, { reason, origin, account }) : null;
       return { ...plan.result, proposed: plan.proposed, pendingId };
@@ -416,7 +423,7 @@ export class Store {
     return row?.account ?? null;
   }
 
-  private apply(batch: ImportBatch, context: WriteContext): ImportResult {
+  private apply(batch: ImportBatch, context: WriteContext, ownFiles = false): ImportResult {
     const sourceId = this.upsertSource(batch.source, context.account);
     const owner = batch.source.owner ?? 'you';
     const observed = this.now();
@@ -435,14 +442,14 @@ export class Store {
       const startedAt = thread.startedAt && !timeFlag(thread.startedAt, observed) ? thread.startedAt : times.sort()[0]!;
       const threadId = this.upsertThread(sourceId, thread.externalId, thread.title, startedAt, threadContext);
       result.threads++;
-      usable.forEach((e, i) => this.ingestEntry(sourceId, threadId, { ...e, seq: e.seq ?? i }, owner, threadContext, observed, result));
+      usable.forEach((e, i) => this.ingestEntry(sourceId, threadId, { ...e, seq: e.seq ?? i }, owner, threadContext, observed, result, ownFiles));
     }
     for (const e of batch.entries ?? []) {
       if (!normalizeText(e.body)) {
         result.skipped++;
         continue;
       }
-      this.ingestEntry(sourceId, null, e, owner, context, observed, result);
+      this.ingestEntry(sourceId, null, e, owner, context, observed, result, ownFiles);
     }
     return result;
   }
@@ -496,6 +503,7 @@ export class Store {
     batchContext: WriteContext,
     observed: string,
     result: ImportResult,
+    ownFiles = false,
   ): void {
     const context = input.origin ? { ...batchContext, origin: input.origin } : batchContext;
     const body = normalizeText(input.body);
@@ -537,10 +545,15 @@ export class Store {
       result.added++;
       return;
     }
-    // Any version already holding this text means it is an older or identical export: the newest version stands.
-    const known = this
-      .stmt('SELECT 1 FROM versions WHERE entry_id = ? AND content_hash = ?')
-      .get(existing.id, hash);
+    // Any version already holding this text means it is an older or identical export: the newest version stands. A note
+    // of the record folder's own (IngestOptions.ownFiles) is compared with its newest version alone: its file is the
+    // note, so older text put back there is the person's edit. Not a Word document, whose edits live in the record.
+    const fileIsNote = ownFiles && input.kind === 'note' && !/\.docx$/i.test(input.externalId);
+    const known = fileIsNote
+      ? this
+          .stmt('SELECT 1 FROM entries e JOIN versions v ON v.entry_id = e.id AND v.version = e.version WHERE e.id = ? AND v.content_hash = ?')
+          .get(existing.id, hash)
+      : this.stmt('SELECT 1 FROM versions WHERE entry_id = ? AND content_hash = ?').get(existing.id, hash);
     if (known) {
       // An entry imported before sessions kept their folder and branch gains them here; one already set stays.
       if (input.project || input.gitBranch) {
