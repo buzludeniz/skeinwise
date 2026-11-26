@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { configPath, DEFAULT_CONFIG, loadConfig, setConfigValue, unsetConfigValue } from '../src/config.ts';
 import { keyShaped } from './samples.ts';
+import { expectMode } from './modes.ts';
 
 describe('config', () => {
   let home: string;
@@ -23,7 +24,7 @@ describe('config', () => {
     setConfigValue(home, 'names', 'Sam, Alex Okafor');
     setConfigValue(home, 'redaction', 'off');
     expect(JSON.parse(readFileSync(configPath(home), 'utf8'))).toEqual({ engine: 'none', budget: 25000, redaction: false, names: ['Sam', 'Alex Okafor'] });
-    expect(statSync(configPath(home)).mode & 0o777).toBe(0o600);
+    expectMode(configPath(home), 0o600);
     unsetConfigValue(home, 'budget');
     expect(loadConfig(home).budget).toBe(DEFAULT_CONFIG.budget);
   });

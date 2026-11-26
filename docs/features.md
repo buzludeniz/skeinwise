@@ -5,8 +5,9 @@
 
 # Skeinwise: features
 
-This is the whole design. Parts not built yet are marked *(planned)* with the release that brings them; the
-README's roadmap has the order, and [organiser.md](organiser.md) says exactly what the organiser does today.
+This is the whole design. Parts that are not in 1.0 are marked *(1.1)* when 1.1 brings them, and *(planned)*
+otherwise; the README's [Coming in 1.1](../README.md#coming-in-11) lists the 1.1 ones, and
+[organiser.md](organiser.md) says exactly what the organiser does today.
 
 ## The record
 
@@ -30,8 +31,11 @@ The record is one SQLite file, `~/.skeinwise/record.db`, plus Markdown notes in 
 | Gemini (Google Takeout) | `MyActivity.json`; prompts are grouped into threads by 30-minute gaps |
 | Claude Code history | `~/.claude/projects/*/*.jsonl`; text only: tool calls and their results, system reminders and compaction summaries are left out; each entry keeps its project folder and git branch |
 | Codex history | `~/.codex/sessions/**/*.jsonl`; keeps its project folder and git branch |
-| Markdown folders and Obsidian vaults | Front matter, `[[links]]` and `#tags`; the date comes from front matter, the file name or the modified time |
-| Plain text | `.txt` files as notes |
+| Markdown folders and Obsidian vaults | Front matter, kept with the note as its properties, tags included; `[[links]]`; the date comes from front matter, the file name or the modified time; a folder named `Templates` is skipped. Aliases and folder links (`[[Note\|alias]]`, `[[Folder/Note]]`) are *(1.1)* |
+| Plain text | `.txt` files as notes: UTF-8 or UTF-16, with or without a byte order mark; up to 16 MiB a note |
+| Word | `.docx` files, read on this computer: headings, lists and tables become Markdown; the title comes from the document, its first heading or its file name. A .docx inside a zip is skipped and named |
+
+Other document types, PDF, RTF, HTML and ODT, are *(1.1)*.
 
 Each importer accepts a zip file, a single file or a folder. Unknown fields are skipped, and missing fields don't stop
 an import.
@@ -42,7 +46,9 @@ an import.
 - **A file over 1 GiB** is refused.
 - **A time** more than a day ahead, before 1990 or missing is flagged, and the entry is sorted by when it was seen.
 
-## Connectors
+## Connectors *(1.1)*
+
+Not in 1.0. The design:
 
 - Read-only Gmail, Google Calendar, Todoist and Slack.
 - Each has its own consent, which shows the permissions it asks for before any sign-in.
@@ -64,9 +70,9 @@ Details: [connectors.md](connectors.md).
 
 - Full-text search with stemming over titles and bodies (SQLite FTS5), ranked by relevance, with your own words ranked
   above an assistant's.
-- Filters: source, speaker and date range. Folder and tag filters are *(planned, v0.4)*.
+- Filters: source, speaker and date range. Folder and tag filters are *(planned)*.
 - **Similar entries:** by term vectors (TF-IDF cosine): entries that share rare words rank closest.
-- Results can be lit up as points in the brain *(planned, v0.4)*.
+- Results can be lit up as points in the brain.
 
 ## Ask
 
@@ -134,10 +140,11 @@ suggested one.
 
 The record keeps itself current without you running anything.
 
-1. **Live capture.** With **Record live** on (`skeinwise live` on the command line), Skeinwise watches Claude Code
-   and Codex history and the note folders and vaults you chose (`liveFolders`). New and changed entries are imported
-   within seconds, through the same importers as a manual import, so dedupe and versions work the same way. On
-   start-up it catches up on whatever changed while it was off. Downloads is watched only when you ask (below).
+1. **Live capture.** With **Live capture** on in the app menu (`skeinwise live` on the command line), Skeinwise watches
+   Claude Code and Codex history and the Markdown, text and Word (.docx) files in the note folders and vaults you chose
+   (`liveFolders`), leaving out Word's `~$` lock files. New and changed entries are imported within seconds, through
+   the same importers as a manual import, so dedupe and versions work the same way. On start-up it catches up on
+   whatever changed while it was off. Downloads is watched only when you ask (below).
 2. **Background organising.** After each capture, the organiser runs over the new entries only (`--scope new`:
    entries added or changed since that task's last run): tag, file, link, then the summaries of the hubs those entries
    joined, then a staleness check of the notes on those hubs. One pass runs at a time; captures that arrive during a
@@ -155,7 +162,7 @@ The record keeps itself current without you running anything.
   engine. If the model server doesn't answer, the status line says so and the next capture tries again.
 - **Stopping.** Closing live mid-run marks that run failed and saves nothing from it, so the next run isn't blocked.
 - **Off switch.** `skeinwise config liveOrganise off` keeps live capture and leaves organising to you.
-- **Connectors.** Live also pulls from the services you connected, and what a pull brings is organised like a
+- **Connectors** *(1.1)*. Live also pulls from the services you connected, and what a pull brings is organised like a
   capture.
 - **Downloads** is off by default; `skeinwise config liveDownloads on` turns it on. Then a ChatGPT, Claude or Gemini
   export that lands there is proposed, never imported: review it with `skeinwise live pending` (`--all` for the ones
@@ -179,7 +186,7 @@ A schema is a named list of tags with descriptions. Topics, Projects and Moods a
 
 ## Corrections
 
-- **Edit an entry** *(planned, v0.4)*. The original stays in history.
+- **Edit an entry.** The original stays in history.
 - **Merge folders.** The old name stays as an alias; one step undoes it.
 - **Rename or delete a hub.**
 - **Mark a thread "not mine".**
@@ -193,7 +200,7 @@ schema edit is *(planned)*; until then each has its own reverse command, such as
 - Notes are Markdown files under `~/.skeinwise/notes`, edited in the app or in any editor.
 - `[[links]]` become note links.
 - There is one daily note per day.
-- A note written by an agent is marked with the agent's name *(planned, v0.5)*.
+- A note written by an agent is marked with the agent's name.
 - Each save adds a version.
 
 ## Review
@@ -207,14 +214,14 @@ still holds, or skip. A skipped note comes back after the next review run.
 ## Privacy
 
 - With the local model or No AI, nothing leaves the computer.
-- **Redaction:** before any text goes to an outside model, the names you list, emails, phone numbers, street
-  addresses and health words are replaced with placeholders. The patterns catch the common shapes, not every one.
+- **Redaction:** before any text goes to an outside model, secrets are always replaced with placeholders, and
+  unless you set `redaction off`, so are the names you list, emails, phone numbers, street addresses and health words. The patterns catch the common shapes, not every one.
   `--preview` shows exactly what will be sent.
 - **Usage cap:** a monthly token cap for an outside model. A run that would pass it is refused until the month
   resets.
 - **The record folder** is created with owner-only permissions.
-- Connectors only read, and their tokens live in the macOS Keychain, never in a file.
-- **The app's server** *(planned, v0.4)* listens on 127.0.0.1 only and needs a per-install token.
+- Connectors *(1.1)* only read, and their tokens live in the macOS Keychain, never in a file.
+- **The app's server** listens on 127.0.0.1 only and needs a per-install token.
 
 ## Agent memory (MCP)
 
@@ -235,7 +242,7 @@ Claude Code, Claude desktop, Codex or Cursor, and `skeinwise doctor` checks the 
 
 Details: [mcp.md](mcp.md).
 
-## Ledger and proof of date *(planned, v0.5)*
+## Ledger and proof of date *(planned)*
 
 - Every import, edit and run appends a line to `ledger.jsonl`, with a hash chained to the line before. Any later
   change to the ledger breaks the chain and shows.
@@ -254,10 +261,10 @@ Details: [mcp.md](mcp.md).
 | `skeinwise run <task> [--scope new]` | Runs an organiser task |
 | `skeinwise runs`, `skeinwise undo <run>` | Lists runs; undoes one |
 | `skeinwise note <text>` | Appends to today's daily note |
-| `skeinwise live [--once]` | Turns on the update stream: live capture and background organising, and pulls from connected services |
+| `skeinwise live [--once]` | Turns on the update stream: live capture and background organising |
 | `skeinwise live pending [--all]`, `accept <n>`, `reject <n>` | Imports waiting for your yes (Downloads, another account's export); takes one in or leaves it out for good |
 | `skeinwise model check`, `fetch`, `serve` | Tests, downloads (after asking) or starts the local model |
-| `skeinwise serve` | Starts the app *(planned, v0.4)* |
+| `skeinwise serve` | Starts the app |
 | `skeinwise setup [--yes]` | Finds your AI histories and notes, brings them in, and names the agents to connect |
 | `skeinwise connect <agent> [--write] [--yes]` | Gives claude-code, codex, cursor or claude-desktop your record as memory; read only unless `--write` |
 | `skeinwise doctor` | Checks Node, the record, live capture, the model server and agent configs, with one fix per problem |

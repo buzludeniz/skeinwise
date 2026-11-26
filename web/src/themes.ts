@@ -158,6 +158,10 @@ export const PALETTES: Palette[] = [
   },
 ];
 
+/** The Workbench heatmap's fill, as the accent's share over the page: the faintest cell, then the fullest. Its numbers
+ * stay in the ink colour, which keeps AA on the fullest fill in every theme (test/web/themes.test.ts). */
+export const HEAT_FILL = [0.12, 0.4] as const;
+
 export function theme(key: string): Theme {
   return THEMES.find((t) => t.key === key) ?? THEMES[0]!;
 }
@@ -222,7 +226,8 @@ export function themeVars(t: Theme): Record<string, string> {
     '--on-accent': t.onAccent,
     '--danger': t.danger,
     '--ok': t.ok,
-    '--accent-wash': mix(t.panel, t.accent, t.light ? 0.12 : 0.16),
+    // Light enough that secondary text on a selected row keeps AA (test/web/themes.test.ts).
+    '--accent-wash': mix(t.panel, t.accent, t.light ? 0.12 : 0.15),
     '--hover': mix(t.panel, t.ink, t.light ? 0.05 : 0.07),
     '--scrim': t.light ? 'rgba(40, 34, 26, 0.28)' : 'rgba(4, 6, 10, 0.6)',
   };

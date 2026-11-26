@@ -18,6 +18,7 @@ import { AccessError, checkAccess, isLocked, readAccess, setLocked } from '../..
 import { cleanUploads } from '../../src/server/uploads.ts';
 import { createNote, saveEntry } from '../../src/server/notes.ts';
 import { openHome } from '../../src/home.ts';
+import { expectMode } from '../modes.ts';
 
 let dir: string;
 let home: string;
@@ -233,9 +234,9 @@ describe('L2: the upload cap', () => {
   it('saves a chunked body under the cap, owner-only', async () => {
     const res = await upload('smallchunked01', 'notes/small.md', MiB / 2);
     expect(res.status).toBe(200);
-    const stat = statSync(saved('smallchunked01', join('notes', 'small.md')));
-    expect(stat.size).toBe(MiB / 2);
-    expect(stat.mode & 0o777).toBe(0o600);
+    const file = saved('smallchunked01', join('notes', 'small.md'));
+    expect(statSync(file).size).toBe(MiB / 2);
+    expectMode(file, 0o600);
   });
 
   it('removes the partial file when the client goes away mid-upload', async () => {
@@ -392,7 +393,7 @@ describe('L8: note files', () => {
     expect(res.status).toBe(200);
     expect(existsSync(outside('created-by-skeinwise.txt'))).toBe(false);
     expect(readFileSync(join(notes(), 'planted-2.md'), 'utf8')).toContain('written through a symlink?');
-    expect(statSync(join(notes(), 'planted-2.md')).mode & 0o777).toBe(0o600);
+    expectMode(join(notes(), 'planted-2.md'), 0o600);
     rmSync(join(notes(), 'planted.md'));
   });
 

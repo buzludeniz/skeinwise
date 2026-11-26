@@ -28,7 +28,7 @@ function refuseLink(file: string, verb: 'read' | 'write'): void {
 }
 
 function write(file: string, text: string, flags: number): void {
-  // O_EXCL fails on any name that is taken, a link included, on every system.
+  // On macOS and Linux, O_EXCL fails on any name that is taken, a link included. Windows: see writeNew.
   if (!(flags & O_EXCL)) refuseLink(file, 'write');
   let fd: number;
   try {
@@ -46,6 +46,9 @@ function write(file: string, text: string, flags: number): void {
 
 /** Writes a new owner-only file. False when the name is taken (by anything, a link included), so the caller picks another. */
 export function writeNew(file: string, text: string): boolean {
+  // On Windows (no O_NOFOLLOW), O_EXCL follows a dangling link and creates its target, outside the folder. There,
+  // anything at the name, a link included, counts as taken before the open.
+  if (!O_NOFOLLOW && lstatSync(file, { throwIfNoEntry: false })) return false;
   try {
     write(file, text, O_WRONLY | O_CREAT | O_EXCL);
     return true;
