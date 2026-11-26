@@ -231,8 +231,8 @@ Groups, top to bottom:
 | AI agents | Connected agents, **Copy config** for each, **Copy a sample question** |
 | AI model | **Local model** (the default: its address, the model file, a **Test** button), **Outside model** (address, model, the env var holding the key), or **No AI** |
 | Usage cap | A monthly token cap for an outside model. At the cap, runs wait for the next month |
-| Proof of date | On or off |
-| Backup | A zip of the record, on demand or daily |
+| Proof of date | A switch, marked Later: it is kept, but 1.0 proves nothing yet (the ledger is [planned](features.md#ledger-and-proof-of-date-planned)) |
+| Backup | A zip of the record, on demand. Daily backups are marked Later: the switch is kept and does nothing in 1.0 |
 | Exclusions | Rules by source, folder or pattern; redaction before any outside model |
 | Appearance | Theme and palette |
 

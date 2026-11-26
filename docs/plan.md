@@ -76,8 +76,8 @@ palettes. Full detail: [ui.md](ui.md).
 The update stream (live capture plus background organising by the local model) · importers (ChatGPT, Claude,
 Gemini, Claude Code, Codex, Markdown and Obsidian folders, plain text) · dedupe and versions · full-text and similarity search · questions answered as views · tagging, filing, linking, hubs and
 summary layers · tagging schemas with sized runs and coverage · corrections (edit, merge folders, not mine, exclude
-a source, undo) · note review for staleness · redaction before any outside model, and a usage cap · memory and window MCP servers · tamper-evident ledger with date proofs · export
-to a plain zip. Full detail: [features.md](features.md).
+a source, undo) · note review for staleness · redaction before any outside model, and a usage cap · memory and window MCP servers · export
+to a plain zip. Planned, not in 1.0: the tamper-evident ledger with date proofs, and daily backups. Full detail: [features.md](features.md).
 
 ### Not in scope (yet)
 
