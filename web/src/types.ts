@@ -3,6 +3,7 @@
 export type { Brief, BrainData, BrainPoint, EntryDetail, Numbers as Stats, YouLine as ProfileLine } from '../../src/server/queries.ts';
 export type { EntryLines, EntryOrganised, HubDetail, LineCounts, OrganiseJob, OrganiserState } from '../../src/server/organiser.ts';
 export type { AskHit, AskKind, AskResult } from '../../src/organiser/ask.ts';
+export type { AskStreamEvent } from '../../src/server/ask-stream.ts';
 export type { Folder, Hub, HubItem, HubSections, Layer, LayerName, Reason, ReviewItem } from '../../src/organiser/views.ts';
 export type { Run, Task } from '../../src/organiser/runs.ts';
 export type { Config, LabView } from '../../src/server/config.ts';
