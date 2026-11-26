@@ -435,6 +435,35 @@ describe('a planted export does not steer hubs or review (H1)', () => {
     }
   });
 
+  it('keeps an import that waits for your yes out of hubs and review, and its planted date out once accepted', async () => {
+    // What live does with a chat export it finds in Downloads (trusted: false): it waits in `live pending`.
+    const r = store.ingest(
+      {
+        source: { kind: 'chatgpt', label: 'ChatGPT', location: '' },
+        threads: [
+          {
+            externalId: 'evil-1',
+            title: 'Quarterly pension review',
+            entries: [{ externalId: 'evil-1-m0', kind: 'message', speaker: 'you', createdAt: '2030-01-01T09:00:00.000Z', body: INJECTED }],
+          },
+        ],
+      },
+      { trusted: false },
+    );
+    expect(r.pendingId).not.toBeNull();
+    await organise('hub', 'all');
+    await organise('review', 'all');
+    expect(prompts.filter((p) => /note to the organiser/i.test(p.user))).toEqual([]);
+
+    store.acceptPending(r.pendingId!);
+    const planted = store.allEntries().find((e) => e.externalId === 'evil-1-m0')!;
+    expect(planted.timeFlag).toBe('future');
+    await organise('hub', 'all');
+    await organise('review', 'all');
+    expect(prompts.filter((p) => /note to the organiser/i.test(p.user))).toEqual([]);
+    for (const item of openReviewItems(store.db)) expect(item.reasons.map((x) => x.entryId)).not.toContain(planted.id);
+  });
+
   it('never credits a genuine entry with words its cited sentences do not hold', async () => {
     // A believable date passes the date check, so the planted text reaches the model and it misattributes.
     plant('2026-11-20T09:00:00.000Z');
