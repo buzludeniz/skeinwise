@@ -7,8 +7,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-/** The files that write a note and then find its entry by id. */
-const LOOKUPS = ['src/notes.ts', 'src/server/notes.ts'];
+/** The files that write a note and then find its entry by id, or name a note's file to the person (restore). */
+const LOOKUPS = ['src/notes.ts', 'src/server/notes.ts', 'src/store/commands.ts'];
 
 /** A containment check: whether a path stays inside the notes folder. Its result is never an id. */
 const CHECK = /outside\(|!relative\(|^\s*const rel = relative\(dir, full\);$/;

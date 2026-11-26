@@ -77,6 +77,38 @@ describe('a front-matter-only edit', () => {
     expect(store.history(id)).toHaveLength(1);
   });
 
+  it('keeps front matter taken away and later put back as two versions, not one rewritten in place', () => {
+    const store = new Store(openDb(':memory:'));
+    write('status: draft');
+    capture(store);
+    const id = entryId(store);
+    write('');
+    capture(store);
+
+    write('status: done');
+    expect(capture(store)).toEqual({ versioned: 1, unchanged: 0 });
+    expect(store.history(id).map((v) => [v.version, v.properties])).toEqual([
+      [1, { status: 'draft' }],
+      [2, null],
+      [3, { status: 'done' }],
+    ]);
+  });
+
+  it("carries a note's properties into an edit of its text, so reading the file back adds no version", () => {
+    const store = new Store(openDb(':memory:'));
+    write('status: draft');
+    capture(store);
+    const id = entryId(store);
+    const edited = '# Garden plan\n\nRaised beds by June.';
+    store.editEntry(id, edited, 'you');
+    expect(store.history(id).at(-1)!.properties).toEqual({ status: 'draft' });
+
+    // The file as a save writes it: the new text under the same front matter.
+    writeFileSync(join(dir, 'garden-plan.md'), `---\nstatus: draft\n---\n\n${edited}\n`);
+    expect(capture(store)).toEqual({ versioned: 0, unchanged: 1 });
+    expect(store.history(id)).toHaveLength(2);
+  });
+
   it('changes nothing when the text is an older version', () => {
     const store = new Store(openDb(':memory:'));
     write('status: draft');
@@ -86,6 +118,7 @@ describe('a front-matter-only edit', () => {
 
     write('status: done');
     expect(capture(store)).toEqual({ versioned: 0, unchanged: 1 });
-    expect(store.history(id).map((v) => v.properties)).toEqual([{ status: 'draft' }, null]);
+    // The edit carried the note's properties; the file's older text took none of its front matter in.
+    expect(store.history(id).map((v) => v.properties)).toEqual([{ status: 'draft' }, { status: 'draft' }]);
   });
 });

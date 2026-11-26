@@ -1,10 +1,10 @@
 // The record's own commands from the store's track: bringing back an old version of an entry, and search's project
 // filter. src/cli.ts wires them in as it does SYNC_COMMANDS: STORE_FLAGS into its flags, STORE_HELP into its help,
 // STORE_COMMANDS into its table.
-import { relative } from 'node:path';
 import type { Ctx } from '../cli-organiser.ts';
 import { needId, UsageError } from '../errors.ts';
 import { readTextSafe, type UnsafeReason, UnsafeFileError } from '../fsafe.ts';
+import { pathInside } from '../importers/detect.ts';
 import { parseFrontMatter } from '../importers/notes.ts';
 import { homeNoteFile, notesDir, rewriteNoteFile, wordNoteFile } from '../notes.ts';
 import { type Entry, hashText, type Version } from './store.ts';
@@ -69,7 +69,7 @@ const UNSAFE: Record<UnsafeReason, string> = {
 function restoreNoteFile(ctx: Ctx, entry: Entry, latest: Version, target: Version): string | null {
   const file = homeNoteFile(ctx.store, ctx.home, entry);
   if (!file) return null;
-  const shown = relative(ctx.home, file);
+  const shown = pathInside(ctx.home, file);
   if (wordNoteFile(ctx.home, file)) return shown;
   let text: string;
   try {

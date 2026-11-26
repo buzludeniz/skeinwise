@@ -225,9 +225,14 @@ function u64(buf: Buffer, at: number): number {
 function findDirectory(fd: number, size: number, path: string): { count: number; offset: number; length: number } {
   const tailLength = Math.min(size, 22 + 0xffff);
   const tail = readAt(fd, tailLength, size - tailLength);
+  // The end record is the signature whose comment runs exactly to the end of the file. A comment may hold the
+  // signature's bytes itself, and taken as the end record they read as an empty zip. A zip with bytes after its comment
+  // has no exact one, and falls back to the last signature, as before.
   let at = -1;
   for (let i = tail.length - 22; i >= 0; i--) {
-    if (tail.readUInt32LE(i) === EOCD) {
+    if (tail.readUInt32LE(i) !== EOCD) continue;
+    if (at < 0) at = i;
+    if (i + 22 + tail.readUInt16LE(i + 20) === tail.length) {
       at = i;
       break;
     }
