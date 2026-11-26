@@ -104,8 +104,9 @@ node dist/src/cli.js search sourdough starter
 
 Importing again is safe: entries already in the record are skipped, and changed text becomes a new version.
 
-Keep it current with the update stream. After one `run all`, `live` imports new Claude Code and Codex chats, export
-files in Downloads and the note folders you name as they appear, and organises what is new in the background:
+Keep it current with the update stream. After one `run all`, `live` imports new Claude Code and Codex chats and the
+note folders you name as they appear, and organises what is new in the background. With `config liveDownloads on`,
+an export that lands in Downloads waits for your yes in `live pending`:
 
 ```bash
 node dist/src/cli.js config liveFolders ~/Notes

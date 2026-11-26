@@ -345,7 +345,9 @@ export const MIGRATIONS: readonly string[] = [
   UPDATE entries SET time_flag = 'missing', claimed_at = NULL WHERE created_at LIKE '1970-01-01T00:00:00%';
   UPDATE versions SET claimed_at = NULL WHERE version = 1 AND claimed_at LIKE '1970-01-01T00:00:00%';
   UPDATE entries SET time_flag = 'early' WHERE time_flag IS NULL AND created_at < '1990-01-01';
-  UPDATE entries SET time_flag = 'future' WHERE time_flag IS NULL AND julianday(created_at) > julianday(observed_at) + 1;
+  -- An old entry was seen some time before this upgrade, not necessarily when its source was added (live adds to one
+  -- source for months), so only a time more than a day past the upgrade is in the future.
+  UPDATE entries SET time_flag = 'future' WHERE time_flag IS NULL AND julianday(created_at) > julianday('now') + 1;
   UPDATE entries SET created_at = observed_at WHERE time_flag IS NOT NULL AND observed_at IS NOT NULL;
   CREATE INDEX entries_project ON entries (project) WHERE project IS NOT NULL;
 

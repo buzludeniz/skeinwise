@@ -11,13 +11,15 @@ import { day, entryHeader, indent, minute, speakerLabel } from './format.ts';
 import { homeDir, openHome } from './home.ts';
 import { readImports } from './importers/detect.ts';
 import { readStatus } from './live/capture.ts';
+import { LIVE_COMMANDS, LIVE_FLAGS, LIVE_HELP } from './live/pending.ts';
 import { describeStatus, startLive } from './live/run.ts';
 import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP } from './mcp/commands.ts';
 import { MODEL_HELP } from './model-commands.ts';
 import { safeIo, safeJson } from './safe-text.ts';
 import { serveFromArgs } from './server/serve.ts';
 import { SETUP_COMMANDS, SETUP_FLAGS, SETUP_HELP } from './setup.ts';
-import type { Store } from './store/store.ts';
+import { STORE_COMMANDS, STORE_FLAGS, STORE_HELP } from './store/commands.ts';
+import type { ImportBatch, IngestResult, Store } from './store/store.ts';
 import { SYNC_COMMANDS } from './sync/commands.ts';
 
 // Sync is hidden in v1.0 (Deniz, Nov 25: hide it entirely, in place of an --experimental flag). Only export is
@@ -60,7 +62,7 @@ Your record:
   show <entry>              Print one entry
   thread <thread>           Print a whole thread
   history <entry>           List an entry's versions
-  stats                     Counts and the busiest months
+${STORE_HELP}  stats                    Counts and the busiest months
   sources                   List sources with their status
   exclude <source>          Leave a source out of search and the map
   include <source>          Bring an excluded source back
@@ -68,6 +70,7 @@ Your record:
   live                      Record live: import new chats and notes as they appear, and
                             organise what is new in the background
       --once                Catch up and organise once, then stop
+${LIVE_HELP}
   demo                      Build a demo record from invented data
       --out <dir>           Where to write the demo export files
       --force               Import even if the record is not empty
@@ -164,6 +167,23 @@ async function withStore<T>(io: Io, fn: (store: Store) => T | Promise<T>): Promi
   }
 }
 
+/**
+ * What importing one batch did. `import` ingests as trusted, so the store holds a batch back only when its export
+ * claims another account than its source's: the line then says the changes wait in pending, not "0 new".
+ */
+function importLine(store: Store, batch: ImportBatch, r: IngestResult): string {
+  const label = batch.source.label;
+  if (r.pendingId) {
+    const changes = `${r.proposed} change${r.proposed === 1 ? '' : 's'}`;
+    return `${label}: ${changes} from another account than this source's wait for your yes as #${r.pendingId}; nothing was imported: skeinwise live pending\n`;
+  }
+  if (r.proposed) {
+    const before = batch.origin ? store.pendingByHash(batch.origin.sha256, batch.source.kind) : undefined;
+    return `${label}: nothing imported; this export from another account was proposed before${before ? ` as #${before.id} (${before.status})` : ''}\n`;
+  }
+  return `${label}: ${r.added} new, ${r.versioned} changed, ${r.unchanged} already in, ${r.skipped} empty skipped (${r.threads} threads)\n`;
+}
+
 async function run(argv: string[], io: Io): Promise<number> {
   const [command = 'help', ...rest] = argv;
   if (command === 'serve') return serveFromArgs(rest, io);
@@ -192,6 +212,8 @@ async function run(argv: string[], io: Io): Promise<number> {
       remove: { type: 'boolean' },
       run: { type: 'boolean' },
       ...MCP_FLAGS,
+      ...LIVE_FLAGS,
+      ...STORE_FLAGS,
       // --yes (and --write, also in MCP_FLAGS) come from here; every command reads them the same way.
       ...SETUP_FLAGS,
     },
@@ -224,19 +246,16 @@ async function run(argv: string[], io: Io): Promise<number> {
       if (!positionals.length) throw new UsageError('Give at least one path to import.');
       return withStore(io, (store) => {
         const results = [];
+        const lines: string[] = [];
         for (const path of positionals) {
           for (const batch of readImports(path, { owner: values.owner })) {
             const r = store.ingest(batch);
             results.push({ source: batch.source.label, kind: batch.source.kind, ...r });
+            lines.push(importLine(store, batch, r));
           }
         }
         if (values.json) json(results);
-        else
-          for (const r of results) {
-            io.out(
-              `${r.source}: ${r.added} new, ${r.versioned} changed, ${r.unchanged} already in, ${r.skipped} empty skipped (${r.threads} threads)\n`,
-            );
-          }
+        else io.out(lines.join(''));
         return 0;
       });
     }
@@ -302,6 +321,12 @@ async function run(argv: string[], io: Io): Promise<number> {
 
     case 'live': {
       const home = homeDir(io.env);
+      const sub = positionals[0];
+      if (sub !== undefined) {
+        // live pending, accept and reject. Any other word is a mistake, never a reason to start recording.
+        if (!Object.hasOwn(LIVE_COMMANDS, sub)) throw new UsageError(`Unknown live command: ${sub}. Try: skeinwise live pending`);
+        return withStore(io, (store) => LIVE_COMMANDS[sub]!({ io, home, store, values, args: positionals.slice(1), json }));
+      }
       const store = openHome(home, io.now);
       let started = false; // the catch-up pass is printed below, so only later passes print here
       const live = startLive(store, home, {
@@ -420,7 +445,7 @@ async function run(argv: string[], io: Io): Promise<number> {
       if (setupCommand) return setupCommand({ io, home: homeDir(io.env), values, args: positionals, json });
       // The connectors' commands (src/connectors/commands.ts) are left out: connectors are off in v1.0 and ship in v1.1
       // behind their own consent screen (Deniz, Nov 25). Of the sync module only export is wired (see EXPORT_COMMANDS).
-      const organiser = ORGANISER_COMMANDS[command] ?? EXPORT_COMMANDS[command] ?? MCP_COMMANDS[command];
+      const organiser = ORGANISER_COMMANDS[command] ?? STORE_COMMANDS[command] ?? EXPORT_COMMANDS[command] ?? MCP_COMMANDS[command];
       if (!organiser) throw new UsageError(`Unknown command: ${command}. Run "skeinwise help" for the list.`);
       const home = homeDir(io.env);
       return withStore(io, (store) => organiser({ io, home, store, values, args: positionals, json }));

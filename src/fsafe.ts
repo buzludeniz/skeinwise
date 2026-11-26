@@ -353,6 +353,8 @@ function inflateEntry(fd: number, fileSize: number, entry: ZipEntry, path: strin
   for (let read = 0; read < entry.compressedSize; ) {
     const length = Math.min(INFLATE_CHUNK, entry.compressedSize - read);
     const chunk = readAt(fd, length, dataAt + read);
+    // The file was cut short after it was opened: without this the loop would wait forever for bytes that never come.
+    if (!chunk.length) throw zipError(label, 'it was cut short while it was being read');
     read += chunk.length;
     inflater.push(chunk, read >= entry.compressedSize);
   }
