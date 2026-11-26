@@ -1,0 +1,61 @@
+/* The Views page. Everything else it shows uses the app's own classes (card, chip, item-list, lab-table, plot). */
+
+.views-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.views-describe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.views-describe .field {
+  flex: 1 1 320px;
+  margin: 0;
+}
+
+.views-shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.views-shelf h2 {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.views-shelf .chip[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.views-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.views-card > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+}
+
+.views-card > header h2 {
+  margin: 0 auto 0 0;
+}
+
+.views-why {
+  margin: 0;
+  padding-left: 1.2em;
+}
