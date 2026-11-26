@@ -83,8 +83,13 @@ export function BrainView() {
     else openEntry(point);
   };
 
+  // The keys read this render's state through a ref. An effect re-registers only after the next paint, so an Esc
+  // pressed just after the card closed would otherwise still see the card and never put the lit points back.
+  const keys = useRef({ part, lit, settings, closeCard, scene });
+  keys.current = { part, lit, settings, closeCard, scene };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const { part, lit, settings, closeCard, scene } = keys.current;
       const typing = (e.target as HTMLElement).closest('input, textarea, select, [contenteditable]');
       if (e.key === 'Escape' && !document.querySelector('.side-panel, .modal-open')) {
         // The card closes first; the next Esc puts the lit points back.
@@ -95,7 +100,7 @@ export function BrainView() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [lit, scene, part?.point, settings, index]);
+  }, []);
 
   const empty = brain && brain.points.length === 0;
   // The scene's point i is the model's, which is a sample when the record is past the cap.

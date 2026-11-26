@@ -143,12 +143,14 @@ void main() {
 
 // The selected point's marker: a ring around it, drawn over everything, so a selection never relies on colour alone.
 const MARK_VERT = /* glsl */ `
+attribute vec3 target;
+uniform float uMix;
 uniform float uScale;
 uniform float uSize;
 uniform float uBase;
 uniform float uRatio;
 void main() {
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vec4 mv = modelViewMatrix * vec4(mix(position, target, uMix), 1.0);
   gl_Position = projectionMatrix * mv;
   gl_PointSize = clamp(uBase * uSize * uScale / max(0.05, -mv.z) * 1.9 + 14.0, 20.0, 120.0) * uRatio;
 }`;
@@ -357,7 +359,14 @@ export class BrainScene {
     this.markMat = new ShaderMaterial({
       vertexShader: MARK_VERT,
       fragmentShader: MARK_FRAG,
-      uniforms: { uScale: { value: 1 }, uSize: { value: 1 }, uBase: { value: 0.1 }, uRatio: { value: 1 }, uColor: { value: new Vector3(0.91, 0.89, 0.85) } },
+      uniforms: {
+        uMix: { value: 1 },
+        uScale: { value: 1 },
+        uSize: { value: 1 },
+        uBase: { value: 0.1 },
+        uRatio: { value: 1 },
+        uColor: { value: new Vector3(0.91, 0.89, 0.85) },
+      },
       transparent: true,
       depthTest: false,
       depthWrite: false,
@@ -665,7 +674,7 @@ export class BrainScene {
 
   private applyMix(): void {
     const t = easeInOut(this.mix);
-    for (const m of [this.pointMat, this.threadMat, this.linkMat, this.crossMat, this.spokeMat]) m.uniforms.uMix!.value = t;
+    for (const m of [this.pointMat, this.threadMat, this.linkMat, this.crossMat, this.spokeMat, this.markMat, this.selectMat]) m.uniforms.uMix!.value = t;
     this.shellShow = this.layout === 'brain' ? Math.max(this.shellShow, t) : Math.min(this.shellShow, 1 - t);
     this.shellMat.uniforms.uShow!.value = this.shellShow;
     if (this.rings) this.ringMat.uniforms.uMix!.value = 1;
@@ -830,45 +839,52 @@ export class BrainScene {
       this.selectLines = null;
     }
     if (i < 0 || !this.input) return;
-    const at = this.pointAt(i);
+    // Built once per selection, layout move or new data, not once a frame: like the points and lines, it starts where
+    // it was drawn (from) and the shaders carry it to where it goes (current) as uMix runs.
     const mg = new BufferGeometry();
-    mg.setAttribute('position', new BufferAttribute(new Float32Array(at), 3));
+    mg.setAttribute('position', new BufferAttribute(this.from.slice(i * 3, i * 3 + 3), 3));
+    mg.setAttribute('target', new BufferAttribute(this.current.slice(i * 3, i * 3 + 3), 3));
     this.markMat.uniforms.uBase!.value = this.input.sizes[i] ?? 0.1;
     this.mark = new Points(mg, this.markMat);
     this.mark.frustumCulled = false;
     this.mark.renderOrder = 4;
     this.scene.add(this.mark);
 
-    // Each pair touching i, as two drawn positions; curved like the lines they lie over.
-    const ends = (pairs: Uint32Array, limit = pairs.length) => {
+    // The pairs touching i, curved like the lines they lie over.
+    const touching = (pairs: Uint32Array) => {
       const out: number[] = [];
-      for (let k = 0; k + 1 < limit; k += 2) {
-        if (pairs[k] === i || pairs[k + 1] === i) out.push(...this.pointAt(pairs[k]!), ...this.pointAt(pairs[k + 1]!));
-      }
-      return new Float32Array(out);
+      for (let k = 0; k + 1 < pairs.length; k += 2) if (pairs[k] === i || pairs[k + 1] === i) out.push(pairs[k]!, pairs[k + 1]!);
+      return Uint32Array.from(out);
     };
-    const pairsOf = (pos: Float32Array) => Uint32Array.from({ length: pos.length / 3 }, (_, k) => k);
-    const d = this.options.lineDensity;
+    const starts: Float32Array[] = [];
     const parts: Float32Array[] = [];
-    if (d > 0) {
-      const links = ends(this.input.links);
-      const cross = ends(this.input.cross);
-      parts.push(this.lineVertices(links, pairsOf(links), true), this.lineVertices(cross, pairsOf(cross), true, 0.08));
-      parts.push(ends(this.input.spokes), ends(this.threadOrder));
+    const add = (pairs: Uint32Array, curved: boolean, bow?: number) => {
+      starts.push(this.lineVertices(this.from, pairs, curved, bow));
+      parts.push(this.lineVertices(this.current, pairs, curved, bow));
+    };
+    if (this.options.lineDensity > 0) {
+      add(touching(this.input.links), true);
+      add(touching(this.input.cross), true, 0.08);
+      add(touching(this.input.spokes), false);
+      add(touching(this.threadOrder), false);
     }
     const length = parts.reduce((sum, p) => sum + p.length, 0);
     if (!length) return;
-    const pos = new Float32Array(length);
-    let o = 0;
-    for (const p of parts) {
-      pos.set(p, o);
-      o += p.length;
-    }
+    const join = (list: Float32Array[]) => {
+      const out = new Float32Array(length);
+      let o = 0;
+      for (const p of list) {
+        out.set(p, o);
+        o += p.length;
+      }
+      return out;
+    };
+    const pos = join(parts);
     const colors = new Float32Array(pos.length);
     const ink = rgb(this.theme.ink);
     for (let k = 0; k < colors.length; k += 3) colors.set(ink, k);
     const g = new BufferGeometry();
-    g.setAttribute('position', new BufferAttribute(pos, 3));
+    g.setAttribute('position', new BufferAttribute(join(starts), 3));
     g.setAttribute('target', new BufferAttribute(pos, 3));
     g.setAttribute('color', new BufferAttribute(colors, 3));
     g.setAttribute('lit', new BufferAttribute(new Float32Array(pos.length / 3).fill(1), 1));
@@ -1135,7 +1151,7 @@ export class BrainScene {
     }
     if (!this.dirty || !this.renderer) return;
     this.dirty = false;
-    if (this.selectDirty || (this.selected >= 0 && this.mix < 1)) this.buildSelection();
+    if (this.selectDirty) this.buildSelection();
     this.placeCamera();
     this.renderer.render(this.scene, this.camera);
     this.placeLabels();
