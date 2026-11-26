@@ -14,7 +14,7 @@ import { withUpdates } from '../src/organiser/review.ts';
 import { getRun, listRuns, undoRun } from '../src/organiser/runs.ts';
 import { entryLayers, findSchema, hubEntryIds, liveFolders, liveHubs, liveLinks, liveTags, openReviewItems } from '../src/organiser/views.ts';
 import { openDb } from '../src/store/db.ts';
-import { type EntryInput, Store } from '../src/store/store.ts';
+import { type EntryInput, type ImportBatch, Store } from '../src/store/store.ts';
 
 const NONE: Omit<RunOptions, 'task'> = { scope: { kind: 'all' }, engine: 'none', yes: false, budget: 0, progress: () => {} };
 const TABLES = ['tags WHERE run_id IS NOT NULL', 'entry_tags', 'folders', 'entry_folders', 'links', 'hubs', 'hub_entries', 'layers', 'review_items'];
@@ -424,26 +424,27 @@ describe('a planted export does not steer hubs or review (H1)', () => {
   });
 
   it('keeps an import that waits for your yes out of hubs and review, and its planted date out once accepted', async () => {
-    // What live does with a chat export it finds in Downloads (trusted: false): it waits in `live pending`.
-    const r = store.ingest(
-      {
-        source: { kind: 'chatgpt', label: 'ChatGPT', location: '' },
-        threads: [
-          {
-            externalId: 'evil-1',
-            title: 'Quarterly pension review',
-            entries: [{ externalId: 'evil-1-m0', kind: 'message', speaker: 'you', createdAt: '2030-01-01T09:00:00.000Z', body: INJECTED }],
-          },
-        ],
-      },
-      { trusted: false },
-    );
+    // What live does with a chat export it finds in Downloads (trusted: false): it waits in `live pending`, held as its
+    // file alone.
+    const batch: ImportBatch = {
+      source: { kind: 'chatgpt', label: 'ChatGPT', location: '' },
+      origin: { path: '/Downloads/conversations.json', sha256: 'e'.repeat(64) },
+      threads: [
+        {
+          externalId: 'evil-1',
+          title: 'Quarterly pension review',
+          entries: [{ externalId: 'evil-1-m0', kind: 'message', speaker: 'you', createdAt: '2030-01-01T09:00:00.000Z', body: INJECTED }],
+        },
+      ],
+    };
+    const r = store.ingest(batch, { trusted: false });
     expect(r.pendingId).not.toBeNull();
     await organise('hub', 'all');
     await organise('review', 'all');
     expect(prompts.filter((p) => /note to the organiser/i.test(p.user))).toEqual([]);
 
-    store.acceptPending(r.pendingId!);
+    // live accept reads the file again; the same batch stands in for that read.
+    store.acceptPending(r.pendingId!, { batch });
     const planted = store.allEntries().find((e) => e.externalId === 'evil-1-m0')!;
     expect(planted.timeFlag).toBe('future');
     await organise('hub', 'all');

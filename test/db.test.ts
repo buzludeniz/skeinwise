@@ -218,7 +218,7 @@ describe('openDb', () => {
   it('upgrades a record to note runs, keeping every run, its versions and what points at it', () => {
     const db = new DatabaseSync(':memory:');
     db.exec('PRAGMA foreign_keys = ON');
-    const before = MIGRATIONS.length - 1;
+    const before = 6; // the record as migration 7 found it
     for (const m of MIGRATIONS.slice(0, before)) db.exec(m);
     db.exec(`PRAGMA user_version = ${before}`);
     db.exec(`
@@ -249,6 +249,39 @@ describe('openDb', () => {
     expect(() => db.prepare("INSERT INTO runs (task, engine, scope, status, started_at) VALUES ('nap', 'agent', 'agent', 'done', 'x')").run()).toThrow(/CHECK/);
     expect(() => db.prepare("INSERT INTO tags (schema_id, name, run_id) VALUES (1, 'rye', 99)").run()).toThrow(/FOREIGN KEY/);
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'runs' AND sql IS NOT NULL").all()).toEqual([{ name: 'runs_task' }]);
+  });
+
+  // Migration 8 (H1): a proposal nobody chose keeps no copy of its batch. Rows written before it keep theirs.
+  it('upgrades pending to held proposals, keeping every row and the batch of the one still waiting', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec('PRAGMA foreign_keys = ON');
+    for (const m of MIGRATIONS.slice(0, 7)) db.exec(m);
+    db.exec('PRAGMA user_version = 7');
+    db.exec(`
+      INSERT INTO pending (id, status, reason, source_kind, source_label, origin_path, origin_sha256, threads, entries, bytes, batch, observed_at, decided_at) VALUES
+        (3, 'pending', 'unconfirmed', 'claude', 'Claude', '/d/conversations.json', 'a', 1, 2, 9, '{"old":1}', 'x', NULL),
+        (4, 'rejected', 'account', 'chatgpt', 'ChatGPT', NULL, NULL, 1, 1, 9, NULL, 'x', 'y');
+    `);
+    migrate(db);
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+    expect(db.prepare('SELECT id, status, held, batch, origin_sha256, decided_at FROM pending ORDER BY id').all()).toEqual([
+      { id: 3, status: 'pending', held: 1, batch: '{"old":1}', origin_sha256: 'a', decided_at: null },
+      { id: 4, status: 'rejected', held: 1, batch: null, origin_sha256: null, decided_at: 'y' },
+    ]);
+    const add = (held: number, batch: string | null, path: string | null, sha: string | null) =>
+      db
+        .prepare("INSERT INTO pending (reason, source_kind, source_label, origin_path, origin_sha256, held, batch, observed_at) VALUES ('unconfirmed', 'claude', 'Claude', ?, ?, ?, ?, 'x')")
+        .run(path, sha, held, batch);
+    // Held as its file alone: no batch, and the file named.
+    expect(() => add(0, '{}', '/d/b.json', 'b')).toThrow(/CHECK/);
+    expect(() => add(0, null, null, null)).toThrow(/CHECK/);
+    expect(() => add(1, null, '/d/b.json', 'b')).toThrow(/CHECK/);
+    add(0, null, '/d/b.json', 'b');
+    expect(() => add(0, null, '/d/b2.json', 'b')).toThrow(/UNIQUE/);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'pending' AND sql IS NOT NULL ORDER BY name").all()).toEqual([
+      { name: 'pending_origin' },
+      { name: 'pending_status' },
+    ]);
   });
 
   it('refuses a migration that would leave a broken reference, and changes nothing', () => {

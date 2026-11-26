@@ -165,7 +165,12 @@ export function parseGemini(data: unknown, report = new FileReport('MyActivity.j
         .filter(isObj)
         .map((h) => str(h.html) ?? '')
         .join('\n');
-      return { time, prompt, reply: stripHtml(html) };
+      const unread: string[] = [];
+      const reply = stripHtml(html, (reference) => unread.push(reference));
+      if (unread.length) {
+        report.keptAsWritten(`${n + 1}`, unread[0], unread.length === 1 ? 'names no character' : `and ${unread.length - 1} more name no character`);
+      }
+      return { time, prompt, reply };
     });
     if (item) items.push(item);
   });

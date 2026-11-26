@@ -49,6 +49,7 @@ export class FileReport {
   readonly file: string;
   skipped = 0;
   untimed = 0;
+  asWritten = 0;
   private named = 0;
   private readonly warn: (message: string) => void;
 
@@ -78,11 +79,18 @@ export class FileReport {
     this.tell(`${this.where(at)}: ${quote(value)} is not a time; kept the entry with ${fallback || 'no time'}`);
   }
 
+  /** Text with a part that can't be read, such as a character reference that names no character: kept as written. */
+  keptAsWritten(at: string, value: unknown, reason: string): void {
+    this.asWritten++;
+    this.tell(`${this.where(at)}: ${quote(value)} ${reason}; kept as written`);
+  }
+
   /** Once the file is done: how many there were past the ones named. */
   done(): void {
-    const more = this.skipped + this.untimed - this.named;
+    const more = this.skipped + this.untimed + this.asWritten - this.named;
     if (more > 0) {
-      this.warn(`${safeLine(this.file)}: ${more} more like that (${this.skipped} skipped, ${this.untimed} kept without their time)`);
+      const asWritten = this.asWritten ? `, ${this.asWritten} kept as written` : '';
+      this.warn(`${safeLine(this.file)}: ${more} more like that (${this.skipped} skipped, ${this.untimed} kept without their time${asWritten})`);
     }
   }
 
@@ -114,12 +122,19 @@ const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"'
  * Plain text out of reply HTML: line breaks for <br> and block ends, "- " for list items, other tags dropped, entities
  * decoded. Linear in the length of the HTML: `/<li[^>]*>/` and `/<[^>]+>/` rescan to the end from every "<" that has
  * no ">" after it, which took 69 s on 200,000 of them (PoC 11), so those two steps are scanners. Each step still runs
- * over the previous one's output, as the regexes did, so the text comes out the same.
+ * over the previous one's output, as the regexes did, so the text comes out the same. `onUnread` is told of each
+ * numeric character reference that names no character (`&#x;`, `&#99999999;`), which stays as written.
  */
-export function stripHtml(html: string): string {
+export function stripHtml(html: string, onUnread?: (reference: string) => void): string {
   const breaks = html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|h\d|pre|tr)>/gi, '\n');
   return dropTags(listItems(breaks))
-    .replace(/&(#?\w+);/g, (m, name: string) => entity(name) ?? m)
+    .replace(/&(#?\w+);/g, (m, name: string) => {
+      const char = entity(name);
+      // A numeric reference that names no character stays as written, and `onUnread` hears of it (M7). A name this
+      // doesn't know (`&copy;`) is HTML all the same, so it stays as written without a word.
+      if (char === undefined && name.startsWith('#')) onUnread?.(m);
+      return char ?? m;
+    })
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

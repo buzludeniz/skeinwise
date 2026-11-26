@@ -1,6 +1,6 @@
 import type { EntryInput } from '../store/store.ts';
 import { withoutNoteExt } from './note-ext.ts';
-import { firstLine, toIso } from './util.ts';
+import { type FileReport, firstLine, toIso } from './util.ts';
 
 export interface ParsedNote {
   title: string;
@@ -144,7 +144,12 @@ function unquote(v: string): string {
 
 const DATE_IN_NAME = /(\d{4})-(\d{2})-(\d{2})/;
 
-export function parseNote(fileName: string, text: string, modifiedAt: Date): ParsedNote {
+/**
+ * A note as the importer keeps it. With `report`, a date the note claims that is no date (a typo in the front matter's
+ * `created` or `date`, or "Meeting 2023-14-02") is named, with the line for the front matter's, and the note is kept
+ * with the next date it has (M7).
+ */
+export function parseNote(fileName: string, text: string, modifiedAt: Date, report?: FileReport): ParsedNote {
   const { meta, properties, body } = parseFrontMatter(text);
   const heading = /^#\s+(.+)$/m.exec(body)?.[1]?.trim();
   const baseName = withoutNoteExt(fileName);
@@ -154,7 +159,13 @@ export function parseNote(fileName: string, text: string, modifiedAt: Date): Par
   // The front matter's date, else a real date in the name ("Meeting 2023-14-02" has none), else the file's.
   const metaDate = [meta.created, meta.date].map(toIso).find(Boolean);
   const nameDate = DATE_IN_NAME.exec(baseName);
-  const createdAt = metaDate ?? (nameDate && toIso(`${nameDate[1]}-${nameDate[2]}-${nameDate[3]}T09:00:00Z`)) ?? modifiedAt.toISOString();
+  const namedAt = nameDate ? toIso(`${nameDate[1]}-${nameDate[2]}-${nameDate[3]}T09:00:00Z`) : undefined;
+  const createdAt = metaDate ?? namedAt ?? modifiedAt.toISOString();
+  if (report && !metaDate) {
+    const claimed = (['created', 'date'] as const).find((key) => typeof meta[key] === 'string' && meta[key].trim());
+    if (claimed) report.time(frontMatterLine(text, claimed), meta[claimed], namedAt ? 'the date in its name' : 'the file’s time');
+    else if (nameDate && !namedAt) report.time('', nameDate[0], 'the file’s time');
+  }
 
   // Obsidian reads `tags`, and `tag` from older vaults; both merge with the inline #tags.
   const metaTags = meta.tags ?? meta.tag;
@@ -168,6 +179,13 @@ export function parseNote(fileName: string, text: string, modifiedAt: Date): Par
   const links = [...new Set(wikiLinks(body))];
 
   return { title, body: body.trim(), createdAt, tags: [...tags], links, meta, properties };
+}
+
+/** The line, from 1, of the front matter's `key` (lower case), or '' when it has none. */
+function frontMatterLine(text: string, key: string): string {
+  const lines = (splitFrontMatter(text)?.front ?? '').split(/\r?\n/);
+  const at = lines.findIndex((line) => keyValue(line)?.[0].toLowerCase() === key);
+  return at < 0 ? '' : String(at + 1);
 }
 
 const STOP = new Set([']', '|', '#']);

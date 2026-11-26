@@ -8,7 +8,7 @@ import { safeLine } from '../safe-text.ts';
 import type { Entry } from '../store/store.ts';
 import { type Existing, type Group, groupName, groupUnits, namingRequest } from './groups.ts';
 import { invalid, isRecord, list, type ModelRequest, noRequest, type Plan, type Product, round, type TaskContext } from './plan.ts';
-import { linkTargets, type RecordView } from './record.ts';
+import { isDailyNote, linkTargets, type RecordView } from './record.ts';
 import { replacedRuns } from './runs.ts';
 import { cosine, stem, tokenize } from './text.ts';
 import { definedTags, liveTags, type Schema } from './views.ts';
@@ -142,6 +142,8 @@ function unitScore(record: RecordView, group: Group, e: Entry): number {
 
 /** Notes linked from at least this many other entries count as projects. */
 const PROJECT_LINKS = 2;
+/** At most this many projects: the most linked notes, on a tie the one that came into the record first. */
+export const PROJECT_MAX = 50;
 
 function planProjects(ctx: TaskContext, schema: Schema): Plan {
   const { record } = ctx;
@@ -154,9 +156,11 @@ function planProjects(ctx: TaskContext, schema: Schema): Plan {
       linkers.get(note.id)!.add(e.id);
     }
   }
+  // A daily note is a log of the day, not a project, even when the days around it link to it.
   const projects = [...linkers]
     .filter(([, from]) => from.size >= PROJECT_LINKS)
     .map(([noteId, from]) => ({ note: record.byId.get(noteId)!, from }))
+    .filter(({ note }) => !isDailyNote(note))
     .sort((a, b) => a.note.id - b.note.id);
   const tags: NewTag[] = [];
   const taggings: Tagging[] = [];
@@ -168,11 +172,20 @@ function planProjects(ctx: TaskContext, schema: Schema): Plan {
     seen.add(name.toLowerCase());
     named.push({ note, from, name });
   }
+  // A record that links freely would otherwise make most of its notes projects (3,956 of the bench's 5,000 notes): keep
+  // the most linked, then go on in note order as before.
+  const kept = new Set(
+    [...named]
+      .sort((a, b) => b.from.size - a.from.size || a.note.id - b.note.id)
+      .slice(0, PROJECT_MAX)
+      .map((p) => p.note.id),
+  );
+  const chosen = named.filter((p) => kept.has(p.note.id));
   // Each entry is read once, for every name at a time: reading every entry again for each project took most of an hour
   // at 50,000 entries.
   const position = new Map(ctx.entries.map((e, i) => [e.id, i]));
-  const uses = nameUses(record.entries, named.map((p) => p.name), position);
-  named.forEach(({ note, from, name }, k) => {
+  const uses = nameUses(record.entries, chosen.map((p) => p.name), position);
+  chosen.forEach(({ note, from, name }, k) => {
     tags.push({ name, description: `The note "${name}", linked from ${from.size} entries.` });
     const linked = [note.id, ...from].flatMap((id) => (position.has(id) ? [position.get(id)!] : []));
     const matched = stands(uses[k]!, record.entries.length) ? uses[k]!.inScope : [];

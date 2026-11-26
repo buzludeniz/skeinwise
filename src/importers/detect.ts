@@ -378,7 +378,7 @@ function collect(
         if (kind === 'claude-code') sessions['claude-code'].push({ ...parseClaudeCodeSession(text, id, report), ...own });
         else if (kind === 'codex') sessions.codex.push({ ...parseCodexSession(text, id, report), ...own });
       } else {
-        const note = report.each('', () => noteEntry(rel(f.path), parseNote(name, text, f.modifiedAt)));
+        const note = report.each('', () => noteEntry(rel(f.path), parseNote(name, text, f.modifiedAt, report)));
         if (note) notes.push({ ...note, ...(container ? {} : { origin }) });
       }
     } catch (error) {

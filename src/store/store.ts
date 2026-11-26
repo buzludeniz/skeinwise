@@ -86,6 +86,14 @@ export interface EditOptions {
   runId?: number | null;
 }
 
+export interface AcceptOptions extends EditOptions {
+  /**
+   * For a proposal the record holds no copy of (`held` false): the batch read again from its file, from the same bytes
+   * that were hashed. It must be of the item's source kind and carry the item's SHA-256.
+   */
+  batch?: ImportBatch;
+}
+
 export interface ImportResult {
   added: number;
   versioned: number;
@@ -117,8 +125,15 @@ export interface PendingItem {
   /** Threads and entries the batch would add or change. */
   threads: number;
   entries: number;
-  /** Size of the proposed batch as stored, in bytes. */
+  /** Size of the proposed batch as stored, in bytes: 0 when the record holds no copy. */
   bytes: number;
+  /**
+   * Whether the proposal keeps a copy of its batch while it waits (dropped once decided). A capture nobody started
+   * (`trusted: false`) is held as its file's path and SHA-256 alone (H1), so none of its text is in the record until it
+   * is accepted; accepting reads the file again. An export the person imported that claims another account keeps a
+   * copy, and so does every row written before migration 8.
+   */
+  held: boolean;
   observedAt: string;
   decidedAt: string | null;
 }
@@ -321,10 +336,27 @@ function toVersion({ originPath, originHash, properties, ...row }: VersionRow): 
 }
 
 const PENDING_COLUMNS = `id, status, reason, source_kind AS sourceKind, source_label AS sourceLabel, origin_path AS originPath,
-  origin_sha256 AS originHash, account, threads, entries, bytes, observed_at AS observedAt, decided_at AS decidedAt`;
+  origin_sha256 AS originHash, account, threads, entries, bytes, held, observed_at AS observedAt,
+  decided_at AS decidedAt`;
 
-function toPending({ originPath, ...row }: Omit<PendingItem, 'origin'> & { originPath: string | null }): PendingItem {
-  return { ...row, origin: originPath !== null && row.originHash !== null ? { path: originPath, sha256: row.originHash } : null };
+type PendingRow = Omit<PendingItem, 'origin' | 'held'> & { originPath: string | null; held: number };
+
+/** What accept and reject read of a proposal still waiting. */
+interface UndecidedRow {
+  held: number;
+  batch: string | null;
+  sourceKind: string;
+  originPath: string | null;
+  originHash: string | null;
+  account: string | null;
+}
+
+function toPending({ originPath, held, ...row }: PendingRow): PendingItem {
+  return {
+    ...row,
+    held: held === 1,
+    origin: originPath !== null && row.originHash !== null ? { path: originPath, sha256: row.originHash } : null,
+  };
 }
 
 const ENTRY_SELECT = `
@@ -399,6 +431,7 @@ export class Store {
    * Imports a batch. Re-importing the same data changes nothing; changed text and titles become new versions, and an
    * older export never rolls them back. A batch that isn't trusted (a capture the person didn't start), or whose
    * account differs from the one the source was first imported from, changes nothing: it becomes one pending proposal.
+   * An untrusted batch's proposal holds no copy of it, only its file's path and SHA-256 (H1), so it must have an origin.
    */
   ingest(batch: ImportBatch, options: string | IngestOptions = {}): IngestResult {
     const opts = typeof options === 'string' ? { editor: options } : options;
@@ -411,7 +444,8 @@ export class Store {
         known !== null && account !== null && known !== account ? 'account' : opts.trusted === false ? 'unconfirmed' : null;
       if (!reason) return this.apply(batch, context, opts.ownFiles === true);
       const plan = this.plan(batch);
-      const pendingId = plan.proposed ? this.insertPending(plan.batch, plan, { reason, origin, account }) : null;
+      const held = opts.trusted !== false;
+      const pendingId = plan.proposed ? this.insertPending(plan.batch, plan, { reason, origin, account, held }) : null;
       return { ...plan.result, proposed: plan.proposed, pendingId };
     });
   }
@@ -787,14 +821,16 @@ export class Store {
 
   /**
    * Stores a batch as one pending proposal without touching the record. Returns its id, or null when the batch would
-   * change nothing or the same file (by SHA-256) was proposed before, whatever was decided about it.
+   * change nothing or the same file (by SHA-256) was proposed before, whatever was decided about it. The proposal holds
+   * a copy of the batch, so this is for a batch the person chose; a capture nobody started goes through ingest with
+   * `trusted: false`, whose proposal holds none.
    */
   propose(batch: ImportBatch, options: { reason: PendingReason; origin?: Origin | null; account?: string | null }): number | null {
     const origin = options.origin !== undefined ? options.origin : (batch.origin ?? null);
     const account = options.account !== undefined ? options.account : (batch.account ?? null);
     return inTransaction(this.db, () => {
       const plan = this.plan(batch);
-      return plan.proposed ? this.insertPending(plan.batch, plan, { reason: options.reason, origin, account }) : null;
+      return plan.proposed ? this.insertPending(plan.batch, plan, { reason: options.reason, origin, account, held: true }) : null;
     });
   }
 
@@ -846,15 +882,18 @@ export class Store {
   private insertPending(
     batch: ImportBatch,
     counts: { threads: number; entries: number },
-    options: { reason: PendingReason; origin: Origin | null; account: string | null },
+    options: { reason: PendingReason; origin: Origin | null; account: string | null; held: boolean },
   ): number | null {
     const { origin } = options;
+    // Not held, the proposal is its file alone, read again on accept: without the file there is nothing to accept.
+    if (!options.held && !origin) throw new Error(`A ${batch.source.label} batch nobody chose needs the file it came from to wait for a yes`);
     if (origin && this.pendingByHash(origin.sha256, batch.source.kind)) return null;
-    const json = JSON.stringify({ ...batch, origin, account: options.account });
+    const json = options.held ? JSON.stringify({ ...batch, origin, account: options.account }) : null;
     const res = this
       .stmt(
-        `INSERT INTO pending (reason, source_kind, source_label, origin_path, origin_sha256, account, threads, entries, bytes, batch, observed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO pending (reason, source_kind, source_label, origin_path, origin_sha256, account, threads, entries, bytes, held, batch,
+                              observed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         options.reason,
@@ -865,7 +904,8 @@ export class Store {
         options.account,
         counts.threads,
         counts.entries,
-        Buffer.byteLength(json),
+        json === null ? 0 : Buffer.byteLength(json),
+        options.held ? 1 : 0,
         json,
         this.now(),
       );
@@ -895,10 +935,15 @@ export class Store {
     return row && toPending(row);
   }
 
-  /** Imports a pending proposal as the person accepted it, with its origin and account on every version. */
-  acceptPending(id: number, options: EditOptions = {}): ImportResult {
+  /**
+   * Imports a pending proposal as the person accepted it, with its origin and account on every version. One the record
+   * holds no copy of takes `options.batch`, read again from its file; it is refused unless it has the item's source kind
+   * and SHA-256.
+   */
+  acceptPending(id: number, options: AcceptOptions = {}): ImportResult {
     return inTransaction(this.db, () => {
-      const batch = this.undecided(id);
+      const row = this.undecided(id);
+      const batch = row.held ? (JSON.parse(row.batch!) as ImportBatch) : this.freshRead(id, row, options.batch);
       const result = this.apply(batch, {
         editor: options.editor ?? 'import',
         runId: options.runId ?? null,
@@ -918,11 +963,26 @@ export class Store {
     });
   }
 
-  private undecided(id: number): ImportBatch {
-    const row = this.db.prepare('SELECT status, batch FROM pending WHERE id = ?').get(id) as { status: PendingStatus; batch: string | null } | undefined;
+  private undecided(id: number): UndecidedRow {
+    const row = this.db
+      .prepare(
+        `SELECT status, held, batch, source_kind AS sourceKind, origin_path AS originPath, origin_sha256 AS originHash, account
+         FROM pending WHERE id = ?`,
+      )
+      .get(id) as (UndecidedRow & { status: PendingStatus }) | undefined;
     if (!row) throw new Error(`No pending item ${id}`);
-    if (row.status !== 'pending' || row.batch === null) throw new Error(`Pending item ${id} was already ${row.status}`);
-    return JSON.parse(row.batch) as ImportBatch;
+    if (row.status !== 'pending') throw new Error(`Pending item ${id} was already ${row.status}`);
+    return row;
+  }
+
+  /** The batch of a proposal held as its file alone: the caller's fresh read of it, checked against the row. */
+  private freshRead(id: number, row: UndecidedRow, batch: ImportBatch | undefined): ImportBatch {
+    if (row.originPath === null || row.originHash === null) throw new Error(`Pending item ${id} has no file to read`);
+    if (!batch) throw new Error(`Pending item ${id} is held as its file alone: read ${row.originPath} again to accept it`);
+    if (batch.source.kind !== row.sourceKind || batch.origin?.sha256 !== row.originHash) {
+      throw new Error(`That is not the ${row.sourceKind} export pending item ${id} was proposed from (${row.originPath})`);
+    }
+    return { ...batch, origin: { path: row.originPath, sha256: row.originHash }, account: row.account };
   }
 
   private decide(id: number, status: 'accepted' | 'rejected'): void {

@@ -29,8 +29,12 @@ skein:
   clustering do the organising.
 - **Plain data.** The record is one SQLite file plus your Markdown notes.
 - **Ready for agents.** An MCP server gives Claude Code, Codex, Cursor and other tools memory over your record.
-- **Sized for a big record.** 1.0 is made for records of up to 50,000 entries. Its times at that size are pending:
-  they go here once the 50,000-entry benchmark has run on main.
+- **Sized for a big record.** 1.0 is made for records of up to 50,000 entries. At that size, with AI off
+  (`--engine none`) on GitHub's standard Linux runner (4 cores, 16 GB), [the benchmark](bench/README.md) imports in
+  5.4 s, searches in 34 ms (p95) and answers `ask` in 0.46 s. The first `run all` takes 93 s at a peak of 610 MB, and
+  100 new entries organise in 7.2 s. With live capture on, a new chat message is searchable 1.5 s later; the brain's
+  first load is 484 kB compressed, and an agent's MCP lookup takes 43 ms (p95). Each figure is the worse of two runs,
+  and each is within the budget the benchmark sets for an M1 with 16 GB.
 
 ## Roadmap
 

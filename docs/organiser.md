@@ -164,7 +164,9 @@ refuses when a later run or correction built on the run (a hub correction, say):
 A schema is a named list of tags. Three are built in:
 
 - **Topics:** what entries are about, from groups of related entries.
-- **Projects:** notes you link to from two or more other notes.
+- **Projects:** notes you link to from two or more other notes, at most 50 of them. When more notes qualify, it
+  keeps the 50 linked from the most entries, and on a tie the note that came into your record first. A daily note,
+  one in a `daily/` folder or titled with its date (2026-11-26), is never a project.
 - **Moods:** how you sound in your own words, from six tags with describing words.
 
 A project's tag goes on its note and on every entry that links to it. An entry that names the project without a link
