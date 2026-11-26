@@ -12,6 +12,9 @@ import {
   ringsLayout,
   rng,
   stemCentre,
+  STRIP_LANE,
+  STRIP_LENGTH,
+  stripLayout,
 } from '../../web/src/layout.ts';
 
 function record(n: number, seed = 1): LayoutPoint[] {
@@ -184,5 +187,49 @@ describe('the activity and clusters layouts', () => {
       expect(Math.hypot(pos[i * 3]! - cx!, pos[i * 3 + 1]! - cy!)).toBeLessThan(0.7);
     });
     expect(boundingSphere(pos).radius).toBeGreaterThan(0.3);
+  });
+});
+
+describe("the Timeline's strip", () => {
+  it('runs time left to right, oldest first, along y', () => {
+    const pts = record(300);
+    const pos = stripLayout(pts, ctx.sources);
+    const byTime = pts.map((p, i) => ({ t: p.time, y: pos[i * 3 + 1]! })).sort((a, b) => a.t - b.t);
+    for (let j = 1; j < byTime.length; j++) expect(byTime[j]!.y).toBeGreaterThanOrEqual(byTime[j - 1]!.y);
+    expect(byTime[0]!.y).toBeCloseTo(-STRIP_LENGTH / 2, 5);
+    expect(byTime.at(-1)!.y).toBeCloseTo(STRIP_LENGTH / 2, 5);
+  });
+
+  it('gives each source its own lane, in id order from the top, hubs above, and keeps it as sources arrive', () => {
+    const pts = record(300).map((p) => ({ ...p, kind: 0 as const }));
+    const hub: LayoutPoint = { id: -1, kind: 1, time: pts[0]!.time, cluster: 0, strand: 0, thread: 0, group: 0 };
+    const pos = stripLayout([...pts, hub], ctx.sources);
+    const laneZ = (strand: number) => pts.flatMap((p, i) => (p.strand === strand ? [pos[i * 3 + 2]!] : []));
+    const centres = [0, 1, 2, 3].map((s) => {
+      const z = laneZ(s);
+      expect(Math.max(...z) - Math.min(...z)).toBeLessThanOrEqual(STRIP_LANE * 0.6);
+      return (Math.max(...z) + Math.min(...z)) / 2;
+    });
+    // record() strands index sources ids 1..4, so lanes run 0, 1, 2, 3 from the top.
+    for (let k = 1; k < 4; k++) expect(centres[k]!).toBeLessThan(centres[k - 1]! - STRIP_LANE * 0.3);
+    expect(pos[pts.length * 3 + 2]!).toBeGreaterThan(Math.max(...laneZ(0)));
+    // A new source with a higher id takes a lane below; the others keep theirs.
+    const more = stripLayout(pts, [...ctx.sources, { id: 9 }]);
+    const shift = more[2]! - pos[2]!;
+    pts.forEach((_, i) => expect(more[i * 3 + 2]! - pos[i * 3 + 2]!).toBeCloseTo(shift, 5));
+  });
+
+  it('handles an empty record, undated entries and unlisted sources', () => {
+    expect(stripLayout([], ctx.sources)).toHaveLength(0);
+    const odd = stripLayout(
+      [
+        { id: 1, kind: 0, time: Number.NaN, cluster: 0, strand: 0, thread: 0, group: 0 },
+        { id: 2, kind: 0, time: 5, cluster: 0, strand: 7, thread: 0, group: 0 },
+      ],
+      [{ id: 1 }],
+    );
+    expect([...odd].every(Number.isFinite)).toBe(true);
+    expect(odd[1]!).toBeLessThan(odd[4]!);
+    expect(odd[5]!).toBeLessThan(odd[2]! - STRIP_LANE * 0.3);
   });
 });

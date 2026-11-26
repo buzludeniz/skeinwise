@@ -1,6 +1,6 @@
-// The brain: one WebGL view of every entry as a point of light. Notes sit in the two lobes, originals wind up the
-// stem below them in time order. The same scene moves between the Brain view and the Timeline's strip, so the
-// camera and colours carry over.
+// The brain: one WebGL view of every entry as a point of light. In the brain layout, notes sit in the head's two lobes
+// and every other entry on its source's nerve down the body. The same scene moves between the Brain view and the
+// Timeline's strip, where the points lie in one lane per source in time order, so the colours carry over.
 
 import {
   AdditiveBlending,
@@ -17,7 +17,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { hash01, layoutFor, ringGuides, type Layout, type LayoutPoint } from '../layout.ts';
+import { hash01, layoutFor, ringGuides, stripLayout, type Layout, type LayoutPoint } from '../layout.ts';
 import { bodyLayout, type BodyLayout } from './body.ts';
 import { bodyOutline, cordRings, nerveLines } from './bodyGeometry.ts';
 import { type Framing, framingBox } from './framing.ts';
@@ -231,7 +231,7 @@ export class BrainScene {
   private selectDirty = false;
 
   private input: SceneInput | null = null;
-  private layouts = new Map<Layout, Float32Array>();
+  private layouts = new Map<Layout | 'strip', Float32Array>();
   /** The body behind the brain layout, for its guides, and the now its cord's top month was set from. */
   private body: BodyLayout | null = null;
   private now = Date.now();
@@ -406,9 +406,15 @@ export class BrainScene {
       this.renderer.autoClear = true;
     }
     host.append(this.root);
+    const moved = mode !== this.mode;
     this.mode = mode;
     this.root.dataset.mode = mode;
     if (mode !== 'full') this.select(-1);
+    // Into or out of the strip: the points change places at once, and the outline and guides follow the mode.
+    if (moved && this.input) {
+      this.moveTo(this.layout, false);
+      this.buildRings();
+    }
     this.resizer?.disconnect();
     this.resizer = new ResizeObserver(() => this.resize());
     this.resizer.observe(host);
@@ -640,13 +646,22 @@ export class BrainScene {
 
   // Layout and moves.
 
+  /** Where the points sit in a layout; the strip, whatever the layout, lays them in lanes. */
   private layoutOf(layout: Layout): Float32Array {
-    let pos = this.layouts.get(layout);
+    const key = this.mode === 'strip' ? 'strip' : layout;
+    let pos = this.layouts.get(key);
     if (!pos) {
-      pos = layoutFor(layout, this.input?.points ?? [], { sources: this.input?.sources ?? [], now: this.now });
-      this.layouts.set(layout, pos);
+      const points = this.input?.points ?? [];
+      const sources = this.input?.sources ?? [];
+      pos = key === 'strip' ? stripLayout(points, sources) : layoutFor(layout, points, { sources, now: this.now });
+      this.layouts.set(key, pos);
     }
     return pos;
+  }
+
+  /** The body's outline and guides belong to the brain layout in the full view, not to the strip. */
+  private get bodyShown(): boolean {
+    return this.layout === 'brain' && this.mode === 'full';
   }
 
   /** Where point i is drawn right now: mid-move, on the same eased path the shaders draw. */
@@ -692,7 +707,7 @@ export class BrainScene {
   private applyMix(): void {
     const t = easeInOut(this.mix);
     for (const m of [this.pointMat, this.threadMat, this.linkMat, this.crossMat, this.spokeMat, this.markMat, this.selectMat]) m.uniforms.uMix!.value = t;
-    this.shellShow = this.layout === 'brain' ? Math.max(this.shellShow, t) : Math.min(this.shellShow, 1 - t);
+    this.shellShow = this.bodyShown ? Math.max(this.shellShow, t) : Math.min(this.shellShow, 1 - t);
     this.shellMat.uniforms.uShow!.value = this.shellShow;
     if (this.rings) this.ringMat.uniforms.uMix!.value = 1;
   }
@@ -923,11 +938,11 @@ export class BrainScene {
     }
     for (const el of this.labelLayer.querySelectorAll('.ring-label')) el.remove();
     if (!this.input) return;
-    if (this.layout === 'brain') {
+    if (this.bodyShown) {
       this.buildBodyGuides(this.input);
       return;
     }
-    if (this.layout !== 'rings') return;
+    if (this.layout !== 'rings' || this.mode !== 'full') return;
     const guides = ringGuides(this.input.points);
     const v: number[] = [];
     const steps = 96;
@@ -1083,7 +1098,7 @@ export class BrainScene {
 
   private fitOrbit(layout: Layout): Orbit {
     const pos = this.input ? this.layoutOf(layout) : new Float32Array(0);
-    const sets = layout === 'brain' ? [pos, this.shell!.geometry.getAttribute('position').array as Float32Array] : [pos];
+    const sets = layout === 'brain' && this.mode === 'full' ? [pos, this.shell!.geometry.getAttribute('position').array as Float32Array] : [pos];
     if (layout === 'brain' && this.mode === 'full' && this.framing !== 'body' && this.input) {
       // The head or the cord: fit its box alone, whatever else the record holds.
       this.body ??= bodyLayout(this.input.points, this.input.sources, this.now);

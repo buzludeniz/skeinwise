@@ -327,6 +327,40 @@ export function clustersLayout(points: readonly LayoutPoint[]): Float32Array {
   return out;
 }
 
+/** The Timeline's strip: its length along the time axis, and the gap between two sources' lanes, in world units. */
+export const STRIP_LENGTH = 16;
+export const STRIP_LANE = 0.3;
+
+/**
+ * The Timeline's strip: time along y, oldest at -y (the strip camera shows y left to right), and one lane per source
+ * along z, in source id order from the top, so a source keeps its lane as others arrive. Entries whose source isn't
+ * listed share one lane at the bottom; hubs ride a lane above the sources; an undated entry waits just before the
+ * oldest. Time is linear between the oldest and newest dated entries, like the weekly chart above the strip.
+ */
+export function stripLayout(points: readonly LayoutPoint[], sources: readonly { id: number }[]): Float32Array {
+  const pos = new Float32Array(points.length * 3);
+  let t0 = Infinity;
+  let t1 = -Infinity;
+  for (const p of points) {
+    if (!Number.isFinite(p.time)) continue;
+    t0 = Math.min(t0, p.time);
+    t1 = Math.max(t1, p.time);
+  }
+  const span = Math.max(t1 - t0, 86_400_000);
+  const order = sources.map((s, i) => ({ id: s.id, i })).sort((a, b) => a.id - b.id);
+  const laneOf = new Map(order.map((s, k) => [s.i, k]));
+  const lanes = order.length + (points.some((p) => p.id >= 0 && !laneOf.has(p.strand)) ? 1 : 0);
+  const top = ((lanes - 1) / 2) * STRIP_LANE;
+  points.forEach((p, i) => {
+    const lane = p.id < 0 ? -1 : (laneOf.get(p.strand) ?? lanes - 1);
+    const y = Number.isFinite(p.time) ? -STRIP_LENGTH / 2 + (STRIP_LENGTH * (p.time - t0)) / span : -STRIP_LENGTH / 2 - 0.4;
+    pos[i * 3] = (hash01(p.id, 21) - 0.5) * 0.2;
+    pos[i * 3 + 1] = y;
+    pos[i * 3 + 2] = top - lane * STRIP_LANE + (hash01(p.id, 22) - 0.5) * STRIP_LANE * 0.6;
+  });
+  return pos;
+}
+
 /** What the body needs beyond the points: the record's sources, in the order a point's `strand` indexes them, and now. */
 export interface LayoutContext {
   sources: readonly { id: number; kind: string }[];

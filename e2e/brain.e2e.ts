@@ -290,6 +290,29 @@ test("says the brain didn't load, not that WebGL is missing, when its drawing co
   expect(errors).toEqual([]);
 });
 
+test("draws the Timeline's strip, and says it didn't load, not that WebGL is missing, when its drawing code can't be fetched", async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(`/?seedview=brain#token=${token()}`);
+  await expect(page.locator('.brain-host canvas')).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Timeline' }).click();
+  await expect(page.locator('.strip canvas')).toBeVisible();
+  await expect(page.getByText("This browser can't draw the strip")).toHaveCount(0);
+
+  const broken = await page.context().newPage();
+  broken.on('pageerror', (e) => errors.push(String(e)));
+  await broken.route(/\/assets\/scene-[^/]*\.js$/, (route) => route.fulfill({ status: 404, body: '' }));
+  await broken.emulateMedia({ reducedMotion: 'reduce' });
+  await broken.goto(`/?seedview=brain#token=${token()}`);
+  await expect(broken.getByText("The brain didn't load")).toBeVisible({ timeout: 30_000 });
+  await broken.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Timeline' }).click();
+  await expect(broken.getByText('Open a new tab at the address Skeinwise printed when it started')).toBeVisible();
+  await expect(broken.getByText("This browser can't draw the strip")).toHaveCount(0);
+  expect(await axeFails(broken, "the strip didn't load")).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 // axe, as e2e/axe.e2e.ts runs it (WCAG 2.0 and 2.1, A and AA; serious and critical fail), over the states that suite
 // doesn't reach: a focused label, a hub's card, an entry's card with its linked entries, and the lit chip. In every
 // theme, wide and compact. The canvas is left out: axe can't see into it.
