@@ -54,6 +54,15 @@ function setEngine(engine: 'local' | 'none') {
   execFileSync(process.execPath, [cli, 'config', 'engine', engine], { env: { ...process.env, SKEINWISE_HOME: join(runFolder(), 'home') } });
 }
 
+/**
+ * Opens the app at the address serve prints. The page keeps its token in memory only, so a reload would ask for that
+ * address again; a blank page first makes this a fresh load, not a jump within the same page.
+ */
+async function openApp(page: Page) {
+  await page.goto('about:blank');
+  await page.goto(`/?seedview=stats#token=${token()}`);
+}
+
 async function openViews(page: Page) {
   await expect(page.getByRole('heading', { name: 'Stats', level: 1 })).toBeVisible();
   await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Views' }).click();
@@ -67,7 +76,7 @@ test('describes, draws, renders and saves a view; under No-AI the saved view sti
   // The local engine, pointed at the fake model.
   await settings(request, { ai: { engine: 'local', local: { address: `http://127.0.0.1:${modelPort}/v1` } } });
 
-  await page.goto(`/?seedview=stats#token=${token()}`);
+  await openApp(page);
   let views = await openViews(page);
 
   // Describe, and the model's spec is checked and drawn with the Workbench's chart.
@@ -89,7 +98,7 @@ test('describes, draws, renders and saves a view; under No-AI the saved view sti
   // No-AI: the saved view still renders, and drawing says it needs the local model.
   // The page can't change the engine (the server answers 403), so the terminal does.
   setEngine('none');
-  await page.reload();
+  await openApp(page);
   views = await openViews(page);
   await expect(views.getByRole('note')).toContainText('Drawing a new view needs the local model');
   await expect(views.getByLabel('Describe a view')).toHaveCount(0);
