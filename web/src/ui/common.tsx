@@ -1,6 +1,6 @@
 // Small shared pieces: buttons, switches, segmented choices, empty states, the logo.
 
-import type { ButtonHTMLAttributes, ComponentChildren } from 'preact';
+import type { ButtonHTMLAttributes, ComponentChildren, RefObject } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import type { LucideIcon } from 'lucide-preact';
 import { X } from 'lucide-preact';
@@ -8,6 +8,7 @@ import markDark from '../../../docs/brand/logo-mark-dark.svg';
 import markLight from '../../../docs/brand/logo-mark.svg';
 import { useApp } from '../store.ts';
 import { theme } from '../themes.ts';
+import { panelId, tabId, tabStep } from './tabs.ts';
 
 /**
  * The mark from docs/brand, used as it is: the light file on light themes and the dark one on dark themes, as the
@@ -94,6 +95,57 @@ export function Segmented<T extends string>({
   );
 }
 
+/**
+ * A row of tabs. Only the selected tab is in the Tab order; the arrow keys move to the next tab and select it, and Home
+ * and End go to the first and the last. `id` ties the tabs to their panel, which takes `tabPanel(id, value)`.
+ * `dotted` marks a tab with a dot.
+ */
+export function TabList<T extends string>({
+  id,
+  label,
+  tabs,
+  value,
+  onChange,
+  dotted,
+}: {
+  id: string;
+  label: string;
+  tabs: readonly (readonly [T, string])[];
+  value: T;
+  onChange: (v: T) => void;
+  dotted?: (key: T) => boolean;
+}) {
+  const row = useRef<HTMLDivElement>(null);
+  const onKeyDown = (e: KeyboardEvent, at: number) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const next = tabStep(e.key, at, tabs.length);
+    if (next === null) return;
+    e.preventDefault();
+    onChange(tabs[next]![0]);
+    row.current?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
+  };
+  return (
+    <div class="tabs" role="tablist" aria-label={label} ref={row}>
+      {tabs.map(([key, text], i) => (
+        <button
+          key={key}
+          id={tabId(id, key)}
+          type="button"
+          role="tab"
+          aria-selected={value === key}
+          aria-controls={panelId(id)}
+          tabIndex={value === key ? 0 : -1}
+          class={`${value === key ? 'on' : ''}${dotted?.(key) ? ' tab-has' : ''}`}
+          onClick={() => onChange(key)}
+          onKeyDown={(e) => onKeyDown(e, i)}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Select<T extends string>({
   value,
   options,
@@ -139,7 +191,39 @@ export function Kbd({ children }: { children: ComponentChildren }) {
 export const MOD = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl+';
 export const ALT = MOD === '⌘' ? '⌥' : 'Alt+';
 
-/** A right-hand panel with a title and a close button. Escape closes it. */
+/**
+ * Moves focus to a panel's heading when the panel opens, so the keyboard and a screen reader start there, and gives it
+ * back to where it was when the panel closes. Focus the person has moved somewhere else in the meantime stays there.
+ * When `shows` changes while the panel stays open, as when a thread's Open swaps in the entry, the control that had
+ * focus is gone with the old content, so focus goes to the heading again rather than to the page.
+ */
+function usePanelFocus(panel: RefObject<HTMLElement | null>, heading: RefObject<HTMLElement | null>, shows: string | undefined) {
+  const opened = useRef(false);
+  useEffect(() => {
+    if (!opened.current) {
+      opened.current = true;
+      return;
+    }
+    const now = document.activeElement;
+    if (!now || now === document.body) heading.current?.focus({ preventScroll: true });
+  }, [shows]);
+  useEffect(() => {
+    const box = panel.current;
+    const active = document.activeElement;
+    const back = active instanceof HTMLElement && active !== document.body && !box?.contains(active) ? active : null;
+    heading.current?.focus({ preventScroll: true });
+    return () => {
+      const now = document.activeElement;
+      const inPanel = !now || now === document.body || !!box?.contains(now);
+      if (inPanel && back?.isConnected) back.focus({ preventScroll: true });
+    };
+  }, []);
+}
+
+/**
+ * A right-hand panel with a title and a close button. Escape closes it. Focus moves in when it opens and back when it
+ * closes. `shows` names what the panel shows, for a panel whose content changes while it stays open.
+ */
 export function SidePanel({
   title,
   label,
@@ -147,6 +231,7 @@ export function SidePanel({
   children,
   actions,
   wide,
+  shows,
 }: {
   title: ComponentChildren;
   label: string;
@@ -154,8 +239,10 @@ export function SidePanel({
   children: ComponentChildren;
   actions?: ComponentChildren;
   wide?: boolean;
+  shows?: string;
 }) {
   const ref = useRef<HTMLElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('.modal-open')) onClose();
@@ -163,10 +250,13 @@ export function SidePanel({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+  usePanelFocus(ref, heading, shows);
   return (
     <aside class={`side-panel${wide ? ' wide' : ''}`} aria-label={label} ref={ref}>
       <header class="side-head">
-        <div class="side-title">{title}</div>
+        <h2 class="side-title" tabIndex={-1} ref={heading}>
+          {title}
+        </h2>
         {actions}
         <Button icon={X} kind="quiet" aria-label="Close" title="Close (Esc)" onClick={onClose} />
       </header>

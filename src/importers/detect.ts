@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, extname, join, relative, resolve } from 'node:path';
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { openZipSafe, UnsafeFileError, type UnsafeReason } from '../fsafe.ts';
@@ -97,11 +97,12 @@ export function sniffSession(text: string): 'claude-code' | 'codex' | null {
   return null;
 }
 
-/** A folder the person named, as it was when it was checked: its real path, and which folder that was. */
+/** A folder the person named, as it was when it was checked: its real path, and which folder that was (in bigint, as
+ * fsafe compares them: a 64-bit Windows file id loses its low bits as a number). */
 interface Pinned {
   real: string;
-  dev: number;
-  ino: number;
+  dev: bigint;
+  ino: bigint;
 }
 
 /**
@@ -119,7 +120,7 @@ function fileUnder(root: string, full: string, modifiedAt: Date, pinned?: Pinned
     read: () => {
       const file = readImportFile(full, { root: pinned?.real ?? root });
       if (pinned) {
-        const now = lstatSync(pinned.real);
+        const now = lstatSync(pinned.real, { bigint: true });
         if (now.isSymbolicLink() || now.dev !== pinned.dev || now.ino !== pinned.ino) {
           throw new UnsafeFileError(full, 'outside', `${full}: skipped, the folder it was found in changed while it was being read`);
         }
@@ -154,6 +155,15 @@ function walk(root: string, warn: (message: string) => void, pinned?: Pinned): R
   };
   visit(root);
   return out;
+}
+
+/**
+ * A path inside the folder that was named, as the record keeps it (an entry's id) and the warnings name it: its parts
+ * joined with "/" on every system, so an import on Windows gives the same ids as on macOS or Linux, and a sync between
+ * them matches the same entries.
+ */
+export function pathInside(root: string, path: string): string {
+  return relative(root, path).split(sep).join('/');
 }
 
 /** The names read from inside a zip. A .docx isn't one: it is read on its own or from a folder, never from a zip. */
@@ -194,12 +204,12 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
   // after this is of `real` without following links, so a file swapped for a link after this check is refused, not
   // followed; a folder is pinned to the one found now (fileUnder). Nothing found inside a folder is followed.
   const real = realpathSync(abs);
-  const stat = lstatSync(real);
+  const stat = lstatSync(real, { bigint: true });
   if (stat.isSymbolicLink()) throw new UnsafeFileError(abs, 'symlink', `${abs}: skipped, it became a symbolic link while it was being read`);
   const ext = extname(abs).toLowerCase();
   let batches: ImportBatch[];
   if (stat.isDirectory()) {
-    batches = collect(walk(abs, warn, { real, dev: stat.dev, ino: stat.ino }), abs, (p) => relative(abs, p), options, warn, null);
+    batches = collect(walk(abs, warn, { real, dev: stat.dev, ino: stat.ino }), abs, (p) => pathInside(abs, p), options, warn, null);
   } else if (ext === '.zip') {
     const zip = unzip(abs, real, warn);
     try {
@@ -215,7 +225,7 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
     // person hears why.
     const file = readImportFile(real);
     const raw = { path: abs, read: () => ({ text: file.text }), modifiedAt: file.mtime };
-    batches = collect([raw], dirname(abs), (p) => relative(dirname(abs), p), options, warn, { path: abs, sha256: file.sha256 });
+    batches = collect([raw], dirname(abs), (p) => pathInside(dirname(abs), p), options, warn, { path: abs, sha256: file.sha256 });
   }
   if (!batches.length && !options.emptyOk) throw new Error(`Nothing to import in ${path}`);
   return batches;
@@ -285,7 +295,7 @@ export function readFilesUnder(root: string, paths: string[], options: ImportOpt
     // A link, a folder or a FIFO is refused by the read itself, with a warning, and skipped alone.
     files.push(fileUnder(abs, full, mtime));
   }
-  return collect(files, abs, (p) => relative(abs, p), options, warn, null);
+  return collect(files, abs, (p) => pathInside(abs, p), options, warn, null);
 }
 
 /**

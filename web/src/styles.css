@@ -2167,6 +2167,30 @@ input.editor-title {
   margin-bottom: 10px;
 }
 
+.agent-requests {
+  margin-bottom: 14px;
+}
+
+.agent-requests > h4 {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.agent-requests li {
+  padding: 10px 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+.agent-requests .request-what {
+  overflow-wrap: anywhere;
+}
+
+.agent-requests .request-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .agent-list .check {
   border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
 }

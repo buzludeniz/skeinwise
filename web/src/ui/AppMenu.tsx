@@ -130,7 +130,7 @@ export function AppMenu({ onAddFiles }: { onAddFiles: () => void }) {
                   role="menuitem"
                   class="btn btn-small btn-quiet"
                   disabled={!a.found}
-                  onClick={run(() => toast(`The memory and window servers come in version 0.5. Then ${a.label} can connect here.`))}
+                  onClick={run(() => toast(`To give ${a.label} your record as its memory, run skeinwise connect ${a.key} in a terminal.`))}
                 >
                   {a.found ? 'Connect' : 'Not found'}
                 </button>
