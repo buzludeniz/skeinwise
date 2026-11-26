@@ -822,8 +822,8 @@ export class BrainScene {
 
   /**
    * The selected point's ring and its own lines (its links, cross links, spokes and thread steps), in ink, over the
-   * rest. They are rebuilt from where points are drawn now, so they follow a move; that is a few dozen vertices, so
-   * it runs on every frame of a move.
+   * rest. Rebuilt when the selection, the layout, the line density, the theme or the data change, never once a frame;
+   * the shaders carry them through a move, as they do the points and lines.
    */
   private buildSelection(): void {
     this.selectDirty = false;
