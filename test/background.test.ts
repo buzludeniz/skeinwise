@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,7 @@ import { Background, type BackgroundOptions, type Exec, parsePmset, PMSET, readB
 import { startLive } from '../src/live/run.ts';
 import { type PollReport, pollConnectors } from '../src/connectors/poll.ts';
 import { type RunOptions, runSteps, steps } from '../src/organiser/organise.ts';
+import { serverKeyPath } from '../src/organiser/model.ts';
 import { RecordView } from '../src/organiser/record.ts';
 import { listRuns } from '../src/organiser/runs.ts';
 import type { Store } from '../src/store/store.ts';
@@ -131,6 +133,26 @@ describe('background organising', () => {
       'up to date · organising stopped: No model server answers at http://127.0.0.1:8731/v1',
     );
     expect(listRuns(store.db).every((r) => r.status === 'done')).toBe(true);
+  });
+});
+
+describe('the local model server', () => {
+  it('gets the key kept in this record folder, however bare the environment', async () => {
+    await runSteps(store, new RecordView(store), steps(store, 'all'), NONE);
+    addNote('crumb.md', 'Open crumb on the third bake.');
+    setConfigValue(home, 'engine', 'local');
+    setConfigValue(home, 'localUrl', 'http://127.0.0.1:9/v1'); // nothing is sent: the fetch below is a fake
+    const key = randomBytes(16).toString('hex');
+    mkdirSync(join(home, 'models'), { recursive: true });
+    writeFileSync(serverKeyPath(home), `${key}\n`, { mode: 0o600 });
+    const sent: (string | null)[] = [];
+    const locked = (async (_url: string | URL | Request, init?: RequestInit) => {
+      sent.push(new Headers(init?.headers).get('authorization'));
+      throw new TypeError('fetch failed');
+    }) as typeof fetch;
+    await background({ fetch: locked, env: {} }).pass();
+    expect(sent.length).toBeGreaterThan(0);
+    expect(new Set(sent)).toEqual(new Set([`Bearer ${key}`]));
   });
 });
 

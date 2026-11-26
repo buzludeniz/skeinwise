@@ -129,7 +129,7 @@ export class Background {
         organised.waiting = 'the outside model only organises in the background with: skeinwise config liveRemote on';
         return finish();
       }
-      const client = config.engine === 'none' ? undefined : createModel(config, config.engine, { fetch: this.options.fetch, env: this.options.env });
+      const client = config.engine === 'none' ? undefined : createModel(config, config.engine, { fetch: this.options.fetch, env: this.options.env, home });
       readNotes(store, home);
       // The whole record in memory, built only once a step will use it: a record never organised needs none (L6).
       let record: RecordView | undefined;
