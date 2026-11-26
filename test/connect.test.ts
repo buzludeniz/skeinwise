@@ -428,7 +428,7 @@ describe('skeinwise setup', () => {
     const { ctx, output } = setupCtx([]);
     expect(await setup(ctx)).toBe(0);
     expect(output.out).toContain('Claude Code history: ');
-    expect(output.out).toContain('Notes: Notes: 1 note');
+    expect(output.out).toContain('  Notes folder: 1 note\n');
     expect(output.out).toContain(`skeinwise import ${commandWord(join(user, 'Documents', 'Notes'), process.platform)}`);
     expect(output.out).toContain('or all at once: skeinwise setup --yes');
     expect(output.out).toContain('skeinwise connect claude-code');
@@ -436,6 +436,18 @@ describe('skeinwise setup', () => {
     expect(store.sources()).toHaveLength(0);
     store.db.close();
     expectMode(join(home, 'record.db'), 0o600);
+  });
+
+  it('says a Notes folder\'s name once, whatever its case, and names a vault by its folder', async () => {
+    mkdirSync(join(user, 'notes'), { recursive: true });
+    writeFileSync(join(user, 'notes', 'seeds.md'), '# Seeds\n\nSow the beans in May.\n');
+    mkdirSync(join(user, 'Garden', '.obsidian'), { recursive: true });
+    writeFileSync(join(user, 'Garden', 'beds.md'), '# Beds\n\nPeas by the fence.\n');
+    const { ctx, output } = setupCtx([]);
+    expect(await setup(ctx)).toBe(0);
+    const lines = output.out.split('\n').filter((l) => /^ {2}(Notes|Obsidian)/.test(l));
+    expect(lines.sort()).toEqual(['  Notes folder: 1 note', '  Notes folder: 1 note', '  Obsidian vault: Garden: 1 note']);
+    expect(output.out).not.toMatch(/Notes: notes|Notes: Notes/i);
   });
 
   it('names each import in the shell form of the platform it runs on', async () => {

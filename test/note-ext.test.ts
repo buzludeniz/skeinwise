@@ -79,7 +79,7 @@ describe('a .docx counts as a note', () => {
     writeFileSync(join(dir, 'Notes', 'Garden', 'BEDS.DOCX'), docx('Beds', 'Peas'));
     writeFileSync(join(dir, 'Notes', 'photo.png'), 'not a note');
     const notes = findSources(dir, []).filter((f) => f.kind === 'notes');
-    expect(notes.map((f) => [f.label, f.detail])).toEqual([['Notes: Notes', '2 notes']]);
+    expect(notes.map((f) => [f.label, f.detail])).toEqual([['Notes folder', '2 notes']]);
   });
 
   it("in the organiser's [[link]] matching, by its file name as well as its title", () => {

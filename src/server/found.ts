@@ -139,7 +139,9 @@ export function findSources(root: string, inRecord: readonly Source[]): Found[] 
     const n = countFiles(dir, isNoteFile);
     if (!n) continue;
     const vault = existsSync(join(dir, '.obsidian'));
-    add('notes', vault ? `Obsidian vault: ${basename(dir)}` : `Notes: ${basename(dir)}`, dir, `${n} note${n === 1 ? '' : 's'}`);
+    // A folder that isn't a vault was found by its name, Notes, so the label doesn't repeat it: setup prints
+    // "Notes folder: 2 notes", where "Notes: Notes: 2 notes" said the name twice.
+    add('notes', vault ? `Obsidian vault: ${basename(dir)}` : 'Notes folder', dir, `${n} note${n === 1 ? '' : 's'}`);
   }
   return found;
 }
