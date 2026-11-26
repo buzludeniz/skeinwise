@@ -984,6 +984,32 @@ export class Store {
     return this.db.prepare(`${ENTRY_SELECT} WHERE e.id = ? AND ${VISIBLE}`).get(id) as Entry | undefined;
   }
 
+  /** The ids among `ids` that the record shows, in the order given: one query, however many ids. */
+  visibleIds(ids: readonly number[]): number[] {
+    if (!ids.length) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT e.id FROM entries e JOIN sources s ON s.id = e.source_id LEFT JOIN threads t ON t.id = e.thread_id
+         WHERE e.id IN (SELECT value FROM json_each(?)) AND ${VISIBLE}`,
+      )
+      .all(JSON.stringify(ids)) as { id: number }[];
+    const shown = new Set(rows.map((r) => r.id));
+    return ids.filter((id) => shown.has(id));
+  }
+
+  /**
+   * A mark that moves whenever the record changes, whoever changes it: SQLite's data_version moves when another
+   * connection (another process's included) commits, and total_changes() when this one writes. Equal marks mean
+   * nothing was written in between, so what was read from the record still holds.
+   */
+  changeMark(): string {
+    const row = this.db.prepare('SELECT (SELECT data_version FROM pragma_data_version) AS version, total_changes() AS changes').get() as {
+      version: number;
+      changes: number;
+    };
+    return `${row.version}:${row.changes}`;
+  }
+
   /** A thread, or undefined when there is none or it is hidden. */
   visibleThread(id: number): Thread | undefined {
     const row = this.db.prepare(`SELECT t.id FROM threads t JOIN sources s ON s.id = t.source_id WHERE t.id = ? AND ${VISIBLE}`).get(id);
