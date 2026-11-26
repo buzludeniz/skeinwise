@@ -9,10 +9,11 @@ import { DEMO_NOW, importDemo } from '../src/demo/demo.ts';
 import { readImports } from '../src/importers/detect.ts';
 import { type RunOptions, runTask } from '../src/organiser/organise.ts';
 import { RecordView } from '../src/organiser/record.ts';
+import { mulberry32 } from '../src/random.ts';
 import { nameUses } from '../src/organiser/tags.ts';
 import { findSchema, liveTags } from '../src/organiser/views.ts';
 import { openDb } from '../src/store/db.ts';
-import { Store } from '../src/store/store.ts';
+import { type Entry, Store } from '../src/store/store.ts';
 
 const NONE: Omit<RunOptions, 'task'> = { scope: { kind: 'all' }, engine: 'none', yes: false, budget: 0, progress: () => {} };
 
@@ -77,7 +78,7 @@ describe('Projects name matches', () => {
       Slugs: 'Slugs all over the garden.',
     });
     const record = new RecordView(store);
-    const [garden] = nameUses(record.entries, ['Garden'], new Map());
+    const [garden] = nameUses(record.entries, ['Garden'], new Map(record.entries.map((e, i) => [e.id, i])));
     // Thirteen capitals, every one opening a sentence or a line, and three lowercase uses mid-sentence: counting the
     // openers would make it 13 in 16, written as a name.
     expect(garden).toMatchObject({ mid: 3, asTitle: 0 });
@@ -104,5 +105,42 @@ describe('Projects name matches', () => {
     expect(tagged).toContain(crash.title ?? `#${crash.id}`);
     const backup = demo.allEntries().find((e) => /^Write the deploy checklist for Plotline/.test(e.body))!;
     expect(tagged).toContain(backup.title ?? `#${backup.id}`);
+  });
+});
+
+describe('name uses over part of the record', () => {
+  // A run over a few entries counts only the names those entries hold, and reads the rest of the record only around
+  // each name's key word. It must count those names exactly as a run over the whole record does.
+  const NAMES = ['Learning Rust', 'Butterfly garden', "Plot'line", 'Index', 'Hiring note 12', 'Kiwi', 'Mill Lane', 'Market stall'];
+  const WORDS = ['Learning', 'learning', 'learned', 'Rust', "rust's", 'RUST', 'Butterflies', 'butterflies', 'Butterfly', 'garden', 'Garden',
+    'Plotline', "plot'line", 'Plot’line', 'PLOTLINE', 'index', 'Index', 'reindex', 'indexes', 'Hiring', 'hiring', 'note', 'Note', '12', '120',
+    'Kiwi', 'kiwis', 'KIWI', 'Kİwi', 'Mill', 'mill', 'Lane', 'lane', 'Market', 'market', 'stalls', 'stall', 'the', 'a', 'of', 'we', 'went'];
+  const GAPS = [' ', ' ', ' ', ' ', ', ', '. ', '! ', '? ', '\n', ' - ', ' ☕ ', ' 😀 ', ' [[', ']] ', '[[Learning Rust]] ', ' [[Index|the index]] '];
+
+  /** Entries of invented text over those words, the same for the same seed. */
+  function record(seed: number, n: number): Entry[] {
+    const rand = mulberry32(seed);
+    const pick = <T>(list: readonly T[]): T => list[Math.floor(rand() * list.length)]!;
+    const text = (words: number) => Array.from({ length: words }, () => pick(WORDS) + pick(GAPS)).join('');
+    return Array.from({ length: n }, (_, i) => ({ id: i + 1, title: rand() < 0.3 ? text(3) : null, body: text(5 + Math.floor(rand() * 60)) }) as Entry);
+  }
+
+  it('count every name the scope holds as a run over the whole record does', () => {
+    for (const seed of [1, 2, 3]) {
+      const entries = record(seed, 400);
+      const all = new Map(entries.map((e, i) => [e.id, i]));
+      const whole = nameUses(entries, NAMES, all);
+      for (const scope of [entries.slice(-10), entries.slice(0, 7), entries.filter((e) => e.id % 37 === 0)]) {
+        const position = new Map(scope.map((e, i) => [e.id, i]));
+        const part = nameUses(entries, NAMES, position);
+        NAMES.forEach((name, k) => {
+          const inScope = whole[k]!.inScope.flatMap((i) => (position.has(entries[i]!.id) ? [position.get(entries[i]!.id)!] : []));
+          const counts = inScope.length ? { entries: whole[k]!.entries, mid: whole[k]!.mid, asTitle: whole[k]!.asTitle } : { entries: 0, mid: 0, asTitle: 0 };
+          expect({ name, seed, ...counts, inScope }).toEqual({ name, seed, entries: part[k]!.entries, mid: part[k]!.mid, asTitle: part[k]!.asTitle, inScope: part[k]!.inScope });
+        });
+      }
+      // A run after a run reads the names the same: the scan keeps no state between them.
+      expect(nameUses(entries, NAMES, all)).toEqual(whole);
+    }
   });
 });

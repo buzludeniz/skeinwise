@@ -443,45 +443,41 @@ function stands(u: NameUses, total: number): boolean {
   return rare || asName;
 }
 
-interface Word {
-  stem: string;
-  /** Its first letter is a capital. */
-  upper: boolean;
-  /** It opens the text, a line or a sentence. */
-  opens: boolean;
-  /** It is inside a [[link]], which copies the note's title as written. */
-  linked: boolean;
+const WORD = /[\p{L}\p{N}]+/gu;
+const LINK = /\[\[[^\]\n]*\]\]/g;
+const APOSTROPHES = /['’]/g;
+
+/** A name's words as the scan reads them, and which of them the title capitalises. */
+interface NameWords {
+  stems: string[];
+  upper: boolean[];
 }
 
 /**
- * Every run of letters and digits in a text, apostrophes dropped and stemmed as tokenize stems, so a name's words can
- * be found side by side. Unlike tokenize, it keeps stop words, numbers and one-letter words: they are part of a name.
- * Without the number, "Hiring note 4929" was every note called "Hiring note" and some number.
+ * Every run of letters and digits, apostrophes dropped and stemmed as tokenize stems, so a name's words can be found
+ * side by side. Unlike tokenize, it keeps stop words, numbers and one-letter words: they are part of a name. Without
+ * the number, "Hiring note 4929" was every note called "Hiring note" and some number.
  */
-function scanWords(text: string): Word[] {
-  const t = text.replace(/['’]/g, '');
-  const links: [number, number][] = [];
-  for (const m of t.matchAll(/\[\[[^\]\n]*\]\]/g)) links.push([m.index, m.index + m[0].length]);
-  const out: Word[] = [];
-  let end = -1;
-  for (const m of t.matchAll(/[\p{L}\p{N}]+/gu)) {
-    const w = m[0];
-    let opens = end < 0;
-    for (let j = Math.max(end, 0); !opens && j < m.index; j++) {
-      const c = t.charCodeAt(j);
-      opens = c === 10 || c === 46 || c === 33 || c === 63; // \n . ! ?
-    }
-    end = m.index + w.length;
-    const first = w[0]!;
-    out.push({
-      stem: stem(w.toLowerCase()),
-      upper: first !== first.toLowerCase(),
-      opens,
-      linked: links.some(([a, b]) => m.index >= a && m.index < b),
-    });
+function readName(name: string): NameWords {
+  const stems: string[] = [];
+  const upper: boolean[] = [];
+  // match, not matchAll: matchAll would start where the shared WORD's last exec stopped.
+  for (const w of name.replace(APOSTROPHES, '').match(WORD) ?? []) {
+    stems.push(stem(w.toLowerCase()));
+    upper.push(capital(w));
   }
-  return out;
+  return { stems, upper };
 }
+
+/** Its first letter is a capital. */
+function capital(w: string): boolean {
+  const c = w.charCodeAt(0);
+  if (c < 128) return c >= 65 && c <= 90;
+  return w[0] !== w[0]!.toLowerCase();
+}
+
+/** At most this many words' stems are kept: a record of agent sessions holds hashes and paths by the hundred thousand. */
+const STEMS_KEPT = 50_000;
 
 interface Trie {
   next: Map<string, Trie>;
@@ -490,57 +486,203 @@ interface Trie {
 }
 
 /**
- * How the record uses each of these names, read in one pass over every entry's title and body. A name's uses are
- * counted over the whole record, and the entries that hold it are kept only for positions in scope.
+ * How the record uses each of these names. A name's uses are counted over the whole record. The entries that hold it
+ * are kept only for positions in scope.
+ *
+ * A run over a small part of the record first finds the names its own entries hold: no other name can tag anything.
+ * Then it reads the record for those names alone, and only around their key words (see keyWords), so live's pass over
+ * a few new entries doesn't read every word in the record. A name that no entry in scope holds keeps counts of 0.
  */
 export function nameUses(entries: Entry[], names: string[], position: Map<number, number>): NameUses[] {
-  const nameWords = names.map(scanWords);
-  const uses: NameUses[] = names.map((name, k) => ({
-    content: tokenize(name).length > 0,
-    cased: nameWords[k]!.some((w) => w.upper),
-    entries: 0,
-    mid: 0,
-    asTitle: 0,
-    inScope: [],
-  }));
+  const read = names.map(readName);
+  const blank = () =>
+    names.map((name, k): NameUses => ({ content: tokenize(name).length > 0, cased: read[k]!.upper.some(Boolean), entries: 0, mid: 0, asTitle: 0, inScope: [] }));
+  const uses = blank();
+  const named = uses.flatMap((u, k) => (u.content ? [k] : []));
+  if (position.size * 2 >= entries.length) {
+    countUses(entries, read, named, uses, position);
+    return uses;
+  }
+  const probe = blank();
+  countUses(
+    entries.filter((e) => position.has(e.id)),
+    read,
+    named,
+    probe,
+    position,
+  );
+  const held = named.filter((k) => probe[k]!.inScope.length > 0);
+  if (held.length) countUses(entries, read, held, uses, position, keyWords(read, held));
+  return uses;
+}
+
+/** Where a name may be: a text that holds none of its key words holds none of these names. */
+interface Keys {
+  /** Tests a text as written, apostrophes and all. */
+  text: RegExp;
+  /** Finds each key in a text with its apostrophes taken out, at the start of a word or inside one. */
+  hits: RegExp;
+}
+
+/**
+ * One key word for each name: a number if the name has one, as the rarest word it has, or else its longest word. A
+ * stem is the start of each lowercased word it stems from, but for "-ies" and "-ied" words (`flies` is `fly`), so the
+ * key is the stem with a final y left off: every use of the name holds its key at the start of a word, in any case.
+ * Undefined when a key isn't plain ASCII or is empty: every word is read then. For ASCII, the only letters
+ * toLowerCase turns into a key's letter that the i flag doesn't fold to it are İ, which lowercases to i and a dot, so
+ * an i also matches İ.
+ */
+function keyWords(read: NameWords[], ks: number[]): Keys | undefined {
+  const keys = new Set<string>();
+  for (const k of ks) {
+    const stems = read[k]!.stems;
+    const key = stems.find((s) => /\d/.test(s)) ?? stems.reduce((a, b) => (b.length > a.length ? b : a));
+    keys.add(key.endsWith('y') ? key.slice(0, -1) : key);
+  }
+  if ([...keys].some((k) => !/^[a-z0-9]+$/.test(k))) return undefined;
+  const pattern = (between: string) => [...keys].map((k) => [...k].map((c) => (c === 'i' ? '[iİ]' : c)).join(between)).join('|');
+  return { text: new RegExp(pattern("['’]*"), 'iu'), hits: new RegExp(pattern(''), 'giu') };
+}
+
+/** Takes a code point back from `at`: its start, and whether it is a letter or a digit. */
+function before(t: string, at: number): [number, boolean] {
+  const c = t.charCodeAt(at - 1);
+  if (c < 128) return [at - 1, (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)];
+  const pair = c >= 0xdc00 && c <= 0xdfff && at >= 2 && t.charCodeAt(at - 2) >= 0xd800 && t.charCodeAt(at - 2) <= 0xdbff;
+  const from = pair ? at - 2 : at - 1;
+  return [from, LETTER.test(t.slice(from, at))];
+}
+const LETTER = /^[\p{L}\p{N}]$/u;
+
+/** Whether the word starting at `at` opens the text, a line or a sentence: \n . ! or ? since the word before it. */
+function opensAt(t: string, at: number): boolean {
+  for (let j = at; j > 0; ) {
+    const c = t.charCodeAt(j - 1);
+    if (c === 10 || c === 46 || c === 33 || c === 63) return true;
+    const [from, letter] = before(t, j);
+    if (letter) return false;
+    j = from;
+  }
+  return true;
+}
+
+/** The start of the word n words back from the word starting at `at`, or of the text's first word. */
+function wordsBack(t: string, at: number, n: number): number {
+  let start = at;
+  for (let w = 0; w < n; w++) {
+    let j = start;
+    let letter = false;
+    while (j > 0 && !letter) [j, letter] = before(t, j);
+    if (!letter) return start;
+    for (let from = j; from > 0; j = from) {
+      [from, letter] = before(t, j);
+      if (!letter) break;
+    }
+    start = j;
+  }
+  return start;
+}
+
+/**
+ * Counts the uses of names ks into uses, reading each entry's title and body word by word. No per-word objects are
+ * kept: one per word, across a whole record, held hundreds of megabytes at 50,000 entries. A ring holds the last few
+ * words' flags, and the names being followed are trie nodes with the word they started at.
+ *
+ * With keys, it reads only the words around each key word: a name's use holds its key word, so it lies within as many
+ * words of it as the longest name has. Windows that overlap are read as one, so no use is counted twice.
+ */
+function countUses(entries: Entry[], read: NameWords[], ks: number[], uses: NameUses[], position: Map<number, number>, keys?: Keys): void {
   const root: Trie = { next: new Map(), names: [] };
-  nameWords.forEach((words, k) => {
-    if (!uses[k]!.content) return;
+  let depth = 1;
+  for (const k of ks) {
     let node = root;
-    for (const w of words) {
-      let child = node.next.get(w.stem);
-      if (!child) node.next.set(w.stem, (child = { next: new Map(), names: [] }));
+    for (const s of read[k]!.stems) {
+      let child = node.next.get(s);
+      if (!child) node.next.set(s, (child = { next: new Map(), names: [] }));
       node = child;
     }
     node.names.push(k);
-  });
-  const last = new Int32Array(names.length).fill(-1);
-  const counted = new Int32Array(names.length).fill(-1);
+    depth = Math.max(depth, read[k]!.stems.length);
+  }
+  const CAPITAL = 1;
+  const OPENS = 2; // the text, a line or a sentence
+  const LINKED = 4; // inside a [[link]], which copies the note's title as written
+  const ring = new Uint8Array(depth);
+  const nodes: Trie[] = [];
+  const starts = new Int32Array(depth + 1);
+  const last = new Int32Array(read.length).fill(-1);
+  const counted = new Int32Array(read.length).fill(-1);
+  // A word's stem, by the word as written: most words come back again and again.
+  const stems = new Map<string, string>();
+  const ahead = new RegExp(WORD.source, 'gu');
   entries.forEach((e, r) => {
     for (const text of [e.title ?? '', e.body]) {
-      const words = scanWords(text);
-      for (let i = 0; i < words.length; i++) {
-        let node = root.next.get(words[i]!.stem);
-        for (let n = 1; node; n++) {
-          for (const k of node.names) {
+      if (keys && !keys.text.test(text)) continue;
+      const t = text.replace(APOSTROPHES, '');
+      LINK.lastIndex = 0;
+      let link = LINK.exec(t);
+      let active = 0;
+      let i = 0;
+      const visit = (m: RegExpExecArray) => {
+        const w = m[0];
+        while (link && link.index + link[0].length <= m.index) link = LINK.exec(t);
+        ring[i % depth] = (capital(w) ? CAPITAL : 0) | (opensAt(t, m.index) ? OPENS : 0) | (link && m.index >= link.index ? LINKED : 0);
+        let s = stems.get(w);
+        if (s === undefined) {
+          if (stems.size >= STEMS_KEPT) stems.clear();
+          stems.set(w, (s = stem(w.toLowerCase())));
+        }
+        let kept = 0;
+        for (let a = 0; a < active; a++) {
+          const next = nodes[a]!.next.get(s);
+          if (next) (nodes[kept] = next), (starts[kept++] = starts[a]!);
+        }
+        const first = root.next.get(s);
+        if (first) (nodes[kept] = first), (starts[kept++] = i);
+        active = kept;
+        for (let a = 0; a < active; a++) {
+          const start = starts[a]!;
+          for (const k of nodes[a]!.names) {
             const u = uses[k]!;
             if (last[k] !== r) {
               last[k] = r;
               const at = position.get(e.id);
               if (at !== undefined) u.inScope.push(at);
             }
-            if (words[i]!.linked) continue;
+            const flags = ring[start % depth]!;
+            if (flags & LINKED) continue;
             if (counted[k] !== r) (counted[k] = r), u.entries++;
-            if (words[i]!.opens) continue;
+            if (flags & OPENS) continue;
             u.mid++;
-            if (nameWords[k]!.every((t, j) => !t.upper || words[i + j]!.upper)) u.asTitle++;
+            if (read[k]!.upper.every((up, j) => !up || ring[(start + j) % depth]! & CAPITAL)) u.asTitle++;
           }
-          node = i + n < words.length ? node.next.get(words[i + n]!.stem) : undefined;
+        }
+        i++;
+      };
+      WORD.lastIndex = 0;
+      if (!keys) {
+        for (let m = WORD.exec(t); m; m = WORD.exec(t)) visit(m);
+        continue;
+      }
+      // The end of the last word read: a window that starts past it shares no word with what was read.
+      let read_ = 0;
+      keys.hits.lastIndex = 0;
+      for (let h = keys.hits.exec(t); h; h = keys.hits.exec(t)) {
+        if (h.index > 0 && before(t, h.index)[1]) continue; // inside a word
+        ahead.lastIndex = h.index;
+        let to = h.index;
+        for (let n = 0, m = ahead.exec(t); m && n < depth; n++, m = n < depth ? ahead.exec(t) : null) to = m.index + m[0].length;
+        if (to <= read_) continue;
+        const from = wordsBack(t, h.index, depth - 1);
+        if (from >= read_) active = 0;
+        WORD.lastIndex = Math.max(from, read_);
+        for (let m = WORD.exec(t); m && m.index < to; m = WORD.exec(t)) {
+          visit(m);
+          read_ = m.index + m[0].length;
         }
       }
     }
   });
-  return uses;
 }
 
 function hasAll(set: Set<string>, words: string[]): boolean {
