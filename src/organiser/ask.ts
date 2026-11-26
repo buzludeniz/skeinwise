@@ -75,9 +75,12 @@ export interface AskLive {
   signal?: AbortSignal;
 }
 
-/** A model sees at most this many entries, and this much of each. */
+/**
+ * A model sees at most this many entries, and of each the sentence that answers with the ones beside it while they
+ * fit: the prompt is most of an answer's wait (a 4B model on a laptop reads a few hundred tokens a second).
+ */
 const MODEL_HITS = 12;
-const HIT_CHARS = 500;
+const EXCERPT_CHARS = 300;
 const QUOTE_CHARS = 300;
 
 const PATTERNS: { kind: Exclude<AskKind, 'any'>; re: RegExp }[] = [
@@ -148,6 +151,35 @@ function clip(s: string): string {
 function prose(e: Entry): string[] {
   const list = sentences(unlink(e.body.replace(/^#+\s.*$/gm, '')));
   return list.length ? list : sentences(unlink(e.body));
+}
+
+/**
+ * What a model sees of an entry: the sentence quoted for it, then the sentences after and before it while they fit in
+ * EXCERPT_CHARS, with "…" where the entry goes on. An entry whose quote isn't one of its sentences shows the quote.
+ */
+function excerpt(e: Entry, quoted: string): string {
+  const list = prose(e).map((s) => s.replace(/\s+/g, ' ').trim());
+  const at = list.findIndex((s) => clip(s).replace(/\s+/g, ' ').trim() === quoted.replace(/\s+/g, ' ').trim());
+  if (at < 0) return quoted.replace(/\s+/g, ' ').trim();
+  let text = clip(list[at]!);
+  let lo = at;
+  let hi = at;
+  for (let grew = true; grew; ) {
+    grew = false;
+    const next = list[hi + 1];
+    if (next !== undefined && text.length + 1 + next.length <= EXCERPT_CHARS) {
+      text = `${text} ${next}`;
+      hi += 1;
+      grew = true;
+    }
+    const prev = lo > 0 ? list[lo - 1] : undefined;
+    if (prev !== undefined && prev.length + 1 + text.length <= EXCERPT_CHARS) {
+      text = `${prev} ${text}`;
+      lo -= 1;
+      grew = true;
+    }
+  }
+  return `${lo > 0 ? '… ' : ''}${text}${hi < list.length - 1 ? ' …' : ''}`;
 }
 
 /** The first sentence that mentions the topic, or the entry's first sentence. */
@@ -328,21 +360,11 @@ function answerRequest(store: Store, question: string, hits: AskHit[]): ModelReq
   const purpose = 'the answer';
   const known = new Map(hits.map((h, i) => [`E${i + 1}`, h.entryId]));
   const lines = hits.map((h, i) => {
-    const body = (store.getEntry(h.entryId)?.body ?? '').replace(/\s+/g, ' ');
-    const more = body.length > HIT_CHARS ? `${body.slice(0, HIT_CHARS)}…` : body;
-    return `E${i + 1} (${h.date}, ${h.speaker === 'you' ? 'me' : h.speaker}${h.where ? `, "${h.where}"` : ''}): ${more}`;
+    const entry = store.getEntry(h.entryId);
+    const text = entry ? excerpt(entry, h.quote) : h.quote;
+    return `E${i + 1} (${h.date}, ${h.speaker === 'you' ? 'me' : h.speaker}${h.where ? `, "${h.where}"` : ''}): ${text}`;
   });
-  const user = [
-    `My question: ${question}`,
-    '',
-    'Entries from my notes and chats that may answer it:',
-    ...lines,
-    '',
-    'Answer with JSON only: {"answer": "...", "cites": ["E1"]}',
-    '- answer: one to three plain sentences that answer the question from these entries, with dates where they matter;',
-    '- cites: the entries the answer rests on.',
-    'If the entries do not answer it: {"answer": "", "cites": []}.',
-  ].join('\n');
+  const user = [`My question: ${question}`, '', 'Entries from my notes and chats that may answer it:', ...lines].join('\n');
   const check = (answer: unknown) => {
     if (!isRecord(answer)) invalid(purpose, 'expected a JSON object');
     if (typeof answer.answer !== 'string') invalid(purpose, '"answer" must be text');
@@ -355,7 +377,14 @@ function answerRequest(store: Store, question: string, hits: AskHit[]): ModelReq
   };
   return {
     purpose,
-    system: "You answer one person's questions from their own notes and chats. You only use what the entries say. You answer with JSON only.",
+    // The same for every question, so a local server keeps it cached between asks.
+    system: [
+      "You answer one person's questions from their own notes and chats. You only use what the entries say.",
+      'Answer with JSON only: {"answer": "...", "cites": ["E1"]}',
+      '- answer: one to three plain sentences that answer the question from these entries, with dates where they matter;',
+      '- cites: the entries the answer rests on.',
+      'If the entries do not answer it: {"answer": "", "cites": []}.',
+    ].join('\n'),
     user,
     maxTokens: 300,
     check,
