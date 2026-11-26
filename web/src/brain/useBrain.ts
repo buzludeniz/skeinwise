@@ -60,6 +60,10 @@ export function useBrainScene(host: RefObject<HTMLDivElement | null>, mode: Scen
   const themeKey = useApp((s) => s.config?.appearance.theme ?? 'dusk');
   const opts = useApp((s) => s.config?.brain);
   const [ok, setOk] = useState(true);
+  // The scene's own file didn't load, which is not a WebGL problem: most often Skeinwise was rebuilt since this page
+  // opened, so the file name the page asks for is gone. ok goes false too, so a view that reads only ok still hides
+  // its canvas.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [hover, setHover] = useState<Hover | null>(null);
 
   useEffect(() => {
@@ -67,7 +71,11 @@ export function useBrainScene(host: RefObject<HTMLDivElement | null>, mode: Scen
     let live = true;
     loadScene().then(
       (s) => live && setScene(s),
-      () => live && setOk(false),
+      () => {
+        if (!live) return;
+        setLoadFailed(true);
+        setOk(false);
+      },
     );
     return () => {
       live = false;
@@ -122,5 +130,5 @@ export function useBrainScene(host: RefObject<HTMLDivElement | null>, mode: Scen
     };
   }, [scene, model]);
 
-  return { scene, model, ok, hover };
+  return { scene, model, ok, loadFailed, hover };
 }
