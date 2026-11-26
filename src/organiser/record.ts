@@ -23,6 +23,39 @@ export function linkTargets(text: string): string[] {
   return [...new Set([...text.matchAll(/\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]/g)].map((m) => m[1]!.trim()))];
 }
 
+/** The fields a note is linked by. */
+export interface NoteName {
+  id: number;
+  kind: string;
+  title: string | null;
+  externalId: string;
+}
+
+/**
+ * Which note a [[link]] names: a note whose title, or file name without its folder and extension, is the link's text
+ * (any case). The alias and heading are gone already (`linkTargets`). Where two share a name, the first in the record
+ * wins. Folder links (`[[Garden/Plan]]`) and a table's escaped `[[Note\|alias]]` wait for 1.1 (LS-19's link part, cut
+ * by Deniz on Nov 25; bd66d5d has it), so they match only a title written the same way.
+ */
+export class NoteNames<T extends NoteName> {
+  private readonly byName = new Map<string, T>();
+
+  constructor(entries: Iterable<T>) {
+    for (const e of entries) {
+      if (e.kind !== 'note') continue;
+      const base = e.externalId.split('/').pop()!.replace(/\.(md|markdown|txt)$/i, '');
+      for (const name of [base, e.title ?? '']) {
+        const key = name.trim().toLowerCase();
+        if (key && !this.byName.has(key)) this.byName.set(key, e);
+      }
+    }
+  }
+
+  resolve(target: string): T | undefined {
+    return this.byName.get(target.trim().toLowerCase());
+  }
+}
+
 export function entryText(e: Entry): string {
   return unlink(`${e.title ?? ''}\n${e.body}`);
 }
@@ -56,7 +89,7 @@ export class RecordView {
   private eIndex?: TermIndex;
   private eVectors?: Map<number, Vec>;
   private uDf?: Float64Array;
-  private notesByName?: Map<string, Entry>;
+  private noteNames?: NoteNames<Entry>;
 
   constructor(store: Store) {
     this.store = store;
@@ -152,20 +185,10 @@ export class RecordView {
       .map(([i]) => i);
   }
 
-  /** The note a [[link]] points at: by title, or by file name without its folder and extension. */
+  /** The note a [[link]] points at (`NoteNames`). */
   resolveLink(target: string): Entry | undefined {
-    if (!this.notesByName) {
-      this.notesByName = new Map();
-      for (const e of this.entries) {
-        if (e.kind !== 'note') continue;
-        const base = e.externalId.split('/').pop()!.replace(/\.(md|markdown|txt)$/i, '');
-        for (const name of [base, e.title ?? '']) {
-          const key = name.trim().toLowerCase();
-          if (key && !this.notesByName.has(key)) this.notesByName.set(key, e);
-        }
-      }
-    }
-    return this.notesByName.get(target.trim().toLowerCase());
+    this.noteNames ??= new NoteNames(this.entries);
+    return this.noteNames.resolve(target);
   }
 
   shown(term: number): string {

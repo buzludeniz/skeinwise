@@ -409,7 +409,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       if (!(REVIEW_ACTIONS as readonly unknown[]).includes(action)) throw new HttpError(400, `action is ${REVIEW_ACTIONS.join(', ')}`);
       return resolveReview(store, home, id(req.params[0]), action as ReviewAction, yes === true);
     }],
-    ['POST', /^\/api\/runs\/(\d+)\/undo$/, (req) => undoRun(store.db, id(req.params[0]))],
+    ['POST', /^\/api\/runs\/(\d+)\/undo$/, (req) => undoRun(store.db, id(req.params[0]), home)],
 
     // The agents' requests that wait for the person's yes (src/mcp/requests.ts): the same list, confirm and refuse as
     // `skeinwise mcp pending`, `confirm` and `refuse`, on the same file, so either side sees what the other did.

@@ -1,13 +1,14 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEMO_NOW, writeDemo } from '../src/demo/demo.ts';
 import { readImports } from '../src/importers/detect.ts';
+import { newNote, rewriteNoteFile } from '../src/notes.ts';
 import { defineTag, deleteHub, findFolder, mergeFolders, removeTag, renameHub, resolveReview } from '../src/organiser/corrections.ts';
 import { type RunOptions, runSteps, runTask, steps } from '../src/organiser/organise.ts';
 import { RecordView } from '../src/organiser/record.ts';
-import { getRun, undoRun } from '../src/organiser/runs.ts';
+import { finishRun, getRun, startRun, undoRun } from '../src/organiser/runs.ts';
 import { definedTags, findSchema, getLiveHub, getReviewItem, heldEntries, liveFolders, liveHubs, liveTags, openReviewItems } from '../src/organiser/views.ts';
 import { openDb } from '../src/store/db.ts';
 import { Store } from '../src/store/store.ts';
@@ -25,11 +26,12 @@ describe('corrections and the review queue on the demo record', () => {
     dir = mkdtempSync(join(tmpdir(), 'skeinwise-fix-'));
     writeDemo(dir);
     // The demo flags only its two Plotline notes. Two older notes of the test's own give the queue an item to skip and
-    // one to edit under the review.
+    // one to edit under the review. Later demo entries overtake each: a decision that names the note and says what it
+    // doesn't (review.ts cueFlag; a decision the note already holds only confirms it).
     const old = (title: string, created: string, body: string) =>
       writeFileSync(join(dir, 'notes', `${title.toLowerCase().replaceAll(' ', '-')}.md`), `---\ntitle: ${title}\ncreated: ${created}\n---\n# ${title}\n\n${body}\n`);
-    old('River scripts', '2024-02-10', 'The river cleaner is a Python script: it reads the samples, drops the bad rows and writes the nitrate table.');
-    old('Market loaves', '2024-04-02', 'The market stall could sell white sourdough, rye, spelt and a seeded loaf.');
+    old('River cleaner', '2024-02-10', 'The river cleaner is a Python script: it reads the samples, drops the bad rows and writes the nitrate table.');
+    old('Market loaves', '2024-04-02', 'The market stall could sell spelt and a seeded loaf.');
     store = new Store(openDb(':memory:'), () => DEMO_NOW);
     for (const p of ['chatgpt', 'claude', 'claude-code', 'notes']) for (const b of readImports(join(dir, p))) store.ingest(b);
     record = new RecordView(store);
@@ -90,10 +92,17 @@ describe('corrections and the review queue on the demo record', () => {
     expect(findSchema(store.db, 'Scratch')).toBeUndefined();
   });
 
+  it('refuses to update a note that changed after its review', () => {
+    const item = openReviewItems(store.db).find((i) => store.getEntry(i.noteEntry)!.title === 'River cleaner')!;
+    const note = store.getEntry(item.noteEntry)!;
+    store.editEntry(note.id, `${note.body}\n\nOne more line.`, 'you');
+    expect(() => resolveReview(store, home, item.id, 'update', true)).toThrow(/changed after review run/);
+  });
+
   it('review answers: update shows a diff and saves with yes; holds and skip set items aside', () => {
     const items = openReviewItems(store.db);
     const plotline = items.find((i) => store.getEntry(i.noteEntry)!.title === 'Plotline')!;
-    expect(items.map((i) => store.getEntry(i.noteEntry)!.title).sort()).toEqual(['Market loaves', 'Plotline', 'Plotline waiting list rules', 'River scripts']);
+    expect(items.map((i) => store.getEntry(i.noteEntry)!.title).sort()).toEqual(['Market loaves', 'Plotline', 'Plotline waiting list rules', 'River cleaner']);
     const shown = resolveReview(store, home, plotline.id, 'update', false);
     expect(shown.saved).toBe(false);
     expect(shown.diff).toContain('+ ## Updates');
@@ -113,10 +122,69 @@ describe('corrections and the review queue on the demo record', () => {
     expect(() => resolveReview(store, home, 99_999, 'holds', false)).toThrow(/No review item 99999/);
   });
 
-  it('refuses to update a note that changed after its review', () => {
-    const item = openReviewItems(store.db)[0]!;
-    const note = store.getEntry(item.noteEntry)!;
-    store.editEntry(note.id, `${note.body}\n\nOne more line.`, 'you');
-    expect(() => resolveReview(store, home, item.id, 'update', true)).toThrow(/changed after review run/);
+  it('undoing the review run puts back the note its accepted update changed (M12)', () => {
+    const id = store.allEntries().find((e) => e.kind === 'note' && e.title === 'Plotline')!.id;
+    const [original, update] = store.history(id);
+    const runId = update!.runId!;
+    expect(getRun(store.db, runId)!.task).toBe('review');
+    expect(update!.editor).toBe('you');
+    const undone = undoRun(store.db, runId, home);
+    expect(undone.restored).toEqual([id]);
+    expect(undone.removed.review_items).toBeGreaterThan(0);
+    expect(store.getEntry(id)!.body).toBe(original!.body);
+    // The update stays in history; putting it back is a new version of its own, by you, in no run.
+    expect(store.history(id).map((v) => [v.version, v.runId])).toEqual([[1, null], [2, runId], [3, null]]);
+  });
+});
+
+describe('undoing a review update to a note in the record folder', () => {
+  const now = () => DEMO_NOW;
+
+  /** A finished review run that updated the note the way accepting does (corrections.ts resolveReview). */
+  function accept(store: Store, file: string, entryId: number, body: string): number {
+    const run = startRun(store.db, { task: 'review', engine: 'none', model: null, scope: 'all', mark: 0, now: DEMO_NOW });
+    finishRun(store.db, run, { counts: {}, tokensIn: 0, tokensOut: 0, now: DEMO_NOW });
+    rewriteNoteFile(file, body);
+    store.editEntry(entryId, body, { editor: 'you', runId: run });
+    return run;
+  }
+
+  it('puts back the file as well, and needs the record folder to do it', () => {
+    const home = mkdtempSync(join(tmpdir(), 'skeinwise-undo-'));
+    try {
+      const store = new Store(openDb(':memory:'), now);
+      const note = newNote(store, home, 'Garden plan', new Date(DEMO_NOW));
+      const before = readFileSync(note.path, 'utf8');
+      const run = accept(store, note.path, note.entryId, '# Garden plan\n\nRaised beds by May.');
+      expect(readFileSync(note.path, 'utf8')).toContain('Raised beds');
+
+      expect(() => undoRun(store.db, run)).toThrow(/needs the record's folder/);
+      expect(getRun(store.db, run)!.status).toBe('done');
+      expect(undoRun(store.db, run, home).restored).toEqual([note.entryId]);
+      expect(readFileSync(note.path, 'utf8')).toBe(before);
+      expect(store.getEntry(note.entryId)!.body).toBe('# Garden plan');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a note changed since, until it reads as before', () => {
+    const home = mkdtempSync(join(tmpdir(), 'skeinwise-undo-'));
+    try {
+      const store = new Store(openDb(':memory:'), now);
+      const note = newNote(store, home, 'Garden plan', new Date(DEMO_NOW));
+      const run = accept(store, note.path, note.entryId, '# Garden plan\n\nRaised beds by May.');
+      store.editEntry(note.entryId, '# Garden plan\n\nRaised beds by June.', 'you');
+
+      expect(() => undoRun(store.db, run, home)).toThrow(
+        `Note #${note.entryId} changed after run ${run} updated it. Bring back the version you want with "skeinwise restore ${note.entryId} 1", then undo run ${run}.`,
+      );
+      expect(store.getEntry(note.entryId)!.body).toContain('June');
+      store.restoreVersion(note.entryId, 1);
+      expect(undoRun(store.db, run, home)).toMatchObject({ restored: [], run: { status: 'undone' } });
+      expect(store.history(note.entryId).length).toBe(4);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
