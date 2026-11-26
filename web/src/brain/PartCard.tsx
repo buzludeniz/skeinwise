@@ -104,6 +104,8 @@ function EntryBody({ part, record, onPick }: { part: EntryPart; record: BrainDat
 function HubBody({ part, record, onPick }: { part: HubPart; record: BrainData; onPick: (point: number) => void }) {
   const members = hubMembers(record, part.id);
   const shown = members.slice(0, HUB_ROWS);
+  // Counted against the whole record: in a sample, the page has only some of a hub's entries, and Open lists them all.
+  const more = Math.max(part.count, members.length) - shown.length;
   return (
     <>
       <p class="part-meta">Concept hub · {plural(part.count, 'entry', 'entries')}</p>
@@ -124,7 +126,7 @@ function HubBody({ part, record, onPick }: { part: HubPart; record: BrainData; o
       </div>
       <h3 class="part-subhead">Its entries</h3>
       {shown.length ? <Rows rows={shown} onPick={onPick} label="Its entries" /> : <p class="part-note">No entries in the record yet.</p>}
-      {members.length > shown.length && <p class="part-note">and {plural(members.length - shown.length, 'more entry', 'more entries')}: Open shows them all.</p>}
+      {more > 0 && <p class="part-note">and {plural(more, 'more entry', 'more entries')}: Open shows them all.</p>}
     </>
   );
 }

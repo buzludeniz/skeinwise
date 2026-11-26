@@ -281,7 +281,8 @@ test("says the brain didn't load, not that WebGL is missing, when its drawing co
   expect(errors).toEqual([]);
 });
 
-// At the cap: a record past 20,000 points, served in place of the demo's and drawn as a 20,000-point sample.
+// At the cap: a 25,000-entry record as the server sends it past its cap (a 20,000-point sample, the total and each
+// hub's size), served in place of the demo's.
 // Headless Chromium may draw WebGL in software, and then a frame's wall time is the rasteriser's, not the brain's. So
 // the budget checked here is the main thread's work in each frame: every requestAnimationFrame callback, the brain's
 // tick, its picks and its draw calls included. The wall time and the renderer are reported beside it; the plan's
@@ -289,7 +290,8 @@ test("says the brain didn't load, not that WebGL is missing, when its drawing co
 
 const DAY = 86_400_000;
 
-function bigRecord(n: number): BrainData {
+/** What the server sends past its cap: `n` points as its sample, with the record's total and each hub's size. */
+function bigRecord(n: number, total: number): BrainData {
   const start = Date.parse('2023-01-01T00:00:00Z');
   const points: BrainPoint[] = [];
   const threads: Record<string, string> = {};
@@ -303,7 +305,10 @@ function bigRecord(n: number): BrainData {
   const links: [number, number, number][] = [];
   for (let k = 0; k + 1 < notes.length && links.length < 3000; k += 2) links.push([notes[k]!, notes[k + 1]!, 0]);
   for (let k = 0; k < 6000; k++) links.push([1 + ((k * 7919) % n), 1 + ((k * 104_729) % n), 1]);
-  const hubs = Array.from({ length: 20 }, (_, h) => ({ id: h + 1, name: `Hub ${h + 1}`, entries: points.filter((_, i) => i % 20 === h).map((p) => p[0]) }));
+  const hubs = Array.from({ length: 20 }, (_, h) => {
+    const entries = points.filter((_, i) => i % 20 === h).map((p) => p[0]);
+    return { id: h + 1, name: `Hub ${h + 1}`, size: Math.round((entries.length * total) / n), entries };
+  });
   return {
     kinds: ['message', 'note', 'file'],
     speakers: ['you', 'assistant'],
@@ -315,6 +320,7 @@ function bigRecord(n: number): BrainData {
     projects: [],
     threads,
     points,
+    total,
     links,
     hubs,
     organiser: true,
@@ -375,7 +381,7 @@ test.describe('at the cap', () => {
           }
         });
     });
-    const record = JSON.stringify(bigRecord(25_000));
+    const record = JSON.stringify(bigRecord(20_000, 25_000));
     await page.route(
       (url) => url.pathname === '/api/brain',
       (route) => route.fulfill({ status: 200, contentType: 'application/json', body: record }),
@@ -405,6 +411,8 @@ test.describe('at the cap', () => {
     await labels(page).first().focus();
     await labels(page).first().click();
     await expect(cardTitle(page)).toHaveText(/^Hub \d+$/);
+    // Counted in the whole record, not the sample: 1,000 drawn of 1,250.
+    await expect(card(page).getByText('Concept hub · 1,250 entries')).toBeVisible();
     const selectedMoving = await frames(page, 20, () => layouts.getByRole('radio', { name: 'Activity' }).click());
 
     const phases = { turning, hovering, moving, selectedMoving };

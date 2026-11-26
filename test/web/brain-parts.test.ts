@@ -164,6 +164,34 @@ describe('label buttons', () => {
   });
 });
 
+describe('a record the server sampled', () => {
+  // Past its cap the server sends a sample: the record's total, and each hub's size in the whole record, come with it.
+  const sampled: BrainData = {
+    ...record,
+    total: 5000,
+    hubs: [
+      { id: 11, name: 'Sowing depth', size: 40, entries: [1, 2] },
+      { id: 12, name: 'Planning', size: 3, entries: [4, 5, 6] },
+    ],
+  };
+  const big = buildModel(sampled, 'source', palette('ember'), theme('dusk'));
+
+  it("counts the record's entries, not the ones it was sent", () => {
+    expect(big.data.points).toHaveLength(6);
+    expect(big.total).toBe(5000);
+  });
+
+  it("counts a hub's entries in the whole record, on its card and its label, and ranks the labels by it", () => {
+    expect(partAt(big, sampled, big.hubs.find((h) => h.id === 11)!.index)).toMatchObject({ kind: 'hub', count: 40 });
+    expect(big.input.labels.slice(0, 2).map((l) => l.name)).toEqual(['Sowing depth: concept hub, 40 entries', 'Planning: concept hub, 3 entries']);
+  });
+
+  it('counts what it was sent when the server sends no total or sizes', () => {
+    expect(model.total).toBe(6);
+    expect(partAt(model, record, model.hubs.find((h) => h.id === 11)!.index)).toMatchObject({ count: 2 });
+  });
+});
+
 describe('titles', () => {
   it('trims a title and calls a blank or missing one Untitled', () => {
     expect(titleOf(record.points[3])).toBe('Garden plan');

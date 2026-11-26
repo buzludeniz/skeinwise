@@ -129,7 +129,7 @@ export function neighbourIds(lines: EntryLines): number[] {
   return [...ids];
 }
 
-/** A hub's entries in the whole record, newest first. */
+/** A hub's entries among those the page has (all of them, or the server's sample of the record), newest first. */
 export function hubMembers(record: BrainData, hubId: number): Row[] {
   const byId = recordIndex(record);
   const hub = record.hubs.find((h) => h.id === hubId);

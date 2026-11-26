@@ -156,8 +156,9 @@ export function buildModel(record: BrainData, by: Grouping, pal: Palette, theme:
   });
   // Labels: hubs first, biggest first; then the most-linked notes, then the newest, so a record without links still
   // gets a few.
-  // A hub's count is its entries in the whole record, not just the ones in the sample.
-  const hubCounts = hubs.map((h) => (inRecord ? h.hub.entries.filter((id) => inRecord.has(id)).length : h.members.length));
+  // A hub's count is its entries in the whole record, not just the ones drawn: the server's size when it sampled the
+  // record itself, else the entries it sent that are in the record.
+  const hubCounts = hubs.map((h) => h.hub.size ?? (inRecord ? h.hub.entries.filter((id) => inRecord.has(id)).length : h.members.length));
   const hubLabels = hubs
     .map((h, k) => ({ index: entries.length + k, text: h.hub.name.trim(), count: hubCounts[k]! }))
     .filter((l) => l.text)
@@ -171,7 +172,8 @@ export function buildModel(record: BrainData, by: Grouping, pal: Palette, theme:
   });
   return {
     data,
-    total: record.points.length,
+    // The server sends the record's own total when it sends a sample; past the cap, the page samples what it was sent.
+    total: record.total ?? record.points.length,
     grouped,
     legend: grouped.groups.map((g, i) => ({ label: g.label, count: g.count, color: hex[i]! })),
     input: {
