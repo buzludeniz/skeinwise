@@ -150,15 +150,18 @@ test("moves along Workbench's tabs and its choices with the arrow keys", async (
   await expect(tab('Table builder')).toBeFocused();
   await expect(page.getByRole('tabpanel', { name: 'Table builder' })).toBeVisible();
 
-  // A row of choices is a radio group: only the chosen one is in the Tab order, and the arrows move and choose.
+  // A row of choices is a radio group: only the chosen one is in the Tab order, and the arrows move and choose. The
+  // table builder opens on Heatmap.
   const radio = (name: string) => page.getByRole('radiogroup', { name: 'Form' }).getByRole('radio', { name, exact: true });
-  await expect(radio('Table')).toHaveAttribute('aria-checked', 'true');
-  await expect(radio('Heatmap')).toHaveAttribute('tabindex', '-1');
-  await radio('Table').focus();
+  await expect(radio('Heatmap')).toHaveAttribute('aria-checked', 'true');
+  await expect(radio('Heatmap')).toHaveAttribute('tabindex', '0');
+  await expect(radio('Table')).toHaveAttribute('tabindex', '-1');
+  await radio('Heatmap').focus();
   const steps: [string, string][] = [
-    ['ArrowRight', 'Heatmap'],
-    ['ArrowDown', 'Bars'],
-    ['ArrowUp', 'Heatmap'],
+    ['ArrowRight', 'Bars'],
+    ['ArrowDown', 'Stacked bars'],
+    ['ArrowUp', 'Bars'],
+    ['ArrowLeft', 'Heatmap'],
     ['ArrowLeft', 'Table'],
     ['ArrowLeft', 'Dots'],
   ];
