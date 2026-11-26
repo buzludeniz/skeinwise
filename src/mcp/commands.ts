@@ -1,7 +1,7 @@
 // `skeinwise mcp`: the memory server on stdio for an AI agent, and the commands that allow agents, take them back and
 // lock them all out. An MCP client starts the server itself, from a config `skeinwise connect` writes or docs/mcp.md
-// shows; stdout then carries only protocol messages, so everything else goes to stderr. The window server (--window)
-// is kept for the app's own use and left out of the help and the docs for v1.0.
+// shows; stdout then carries only protocol messages, so everything else goes to stderr. The window server
+// (windowServer) isn't served in 1.0: --window refuses with a usage error, and it is left out of the help and the docs.
 
 import { existsSync, readFileSync } from 'node:fs';
 import type { Readable } from 'node:stream';
@@ -102,17 +102,14 @@ export function windowServer(ctx: Ctx): McpServer<WindowCtx> {
   });
 }
 
-/** Serves the memory or window tools on the input until it closes. */
+/** Serves the memory tools on the input until it closes. 1.0 serves no window tools: --window is refused. */
 export async function serveMcp(ctx: Ctx, input: Readable): Promise<number> {
   if ((ctx.values as McpValues).window) {
-    const server = windowServer(ctx);
-    ctx.io.err(`skeinwise mcp: serving the window tools for ${ctx.home} (app on port ${port(ctx.values as McpValues)}).\n`);
-    await serveStdio(server, input, ctx.io.out);
-  } else {
-    const server = memoryServer(ctx);
-    ctx.io.err(`skeinwise mcp: serving the memory tools for ${ctx.home}.\n`);
-    await serveStdio(server, input, ctx.io.out);
+    throw new UsageError("skeinwise mcp --window isn't available in 1.0. Agents use skeinwise mcp over stdio; skeinwise connect sets one up.");
   }
+  const server = memoryServer(ctx);
+  ctx.io.err(`skeinwise mcp: serving the memory tools for ${ctx.home}.\n`);
+  await serveStdio(server, input, ctx.io.out);
   return 0;
 }
 
