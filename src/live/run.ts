@@ -69,7 +69,7 @@ export function startLive(store: Store, home: string, options: LiveOptions = {})
         onDone: () => options.onOrganised?.(loadStatus(statusFile, warn)),
       })
     : null;
-  const targets = defaultTargets(config.liveFolders, options.userHome);
+  const targets = defaultTargets(config.liveFolders, options.userHome, { downloads: config.liveDownloads });
   const capture = new LiveCapture(store, targets, {
     statusFile,
     onWarning: warn,

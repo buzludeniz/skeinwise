@@ -76,7 +76,7 @@ describe('live capture', () => {
     expect(store.stats().entries).toBe(3);
   });
 
-  it('takes chat exports from Downloads and nothing else', () => {
+  it('proposes chat exports from Downloads for the person’s yes, and nothing else', () => {
     const store = new Store(openDb(':memory:'));
     const claude = [
       { uuid: 'c1', name: 'Bread', created_at: '2026-11-01T00:00:00Z', chat_messages: [{ uuid: 'm1', sender: 'human', text: 'Rye or spelt?', created_at: '2026-11-01T00:00:00Z' }] },
@@ -85,15 +85,27 @@ describe('live capture', () => {
     writeFileSync(join(downloads, 'export.zip'), zipSync({ 'conversations.json': strToU8(JSON.stringify(claude)) }));
     writeFileSync(join(downloads, 'slides.zip'), zipSync({ 'readme.md': strToU8('not a chat export') }));
     writeFileSync(join(downloads, 'broken.json'), '{ nope');
-    const live = capture(store, [{ kind: 'downloads', path: downloads }]);
+    const warnings: string[] = [];
+    const live = new LiveCapture(store, [{ kind: 'downloads', path: downloads }], { statusFile: join(dir, 'live.json'), onWarning: (w) => warnings.push(w) });
     const first = live.scan(new Date(0));
-    expect(first.caught).toEqual([{ label: 'Claude', kind: 'claude', threads: 2, added: 2, versioned: 0 }]);
+    // Nothing saved: the export waits as one item, the zip of slides and the broken file aren't proposed.
+    expect(first.caught).toEqual([]);
     expect(first.errors).toEqual([]);
+    expect(store.stats().entries).toBe(0);
+    expect(store.pendingItems().map((p) => [p.sourceKind, p.threads, p.entries, p.origin?.path])).toEqual([['claude', 2, 2, join(downloads, 'export.zip')]]);
+    expect(statusLines(first)[1]).toBe('up to date · 1 import waits for your yes: skeinwise live pending');
+    expect(warnings).toEqual([`${join(downloads, 'export.zip')}: 2 changes to Claude wait for your yes as #1: skeinwise live pending`]);
 
-    // Downloading a newer export with one changed chat counts one chat, not the whole export.
+    expect(store.acceptPending(1)).toMatchObject({ added: 2, versioned: 0 });
+    expect(live.scan(new Date(0)).waiting).toBe(0);
+
+    // A newer export with one changed chat proposes that one change, not the whole export again.
     claude[1]!.chat_messages.push({ uuid: 'm3', sender: 'human', text: 'And the tyres', created_at: '2026-11-03T00:00:00Z' });
     writeFileSync(join(downloads, 'export (1).zip'), zipSync({ 'conversations.json': strToU8(JSON.stringify(claude)) }));
-    expect(live.scan(new Date(0)).caught).toEqual([{ label: 'Claude', kind: 'claude', threads: 1, added: 1, versioned: 0 }]);
+    const second = live.scan(new Date(0));
+    expect(second.caught).toEqual([]);
+    expect(store.pendingItems().map((p) => [p.id, p.threads, p.entries])).toEqual([[2, 1, 1]]);
+    expect(store.stats().entries).toBe(2);
   });
 
   it('leaves excluded sources out and counts notes as notes', () => {

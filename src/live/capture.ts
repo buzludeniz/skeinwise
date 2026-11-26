@@ -40,6 +40,8 @@ export interface LiveStatus {
   caught: Caught[];
   /** Files that failed to import on the last pass, with the reason. */
   errors: { path: string; error: string }[];
+  /** Imports waiting for the person's yes as the last pass ended (`skeinwise live pending`): Downloads goes there. */
+  waiting?: number;
   /** What the last background organising pass did, when one has run. */
   organised?: Organised;
 }
@@ -170,6 +172,7 @@ export function statusLines(status: LiveStatus, now = new Date()): [string, stri
     });
   const second = [parts.length ? `caught up ${parts.join(', ')}` : 'up to date'];
   if (status.errors.length) second.push(`${status.errors.length} file(s) failed`);
+  if (status.waiting) second.push(`${status.waiting} import${status.waiting === 1 ? ' waits' : 's wait'} for your yes: skeinwise live pending`);
   const organised = organisedText(status.organised);
   if (organised) second.push(organised);
   return [saved, second.join(' · ')];
@@ -375,13 +378,19 @@ export class LiveCapture {
    */
   private readFile(target: Target, file: string, row: FileRow | undefined): FileRead {
     if (target.kind === 'downloads') {
+      // Live found this file; nobody named it. So a link, or anything but a plain file, is refused as in any folder,
+      // though readImports would follow a link at a path the person named.
+      closeSync(openSafe(file, { root: target.path }).fd);
+      const warnings: string[] = [];
       let batches: ImportBatch[] = [];
       try {
         // Downloads holds everything; only chat exports are taken, never loose notes inside some other zip.
-        batches = readImports(file).filter((b) => EXPORT_KINDS.has(b.source.kind));
+        batches = readImports(file, { onWarning: (m) => warnings.push(m) }).filter((b) => EXPORT_KINDS.has(b.source.kind));
       } catch (error) {
         if (!(error as Error).message.startsWith('Nothing to import')) throw error;
       }
+      // What an export skipped is worth a word; what some other zip held is not.
+      if (batches.length) for (const w of warnings) this.warn(w);
       return { batches, ...NOTHING };
     }
     if (extname(file).toLowerCase() === '.jsonl') {
@@ -474,6 +483,13 @@ export class LiveCapture {
           read.extra = {};
           continue;
         }
+        if (target.kind === 'downloads') {
+          // Nobody asked for this file (H1, LS-03): what it would add or change waits as one pending item for the
+          // person's yes, and the record is untouched. The same file again, accepted or rejected, is never proposed twice.
+          const r = this.store.ingest(batch, { trusted: false });
+          if (r.pendingId) this.warn(`${file}: ${r.proposed} change${r.proposed === 1 ? '' : 's'} to ${batch.source.label} wait for your yes as #${r.pendingId}: skeinwise live pending`);
+          continue;
+        }
         const key = `${batch.source.kind}\u0000${batch.source.label}`;
         const c = caught.get(key) ?? { label: batch.source.label, kind: batch.source.kind, threads: 0, added: 0, versioned: 0 };
         caught.set(key, c);
@@ -536,6 +552,7 @@ export class LiveCapture {
       lastPassAt: busy ? prev.lastPassAt : at,
       caught: list.length ? list : prev.caught,
       errors,
+      waiting: this.store.pendingItems().length,
     };
     writeStatus(this.options.statusFile, status);
     if (busy && this.watching) this.schedule(this.busyRetryMs);
