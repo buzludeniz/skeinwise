@@ -40,11 +40,12 @@ export interface Config {
   ai: {
     engine: (typeof ENGINES)[number];
     local: { address: string; model: string };
-    remote: { address: string; model: string; keyEnv: string };
+    /** `hosts` are the hosts confirmed in the terminal to receive the key; the page shows them and can't change them. */
+    remote: { address: string; model: string; keyEnv: string; hosts: string[] };
   };
   usageCap: { monthlyTokens: number };
   /** Record live's settings, kept in config.json: the folders it follows, and whether and how it organises. */
-  live: { folders: LiveFolder[]; organise: boolean; remote: boolean };
+  live: { folders: LiveFolder[]; organise: boolean; remote: boolean; downloads: boolean };
   proofOfDate: boolean;
   backup: { daily: boolean };
   exclusions: { rules: string[]; redact: boolean };
@@ -63,10 +64,10 @@ export const DEFAULT_CONFIG: Config = {
   ai: {
     engine: 'local',
     local: { address: 'http://127.0.0.1:8731/v1', model: '' },
-    remote: { address: '', model: '', keyEnv: '' },
+    remote: { address: '', model: '', keyEnv: '', hosts: [] },
   },
   usageCap: { monthlyTokens: 1_000_000 },
-  live: { folders: [], organise: true, remote: false },
+  live: { folders: [], organise: true, remote: false, downloads: false },
   proofOfDate: false,
   backup: { daily: false },
   exclusions: { rules: [], redact: true },
@@ -92,6 +93,32 @@ const RANGES: Record<string, [number, number]> = {
 };
 
 export class ConfigError extends Error {}
+
+/**
+ * Settings that decide where the record's words go: which model reads them, which host gets the key, what is
+ * redacted first, and which folders and downloads come in. Only the terminal changes them (SETTINGS-1, M11), so a
+ * page, a stolen token or a script in the page can't. Each maps to the command that does, with a placeholder for the
+ * value: never the value a request sent, so a copied command can't carry someone else's host.
+ */
+export const CLI_ONLY: Record<string, string> = {
+  'ai.engine': 'skeinwise config engine local|remote|none',
+  'ai.remote.address': 'skeinwise config remoteUrl <address>',
+  'ai.remote.hosts': 'skeinwise config remoteHosts <host>',
+  'ai.remote.keyEnv': 'skeinwise config apiKeyEnv <VARIABLE_NAME>',
+  'exclusions.redact': 'skeinwise config redaction on|off',
+  'live.folders': 'skeinwise config liveFolders <folder>,<folder>',
+  'live.remote': 'skeinwise config liveRemote on|off',
+  'live.downloads': 'skeinwise config liveDownloads on|off',
+};
+
+/** A change only the terminal may make; the server answers 403 with the command. */
+export class CliOnly extends Error {
+  readonly command: string;
+  constructor(message: string, command: string) {
+    super(message);
+    this.command = command;
+  }
+}
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -195,10 +222,10 @@ function engineSettings(home: string): Pick<Config, 'ai' | 'usageCap' | 'live'> 
     ai: {
       engine: c.engine,
       local: { address: c.localUrl, model: c.localModel },
-      remote: { address: c.remoteUrl, model: c.remoteModel, keyEnv: c.apiKeyEnv },
+      remote: { address: c.remoteUrl, model: c.remoteModel, keyEnv: c.apiKeyEnv, hosts: c.remoteHosts },
     },
     usageCap: { monthlyTokens: c.budget },
-    live: { folders: c.liveFolders, organise: c.liveOrganise, remote: c.liveRemote },
+    live: { folders: c.liveFolders, organise: c.liveOrganise, remote: c.liveRemote, downloads: c.liveDownloads },
     redact: c.redaction,
   };
 }
@@ -211,11 +238,13 @@ const ENGINE_KEYS: [path: string, key: keyof EngineConfig][] = [
   ['ai.remote.address', 'remoteUrl'],
   ['ai.remote.model', 'remoteModel'],
   ['ai.remote.keyEnv', 'apiKeyEnv'],
+  ['ai.remote.hosts', 'remoteHosts'],
   ['usageCap.monthlyTokens', 'budget'],
   ['exclusions.redact', 'redaction'],
   ['live.folders', 'liveFolders'],
   ['live.organise', 'liveOrganise'],
   ['live.remote', 'liveRemote'],
+  ['live.downloads', 'liveDownloads'],
 ];
 
 function take(obj: Obj, path: string): { found: boolean; value: unknown } {
@@ -235,9 +264,24 @@ function take(obj: Obj, path: string): { found: boolean; value: unknown } {
 /** Moves the organiser's settings out of a checked patch into config.json, with the organiser's own checks. */
 function writeEngineSettings(home: string, patch: Obj): void {
   const changes: { key: keyof EngineConfig; value: unknown }[] = [];
+  let shown: Obj | undefined;
   for (const [path, key] of ENGINE_KEYS) {
     const { found, value } = take(patch, path);
-    if (found) changes.push({ key, value });
+    if (!found) continue;
+    const command = CLI_ONLY[path];
+    if (command) {
+      // The page sends whole groups back, so the value it was shown passes; any change is refused, and the whole
+      // patch with it, before anything is written.
+      if (!shown) {
+        const { redact, ...rest } = engineSettings(home);
+        shown = { ...rest, exclusions: { redact } };
+      }
+      if (JSON.stringify(value) !== JSON.stringify(valueAt(shown, path))) {
+        throw new CliOnly(`${path} decides where your words go, so only the terminal changes it: ${command}`, command);
+      }
+      continue;
+    }
+    changes.push({ key, value });
   }
   if (!changes.length) return;
   const config = loadConfig(home);
@@ -252,6 +296,12 @@ function writeEngineSettings(home: string, patch: Obj): void {
     (config as unknown as Obj)[parsed.key] = parsed.value;
   }
   saveConfig(home, config);
+}
+
+function valueAt(obj: Obj, path: string): unknown {
+  let at: unknown = obj;
+  for (const k of path.split('.')) at = isObj(at) ? at[k] : undefined;
+  return at;
 }
 
 /** Drops objects a patch left empty once the organiser's settings were taken out. */

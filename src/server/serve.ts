@@ -13,7 +13,8 @@ import type { Store } from '../store/store.ts';
 import { createHandler } from './app.ts';
 import { readConfig } from './config.ts';
 import { AppLive } from './live.ts';
-import { loadToken } from './token.ts';
+import { loadToken, newToken } from './token.ts';
+import { cleanUploads } from './uploads.ts';
 
 export const DEFAULT_PORT = 7319;
 
@@ -59,6 +60,9 @@ export interface StartOptions {
   webDir?: string | null;
   scanRoot?: string;
   onQuit?: () => void;
+  /** Keep the token from the last run, so an open page or bookmark still works. By default each start makes a new one. */
+  keepToken?: boolean;  /** The upload cap in bytes (tests set a small one); 1 GB otherwise. */
+  uploadLimit?: number;
 }
 
 function listen(server: Server, port: number): Promise<number> {
@@ -79,7 +83,8 @@ function listen(server: Server, port: number): Promise<number> {
 
 export async function startServer(options: StartOptions): Promise<Running> {
   const store = openHome(options.home);
-  const token = loadToken(options.home);
+  const token = options.keepToken ? loadToken(options.home) : newToken(options.home);
+  cleanUploads(options.home);
   const scanRoot = options.scanRoot ?? homedir();
   const live = new AppLive(store, options.home, { userHome: scanRoot });
   let port = 0;
@@ -93,6 +98,7 @@ export async function startServer(options: StartOptions): Promise<Running> {
       version: version(),
       scanRoot,
       live,
+      uploadLimit: options.uploadLimit,
       port: () => port,
       onQuit: () => {
         void running?.close().then(() => options.onQuit?.());
@@ -153,11 +159,11 @@ function openBrowser(url: string): void {
   child.unref();
 }
 
-/** Runs `skeinwise serve [--port <n>] [--open]`. Returns at once; the server keeps the process alive. */
+/** Runs `skeinwise serve [--port <n>] [--open] [--keep-token]`. Returns at once; the server keeps the process alive. */
 export function serveFromArgs(argv: string[], io: Io): number {
   const { values } = parseArgs({
     args: argv,
-    options: { port: { type: 'string' }, open: { type: 'boolean' } },
+    options: { port: { type: 'string' }, open: { type: 'boolean' }, 'keep-token': { type: 'boolean' } },
   });
   let port = DEFAULT_PORT;
   if (values.port !== undefined) {
@@ -165,7 +171,13 @@ export function serveFromArgs(argv: string[], io: Io): number {
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Give a port number, for example: --port 7319');
   }
   const home = homeDir(io.env);
-  startServer({ home, port, tryNext: values.port === undefined, scanRoot: io.env.SKEINWISE_SCAN_ROOT || homedir() }).then(
+  startServer({
+    home,
+    port,
+    tryNext: values.port === undefined,
+    scanRoot: io.env.SKEINWISE_SCAN_ROOT || homedir(),
+    keepToken: values['keep-token'] === true,
+  }).then(
     (running) => {
       io.out(`Skeinwise is running on this computer only.\nOpen: ${running.url}\nRecord: ${home}\nPress Ctrl+C to stop.\n`);
       if (values.open) openBrowser(running.url);
