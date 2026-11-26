@@ -37,11 +37,15 @@ describe('the recovery phrase words', () => {
 });
 
 describe('the passphrase', () => {
-  it('needs 12 characters, counted as characters, and is normalised', () => {
+  it('needs 14 characters, counted as characters, or 5 words, and is normalised', () => {
     expect(() => checkPassphrase('')).toThrow(/empty/);
-    expect(() => checkPassphrase('            ')).toThrow(/empty/);
-    expect(() => checkPassphrase('short one')).toThrow(/at least 12 characters/);
-    expect(checkPassphrase('çay çay çay!')).toBe('çay çay çay!');
+    expect(() => checkPassphrase('              ')).toThrow(/empty/);
+    expect(() => checkPassphrase('short one')).toThrow(/at least 14 characters, or 5 or more words/);
+    expect(() => checkPassphrase('çay çay çay!')).toThrow(/at least 14 characters/); // 12 characters, 3 words
+    expect(() => checkPassphrase('çay çay çay ça')).not.toThrow(); // 14 characters, counted as characters
+    expect(checkPassphrase('çay çay çay çay')).toBe('çay çay çay çay');
+    expect(checkPassphrase('猫 犬 空 海 山')).toBe('猫 犬 空 海 山'); // 9 characters, 5 words
+    expect(() => checkPassphrase('猫 犬 空 海')).toThrow(/at least 14 characters/);
     // The same letters typed as one character or as a letter and an accent give the same passphrase.
     expect(checkPassphrase('café au lait x')).toBe(checkPassphrase('café au lait x'));
   });

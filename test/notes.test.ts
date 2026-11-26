@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { lineDiff } from '../src/diff.ts';
-import { appendDailyNote, homeNoteFile, newNote, notesDir, slugify, writeAgentNote } from '../src/notes.ts';
+import { appendDailyNote, homeNoteFile, newNote, notesDir, rewriteNoteFile, slugify, writeAgentNote } from '../src/notes.ts';
 import { resolveReview } from '../src/organiser/corrections.ts';
 import { currentMark, finishRun, startRun } from '../src/organiser/runs.ts';
 import { openDb } from '../src/store/db.ts';
@@ -147,5 +147,81 @@ describe('lineDiff', () => {
     const after = before.replace('line 6', 'line six');
     expect(lineDiff(before, after)).toEqual(['  …', '  line 4', '  line 5', '- line 6', '+ line six', '  line 7', '  line 8', '  …']);
     expect(lineDiff('same', 'same')).toEqual([]);
+  });
+});
+
+// L8: a note is written only inside the notes folder and never through a link. Anyone who can drop a link into
+// notes/ (a synced folder, an editor plugin, a shared vault) must not be able to turn the next `note` into a write to
+// a file elsewhere, such as ~/.ssh/authorized_keys or a shell profile.
+describe('notes and links', () => {
+  let home: string;
+  let outside: string;
+  let target: string;
+  let store: Store;
+  const now = new Date(2026, 10, 25, 10, 30);
+  const daily = () => join(notesDir(home), 'daily', '2026-11-25.md');
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'skeinwise-links-'));
+    outside = mkdtempSync(join(tmpdir(), 'skeinwise-outside-'));
+    target = join(outside, 'target.txt');
+    writeFileSync(target, 'untouched\n');
+    store = new Store(openDb(':memory:'), () => '2026-11-25T10:30:00.000Z');
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it("refuses to add to today's note when it is a link, for you and for an agent", () => {
+    mkdirSync(join(notesDir(home), 'daily'), { recursive: true });
+    symlinkSync(target, daily());
+    expect(() => appendDailyNote(store, home, 'Fed the starter', now)).toThrow(/is a link.*Nothing was written/);
+    expect(() => appendDailyNote(store, home, 'Fed the starter', now, 'claude')).toThrow(/is a link/);
+    expect(readFileSync(target, 'utf8')).toBe('untouched\n');
+  });
+
+  it('refuses a linked daily folder that leads out of the notes folder', () => {
+    mkdirSync(notesDir(home), { recursive: true });
+    symlinkSync(outside, join(notesDir(home), 'daily'), 'dir');
+    expect(() => appendDailyNote(store, home, 'Fed the starter', now)).toThrow(/leads out of the notes folder through a link/);
+    expect(readdirSync(outside)).toEqual(['target.txt']);
+  });
+
+  it("refuses to replace an agent's note that was swapped for a link, and to rewrite a linked note", () => {
+    const made = writeAgentNote(store, home, 'claude', 'Plan', 'First draft.', now);
+    rmSync(made.path);
+    symlinkSync(target, made.path);
+    expect(() => writeAgentNote(store, home, 'claude', 'Plan', 'Second draft.', now)).toThrow(/is a link/);
+    expect(() => rewriteNoteFile(made.path, '# Plan\n\nOverwritten.')).toThrow(/link/);
+    expect(readFileSync(target, 'utf8')).toBe('untouched\n');
+  });
+
+  it('treats a dangling link at a new note name as taken, and creates nothing at its target', () => {
+    mkdirSync(notesDir(home), { recursive: true });
+    const elsewhere = join(outside, 'created-through-link.md');
+    symlinkSync(elsewhere, join(notesDir(home), 'garden.md'));
+    expect(() => newNote(store, home, 'Garden', now)).toThrow(/already exists/);
+    expect(() => writeAgentNote(store, home, 'claude', 'Garden', 'Beds.', now)).toThrow(/link/);
+    expect(existsSync(elsewhere)).toBe(false);
+  });
+
+  it('finds no file for an entry whose name leads out of the notes folder', () => {
+    const made = newNote(store, home, 'Bread', now);
+    const note = store.getEntry(made.entryId)!;
+    expect(homeNoteFile(store, home, note)).toBe(made.path);
+    expect(homeNoteFile(store, home, { ...note, externalId: '../record.db' })).toBeNull();
+    expect(homeNoteFile(store, home, { ...note, externalId: '../../escape.md' })).toBeNull();
+    symlinkSync(outside, join(notesDir(home), 'linked'), 'dir');
+    expect(homeNoteFile(store, home, { ...note, externalId: 'linked/target.txt' })).toBeNull();
+  });
+
+  it('still writes when the whole notes folder is a link to a folder you chose', () => {
+    const vault = join(outside, 'vault');
+    mkdirSync(vault);
+    symlinkSync(vault, notesDir(home), 'dir');
+    const written = appendDailyNote(store, home, 'Fed the starter', now);
+    expect(readFileSync(join(vault, 'daily', '2026-11-25.md'), 'utf8')).toBe('# 2026-11-25\n\n- Fed the starter\n');
+    expect(appendDailyNote(store, home, 'Shaped the loaf', now).entryId).toBe(written.entryId);
   });
 });

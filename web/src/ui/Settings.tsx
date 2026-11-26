@@ -1,4 +1,4 @@
-// Settings: the groups from docs/ui.md, top to bottom, plus Record live's own settings under AI model. Each change
+// Settings: the groups from docs/ui.md, top to bottom, plus Live capture's own settings under AI model. Each change
 // saves at once; a note says where a setting isn't acted on yet.
 
 import { useEffect, useState } from 'preact/hooks';
@@ -12,9 +12,9 @@ import { contrast, PALETTES, pointColors, THEMES } from '../themes.ts';
 import type { Agent, Config } from '../types.ts';
 import { Button, Segmented, Switch, useFocusTrap } from './common.tsx';
 
-const GROUPS = ['Sync', 'AI agents', 'AI model', 'Usage cap', 'Proof of date', 'Backup', 'Exclusions', 'Appearance'] as const;
+const GROUPS = ['AI agents', 'AI model', 'Usage cap', 'Proof of date', 'Backup', 'Exclusions', 'Appearance'] as const;
 
-const LATER_NOTE = 'Comes in version 0.5. The choice is kept until then.';
+const LATER_NOTE = 'Not available yet. The choice is kept.';
 
 function slug(g: string): string {
   return `set-${g.toLowerCase().replace(/[^a-z]+/g, '-')}`;
@@ -96,14 +96,11 @@ function Agents({ config }: { config: Config }) {
                 <span>{a.label}</span>
                 <span class="soft small">{a.found ? 'Found on this computer' : 'Not found'}</span>
               </label>
-              <Button icon={Copy} small kind="quiet" disabled title="The memory server comes in version 0.5">
-                Copy config
-              </Button>
             </li>
           ))}
         </ul>
       )}
-      <Note>Agents will reach the record through the memory server, which comes in version 0.5. Ticked agents are the ones it will offer to connect.</Note>
+      <Note>Connecting an agent is not available yet.</Note>
       <Button
         icon={Copy}
         small
@@ -177,6 +174,7 @@ function Model({ config }: { config: Config }) {
             onSave={(keyEnv) => void saveConfig({ ai: { remote: { keyEnv } } })}
             hint="Skeinwise reads the key from this variable when it runs. The key itself is never saved."
           />
+          <Note>With an outside model, the entries a run reads leave this computer and go to this address.</Note>
         </div>
       )}
       {ai.engine === 'none' && <Note>Search, the brain and every view work without AI. Organising uses plain text rules only.</Note>}
@@ -184,7 +182,7 @@ function Model({ config }: { config: Config }) {
   );
 }
 
-/** Record live's settings: the folders it follows besides agent histories and Downloads, and how it organises. */
+/** Live capture's settings: the folders it follows besides agent histories and Downloads, and how it organises. */
 function LiveSettings({ config }: { config: Config }) {
   const { live } = config;
   const [path, setPath] = useState('');
@@ -203,8 +201,8 @@ function LiveSettings({ config }: { config: Config }) {
   };
   return (
     <>
-      <h4>Record live</h4>
-      <Switch label="Organise what Record live brings in" checked={live.organise} onChange={(organise) => void saveConfig({ live: { organise } })} />
+      <h4>Live capture</h4>
+      <Switch label="Organise what Live capture brings in" checked={live.organise} onChange={(organise) => void saveConfig({ live: { organise } })} />
       {config.ai.engine === 'remote' && (
         <Switch label="Let it use the outside model, within the usage cap" checked={live.remote} onChange={(remote) => void saveConfig({ live: { remote } })} />
       )}
@@ -363,10 +361,6 @@ function Sheet() {
             </nav>
           )}
           <div class="settings-groups">
-            <Group title="Sync">
-              <Field label="Folder" value={config.sync.folder} placeholder="A folder your sync app shares" onSave={(folder) => void saveConfig({ sync: { folder } })} />
-              <Note>An encrypted copy in this folder, with a passphrase and recovery words. {LATER_NOTE}</Note>
-            </Group>
             <Group title="AI agents">
               <Agents config={config} />
             </Group>

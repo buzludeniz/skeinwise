@@ -1,4 +1,4 @@
-// You: what the record says about you. The topics you return to, your projects, the people you mention, each as a
+// Profile: what the record says about you. The topics you return to, your projects, the people you mention, each as a
 // span from first to latest mention; and Check a claim, which finds the entries that bear on a sentence.
 
 import { useEffect, useMemo, useState } from 'preact/hooks';
@@ -8,10 +8,10 @@ import { go, light, message, openEntry, toast } from '../actions.ts';
 import { api, qs } from '../api.ts';
 import { fmtDate, fmtMonth, plural, speakerName } from '../format.ts';
 import { useApp } from '../store.ts';
-import type { Brief, YouLine } from '../types.ts';
+import type { Brief, ProfileLine } from '../types.ts';
 import { Button, Empty } from '../ui/common.tsx';
 
-type About = { words: YouLine[]; names: YouLine[]; projects: YouLine[]; entries: number };
+type About = { words: ProfileLine[]; names: ProfileLine[]; projects: ProfileLine[]; entries: number };
 type Claim = { claim: string; entries: (Brief & { snippet: string })[] };
 
 /** Where a date sits between the earliest and latest, 0..1. */
@@ -20,24 +20,24 @@ function at(date: string, from: number, to: number): number {
   return to > from ? Math.min(1, Math.max(0, (t - from) / (to - from))) : 0.5;
 }
 
-function Line({ line, from, to, titles }: { line: YouLine; from: number; to: number; titles: Map<number, string> }) {
+function Line({ line, from, to, titles }: { line: ProfileLine; from: number; to: number; titles: Map<number, string> }) {
   const [open, setOpen] = useState(false);
   const a = at(line.first, from, to);
   const b = at(line.last, from, to);
   return (
-    <li class={`you-line${open ? ' open' : ''}`}>
-      <button type="button" class="you-row" aria-expanded={open} onClick={() => setOpen(!open)}>
+    <li class={`profile-line${open ? ' open' : ''}`}>
+      <button type="button" class="profile-row" aria-expanded={open} onClick={() => setOpen(!open)}>
         {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
-        <span class="you-label">{line.label}</span>
-        <span class="you-track" aria-hidden="true">
-          <span class="you-span" style={{ left: `${a * 100}%`, width: `max(6px, ${(b - a) * 100}%)` }} />
+        <span class="profile-label">{line.label}</span>
+        <span class="profile-track" aria-hidden="true">
+          <span class="profile-span" style={{ left: `${a * 100}%`, width: `max(6px, ${(b - a) * 100}%)` }} />
         </span>
-        <span class="you-meta">
+        <span class="profile-meta">
           {plural(line.count, 'entry', 'entries')} · {fmtDate(line.first) === fmtDate(line.last) ? fmtDate(line.first) : `${fmtMonth(line.first)} – ${fmtMonth(line.last)}`}
         </span>
       </button>
       {open && (
-        <div class="you-entries">
+        <div class="profile-entries">
           <ul class="item-list">
             {line.ids.map((id) => (
               <li key={id}>
@@ -66,14 +66,14 @@ function Line({ line, from, to, titles }: { line: YouLine; from: number; to: num
   );
 }
 
-function Group({ icon: Icon, title, lines, from, to, titles, empty }: { icon: LucideIcon; title: string; lines: YouLine[]; from: number; to: number; titles: Map<number, string>; empty: string }) {
+function Group({ icon: Icon, title, lines, from, to, titles, empty }: { icon: LucideIcon; title: string; lines: ProfileLine[]; from: number; to: number; titles: Map<number, string>; empty: string }) {
   return (
-    <section class="card you-group" aria-label={title}>
+    <section class="card profile-group" aria-label={title}>
       <h2>
         <Icon size={16} aria-hidden="true" /> {title}
       </h2>
       {lines.length ? (
-        <ul class="you-lines">
+        <ul class="profile-lines">
           {lines.map((l) => (
             <Line key={l.label} line={l} from={from} to={to} titles={titles} />
           ))}
@@ -157,7 +157,7 @@ function CheckClaim() {
   );
 }
 
-export function YouView() {
+export function ProfileView() {
   const revision = useApp((s) => s.revision);
   const brain = useApp((s) => s.brain);
   const [about, setAbout] = useState<About | null>(null);
@@ -185,12 +185,12 @@ export function YouView() {
   }, [about]);
 
   return (
-    <section class="view you" aria-label="You">
+    <section class="view profile" aria-label="Profile">
       <header class="view-head">
-        <h1>You</h1>
+        <h1>Profile</h1>
         {about && <p class="soft">From {plural(about.entries, 'entry', 'entries')} in your own words.</p>}
       </header>
-      <div class="you-body">
+      <div class="profile-body">
         {error ? (
           <Empty title="Couldn't read the record">{error}</Empty>
         ) : !about ? (
@@ -202,7 +202,7 @@ export function YouView() {
         ) : (
           <>
             {span.to > span.from && (
-              <div class="you-axis" aria-hidden="true">
+              <div class="profile-axis" aria-hidden="true">
                 <span>{fmtMonth(new Date(span.from))}</span>
                 <span>{fmtMonth(new Date(span.to))}</span>
               </div>

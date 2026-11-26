@@ -15,8 +15,12 @@ export interface KdfParams {
 
 export const SCRYPT: KdfParams = { N: 2 ** 17, r: 8, p: 1 };
 
-/** The shortest passphrase sync takes. The bundle can sit in a cloud folder for years, so it has to hold out. */
-export const MIN_PASSPHRASE = 12;
+/**
+ * The shortest passphrase sync takes: 14 characters, or 5 words for a passphrase of short words (in Japanese, say).
+ * The key file sits in the folder beside the bundle, so whoever can read the folder can guess offline, for years.
+ */
+export const MIN_PASSPHRASE = 14;
+export const MIN_PASSPHRASE_WORDS = 5;
 
 export const PHRASE_WORDS = 24;
 
@@ -76,8 +80,10 @@ export function parsePhrase(text: string): string {
 export function checkPassphrase(text: string): string {
   const pass = text.normalize('NFC');
   if (!pass.trim()) throw new UsageError('The passphrase is empty.');
-  if ([...pass].length < MIN_PASSPHRASE) {
-    throw new UsageError(`Use a passphrase of at least ${MIN_PASSPHRASE} characters; a few words strung together are easy to remember.`);
+  if ([...pass].length < MIN_PASSPHRASE && pass.trim().split(/\s+/).length < MIN_PASSPHRASE_WORDS) {
+    throw new UsageError(
+      `Use a passphrase of at least ${MIN_PASSPHRASE} characters, or ${MIN_PASSPHRASE_WORDS} or more words; a few unrelated words strung together are easy to remember.`,
+    );
   }
   return pass;
 }

@@ -14,22 +14,21 @@ const LINES: [string, string, boolean][] = [
   ['Label leader', 'Holds a label close to the point it names.', true],
 ];
 
-export function LearnPanel() {
+export function GuidePanel() {
   const hubs = useApp((s) => s.organiser.hubs.length);
   return (
     <SidePanel title="Reading your brain" label="Reading your brain" onClose={closePanel}>
-      <div class="prose learn">
+      <div class="prose guide-panel">
         <h3>Hubs</h3>
         <p>
           Hubs are the large labelled points. Each one stands for an idea the organiser found across many entries, and
           a faint spoke joins it to each of them. Double-click a hub to read what it found.
           {hubs ? '' : ' There are none yet: run the organiser to make hubs.'}
         </p>
-        <h3>Brainstem and spine</h3>
+        <h3>The stem</h3>
         <p>
-          The originals, your messages and files, wind up the brainstem and spine in date order. The oldest sit at the
-          bottom of the spine and the newest at the top of the stem. The notes you wrote and the hubs sit in the two
-          lobes.
+          The originals, your messages and files, wind up the stem below the brain in date order: the oldest at the
+          bottom, the newest at the top. The notes you wrote and the hubs sit in the two lobes.
         </p>
         <h3>Clusters</h3>
         <p>Points close together have something in common: the same thread, the same group, or links between them.</p>

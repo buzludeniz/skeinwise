@@ -14,7 +14,7 @@ import { Button, Empty, Segmented, Select, Switch } from '../ui/common.tsx';
 
 const LAYOUTS: [Layout, string][] = [
   ['brain', 'Brain'],
-  ['rings', 'Year rings'],
+  ['rings', 'Activity'],
   ['clusters', 'Clusters'],
 ];
 
@@ -37,14 +37,15 @@ export function BrainView() {
     const onKey = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement).closest('input, textarea, select, [contenteditable]');
       if (e.key === 'Escape' && lit && !document.querySelector('.side-panel, .modal-open')) clearLight();
-      if (!typing && (e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey && !(e.target as HTMLElement).closest('canvas')) scene.fit();
+      if (!typing && (e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey && !(e.target as HTMLElement).closest('canvas')) scene?.fit();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [lit]);
+  }, [lit, scene]);
 
   const empty = brain && brain.points.length === 0;
-  const point = hover && brain && model ? brain.points[hover.index] : null;
+  // The scene's point i is the model's, which is a sample when the record is past the cap.
+  const point = hover && brain && model ? model.data.points[hover.index] : null;
   const hub = hover && model && !point ? model.hubs.find((h) => h.index === hover.index) : null;
 
   return (
@@ -53,7 +54,7 @@ export function BrainView() {
       {!ok && (
         <div class="brain-fallback">
           <Empty title="This browser can't draw the brain">
-            <p>It needs WebGL. Everything else works: try Navigator or Numbers.</p>
+            <p>It needs WebGL. Everything else works: try Threads or Stats.</p>
           </Empty>
         </div>
       )}
@@ -79,7 +80,7 @@ export function BrainView() {
         )}
         <div class="brain-tools">
           <BrainSearch />
-          <Button icon={Focus} kind="quiet" title="Frame the whole cloud (F)" onClick={() => scene.fit()}>
+          <Button icon={Focus} kind="quiet" title="Frame the whole cloud (F)" onClick={() => scene?.fit()}>
             {compact ? undefined : 'Fit'}
           </Button>
           <Button
@@ -257,9 +258,11 @@ function Legend() {
   const layout = useApp((s) => s.layout);
   const isolate = useApp((s) => s.isolate);
   const compact = useApp((s) => s.compact);
-  const model = useBrainModel()?.legend ?? null;
+  const brain = useBrainModel();
+  const model = brain?.legend ?? null;
   const [more, setMore] = useState(false);
-  if (!model) return null;
+  if (!brain || !model) return null;
+  const sampled = brain.data.points.length < brain.total;
   const max = compact ? 4 : 7;
   const shown = more ? model : model.slice(0, max);
   const rest = model.length - max;
@@ -295,6 +298,11 @@ function Legend() {
           </li>
         )}
       </ul>
+      {sampled && (
+        <span class="legend-sample" title="The brain draws a sample spread over time so it stays quick. Search, Threads and the Timeline still cover every entry.">
+          Showing a sample: {fmtNum(brain.data.points.length)} of {fmtNum(brain.total)}
+        </span>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-// Navigator: folders and hubs, then threads and notes, then the reader.
+// Threads: folders and hubs, then threads and notes, then the reader.
 
 import { useMemo, useState } from 'preact/hooks';
 import { Database, FileText, FolderTree, Inbox, ListChecks, MessagesSquare, Network, Workflow } from 'lucide-preact';
@@ -228,12 +228,12 @@ function Middle() {
   );
 }
 
-export function Navigator() {
+export function Threads() {
   const panel = useApp((s) => s.panel);
   const compact = useApp((s) => s.compact);
   const target = panel && (panel.kind === 'entry' || panel.kind === 'thread') ? panel : null;
   return (
-    <section class={`view navigator${target ? ' reading' : ''}`} aria-label="Navigator">
+    <section class={`view threads${target ? ' reading' : ''}`} aria-label="Threads">
       {!compact && <Sections />}
       {compact && <CompactSections />}
       <Middle />
