@@ -168,11 +168,11 @@ describe('sync as an experiment', () => {
     expect((await a.run(['export', join(dir, 'gated.zip')], { experimental: false })).code).toBe(0);
   });
 
-  it('exits non-zero from the command line with the reason', async () => {
+  it('is not on the command line in 1.0 at all (ruling 5a), so nothing is made', async () => {
     let err = '';
     const io = { out: () => {}, err: (t: string) => void (err += t), env: { SKEINWISE_HOME: join(dir, 'gated-cli') } };
     expect(await main(['sync', 'init', join(dir, 'gated-cli-folder')], io)).toBe(2);
-    expect(err).toMatch(/^skeinwise: Sync is experimental in this version/);
+    expect(err).toMatch(/^skeinwise: Unknown command: sync\./);
     expect(existsSync(join(dir, 'gated-cli-folder'))).toBe(false);
   });
 

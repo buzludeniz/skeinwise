@@ -1,5 +1,6 @@
 // The review task: notes of yours that newer entries may have overtaken. A note is checked against your entries dated
-// after it last changed that sit in one of its hubs or name it. A model reads them and says whether the note is out of
+// after it last changed that sit in one of its hubs or name it, leaving out any that claims a date after the run
+// (`vouched`, H1: a planted export dates itself ahead to pass as your latest word). A model reads them and says whether the note is out of
 // date, why, and how it would read updated. The No-AI engine flags a note when such an entry has a change cue
 // ("changing my mind", "decided", "no longer", "instead", "switch to", "move to"), and proposes the note with those
 // sentences added under "Updates".
@@ -8,7 +9,7 @@ import { UsageError } from '../errors.ts';
 import type { Entry, Store } from '../store/store.ts';
 import { CHANGE_CUES } from './cues.ts';
 import { day, invalid, isRecord, list, type ModelRequest, type Plan, type TaskContext, text } from './plan.ts';
-import { isDailyNote, type RecordView, unlink } from './record.ts';
+import { isDailyNote, type RecordView, unlink, vouched } from './record.ts';
 import { cosine, sentences, tokenize, vectorize } from './text.ts';
 import { heldEntries, hubEntryIds, liveHubs, type Reason } from './views.ts';
 
@@ -83,6 +84,7 @@ function reviewChecks(ctx: TaskContext): Check[] {
         e.id !== note.id &&
         e.speaker === 'you' &&
         e.createdAt > since &&
+        vouched(e, ctx.now) &&
         !held.has(e.id) &&
         ((hubsOf.get(e.id) ?? []).some((h) => own.has(h)) || (name.length > 0 && hasAll(e, name))),
     );
@@ -191,7 +193,7 @@ function reviewRequest(record: RecordView, check: Check, n: number, of: number):
       if (index === undefined) invalid(purpose, `cites ${JSON.stringify(it.entry)}, which it wasn't shown`);
       return { index, why: text(purpose, it.why, 'why', 400) };
     });
-    return { stale: true, reasons, proposed: text(purpose, answer.proposed, 'proposed', 20000) };
+    return { stale: true, reasons, proposed: text(purpose, answer.proposed, 'proposed', 20000, 'block') };
   };
   return {
     request: {

@@ -86,7 +86,7 @@ function pickEngine(ctx: Ctx): Engine {
   if (!(ENGINES as string[]).includes(name)) throw new UsageError(`Unknown engine "${name}". Use local, remote or none.`);
   if (name === 'none') return { engine: 'none', config };
   const engine = name as 'local' | 'remote';
-  return { engine, config, client: createModel(config, engine, { fetch: ctx.io.fetch ?? fetch, env: ctx.io.env }) };
+  return { engine, config, client: createModel(config, engine, { fetch: ctx.io.fetch ?? fetch, env: ctx.io.env, home: ctx.home }) };
 }
 
 // Runs

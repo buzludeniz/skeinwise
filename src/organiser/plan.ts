@@ -3,6 +3,7 @@
 // stay inside a budget before it calls anything.
 
 import type { DatabaseSync } from 'node:sqlite';
+import { safeBlock, safeLine } from '../safe-text.ts';
 import type { Entry } from '../store/store.ts';
 import type { RecordView } from './record.ts';
 import type { Scope } from './runs.ts';
@@ -68,9 +69,13 @@ export function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 /** A non-empty string, trimmed, at most max characters. */
-export function text(purpose: string, v: unknown, field: string, max = 2000): string {
-  if (typeof v !== 'string' || !v.trim()) invalid(purpose, `"${field}" must be non-empty text`);
-  const t = v.trim();
+/**
+ * A model's text field, trimmed and made safe to store and print: escape sequences, controls and bidi overrides go
+ * (`safeLine`; `safeBlock` keeps line breaks), so an answer can't hide a link or rewrite the screen later.
+ */
+export function text(purpose: string, v: unknown, field: string, max = 2000, shape: 'line' | 'block' = 'line'): string {
+  const t = typeof v === 'string' ? (shape === 'block' ? safeBlock(v) : safeLine(v)).trim() : '';
+  if (!t) invalid(purpose, `"${field}" must be non-empty text`);
   if (t.length > max) invalid(purpose, `"${field}" is longer than ${max} characters`);
   return t;
 }

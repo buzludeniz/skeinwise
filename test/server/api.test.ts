@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { request } from 'node:http';
+import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../../src/cli.ts';
@@ -203,6 +203,42 @@ describe('writing', () => {
     expect((await api('settings', { method: 'PUT', body: { appearance: { theme: 'moss' } } })).body.appearance.theme).toBe('moss');
     expect((await api('settings')).body.appearance.theme).toBe('moss');
     expect((await api('settings', { method: 'PUT', body: { appearance: { theme: 'neon' } } })).status).toBe(400);
+  });
+
+  it("tests the local model with this record's key, and says so when the server wants one", async () => {
+    // A stand-in for llama-server locked with --api-key-file: it lists its model only for the right key.
+    const seen: (string | undefined)[] = [];
+    const model = createServer((req, res) => {
+      seen.push(req.headers.authorization);
+      const ok = req.url === '/v1/models' && req.headers.authorization === 'Bearer test-key-123';
+      res.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(ok ? { data: [{ id: 'Qwen3-4B-Q4_K_M' }] } : { error: 'Invalid API Key' }));
+    });
+    await new Promise<void>((done) => model.listen(0, '127.0.0.1', done));
+    const port = (model.address() as { port: number }).port;
+    const before = (await api('settings')).body.ai.local.address;
+    const keyFile = join(home, 'models', '.key');
+    try {
+      expect((await api('settings', { method: 'PUT', body: { ai: { local: { address: `http://127.0.0.1:${port}/v1` } } } })).status).toBe(200);
+
+      const keyless = (await api('model/test')).body;
+      expect(keyless.ok).toBe(false);
+      expect(keyless.message).toContain('skeinwise model serve --run');
+
+      mkdirSync(join(home, 'models'), { recursive: true });
+      writeFileSync(keyFile, 'wrong-key\n');
+      const wrong = (await api('model/test')).body;
+      expect(wrong.ok).toBe(false);
+      expect(wrong.message).toContain("refused this record's key");
+
+      writeFileSync(keyFile, 'test-key-123\n');
+      expect((await api('model/test')).body).toEqual({ ok: true, message: 'Running: Qwen3-4B-Q4_K_M' });
+      expect(seen).toEqual([undefined, 'Bearer wrong-key', 'Bearer test-key-123']);
+    } finally {
+      rmSync(keyFile, { force: true });
+      await api('settings', { method: 'PUT', body: { ai: { local: { address: before } } } });
+      await new Promise((done) => model.close(done));
+    }
   });
 
   it('leaves a source out and brings it back', async () => {

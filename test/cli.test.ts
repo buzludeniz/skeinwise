@@ -43,6 +43,20 @@ describe('the skeinwise command', () => {
     expect(JSON.parse((await cli('version', '--json')).out)).toEqual({ version: expect.stringMatching(/^\d+\.\d+\.\d+$/) });
   });
 
+  it('keeps sync hidden in v1.0: no command, no flags, no help; export stays', async () => {
+    const help = (await cli('help')).out;
+    expect(help).toContain('export [<file>]');
+    expect(help).not.toMatch(/sync (init|push|join|restore|status)|passphrase-file|phrase-file/);
+    for (const argv of [['sync', 'status'], ['sync', 'init', join(dir, 'folder')]]) {
+      const r = await cli(...argv);
+      expect(r.code, argv.join(' ')).not.toBe(0);
+      expect(r.err).toContain('Unknown command: sync');
+    }
+    const flag = await cli('export', join(dir, 'x.zip'), '--passphrase-file', join(dir, 'p'));
+    expect(flag.code).not.toBe(0);
+    expect(flag.err).toMatch(/passphrase-file/);
+  });
+
   it('creates an owner-only record folder', async () => {
     expect(JSON.parse((await cli('init', '--json')).out)).toEqual({ home: join(dir, 'home') });
     expect(statSync(join(dir, 'home')).mode & 0o777).toBe(0o700);
@@ -70,7 +84,11 @@ describe('the skeinwise command', () => {
     expect(show.out).toMatch(/rye loaf/);
     expect((await cli('history', String(hits[0]!.id))).out).toMatch(/^v1 .* by import/);
 
-    expect((await cli('stats')).out).toContain('Woven from 2 entries');
+    const stats = (await cli('stats')).out;
+    expect(stats).toContain('Woven from 2 entries');
+    // Plan 7.3: the busiest months are plain text, with no bar glyphs.
+    expect(stats).toMatch(/Busiest months:\n {2}\d{4}-\d{2} {2}2 entries\n/);
+    expect(stats).not.toMatch(/[\u2580-\u259F\u2500-\u257F]/);
     expect((await cli('sources')).out).toMatch(/1 {2}in {4}vault \(notes\): 2 entries/);
     expect(JSON.parse((await cli('exclude', '1', '--json')).out)).toEqual({ source: 1, status: 'out' });
     expect((await cli('search', 'rye')).out).toContain('Nothing found');
@@ -129,46 +147,32 @@ describe('the demo record', () => {
   });
 });
 
-describe('export and sync from the command line', () => {
-  it('lists them in help, exports a zip and starts a sync from a passphrase file', async () => {
-    expect((await cli('help')).out).toContain('sync init <folder>');
+describe('export from the command line (sync is hidden in v1.0; test/sync covers its module)', () => {
+  it('lists export in help and exports a zip', async () => {
+    expect((await cli('help')).out).toContain('export [<file>]');
     expect((await cli('demo', '--out', join(dir, 'demo'))).code).toBe(0);
 
     const zip = join(dir, 'record.zip');
     const exported = await cli('export', zip);
     expect(exported.code).toBe(0);
     expect(readFileSync(zip).subarray(0, 2).toString()).toBe('PK');
-
-    const pass = join(dir, 'pass.txt');
-    writeFileSync(pass, 'a long invented test passphrase\n');
-    const started = await cli('sync', 'init', join(dir, 'cloud'), '--passphrase-file', pass, '--experimental');
-    expect(started.code).toBe(0);
-    expect(statSync(join(dir, 'cloud')).isDirectory()).toBe(true);
-    expect((await cli('sync', 'status', '--experimental')).code).toBe(0);
-  });
-
-  it('says what to do when sync was never started', async () => {
-    const pushed = await cli('sync', 'push', '--experimental');
-    expect(pushed.code).toBe(2);
-    expect(pushed.err).toMatch(/sync init/);
   });
 });
 
-describe('connectors from the command line', () => {
-  it('lists them in help and says when nothing is connected', async () => {
+describe('connectors, which are off in v1.0', () => {
+  it('leaves them out of help and refuses their commands', async () => {
     const help = (await cli('help')).out;
-    expect(help).toContain('connect <service>');
-    expect(help).toContain('disconnect <service>');
-    expect((await cli('demo', '--out', join(dir, 'demo'))).code).toBe(0);
-    const listed = await cli('connections');
-    expect(listed.code).toBe(0);
-    expect(listed.out).toMatch(/Nothing is connected/);
-  });
-
-  it('asks which service to connect', async () => {
-    const asked = await cli('connect');
-    expect(asked.code).toBe(2);
-    expect(asked.err).toMatch(/gmail, calendar, todoist, slack/);
+    expect(help).not.toMatch(/connect <service>|disconnect <service>|Connectors/);
+    for (const command of ['connections', 'disconnect']) {
+      const run = await cli(command, 'gmail');
+      expect(run.code).toBe(2);
+      expect(run.err).toMatch(new RegExp(`Unknown command: ${command}\\.`));
+    }
+    // `connect` is the agents' command in v1.0 (setup.ts): a service name gets the list of agents, not a connector.
+    const gmail = await cli('connect', 'gmail');
+    expect(gmail.code).toBe(2);
+    expect(gmail.err).toContain('Name the agent to connect: skeinwise connect claude-code');
+    expect((await cli('connect', '--client-id', 'x')).err).toMatch(/Unknown option '--client-id'/);
   });
 });
 

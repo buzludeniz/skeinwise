@@ -69,6 +69,9 @@ describe('bench worker', () => {
     const mcp = await work({ kind: 'mcp', calls: MCP_CALLS, hubs: 3 }, env);
     expect(mcp.times).toHaveLength(MCP_CALLS.length + 1); // list_hubs; no hubs before a run, so no read_hub
     expect(Math.min(...mcp.sizes)).toBeGreaterThan(0);
+    await work({ kind: 'cli', runs: [['run', 'hub', '--engine', 'none']] }, env);
+    const withHubs = await work({ kind: 'mcp', calls: [], hubs: 3 }, env);
+    expect(withHubs.times.length).toBeGreaterThan(1); // list_hubs, then read_hub for each hub it listed
   });
 });
 

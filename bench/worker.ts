@@ -7,7 +7,8 @@ import { request } from 'node:http';
 import type { Ctx } from '../src/cli-organiser.ts';
 import { main } from '../src/cli.ts';
 import { openHome } from '../src/home.ts';
-import { allowAgent } from '../src/mcp/access.ts';
+import { allowAgent, TOKEN_ENV } from '../src/mcp/access.ts';
+import { unframe } from '../src/mcp/frame.ts';
 import { memoryServer } from '../src/mcp/commands.ts';
 import { startServer } from '../src/server/serve.ts';
 
@@ -60,9 +61,10 @@ export async function work(job: Job, env: NodeJS.ProcessEnv): Promise<WorkerRepo
   } else {
     const store = openHome(home);
     try {
-      allowAgent(home, 'bench', new Date().toISOString());
+      // The agent's token goes in its environment, as `skeinwise connect` writes it into an agent's MCP config.
+      const { token } = allowAgent(home, 'bench', new Date().toISOString());
       const ctx: Ctx = {
-        io: { out: () => {}, err: (t) => void process.stderr.write(t), env },
+        io: { out: () => {}, err: (t) => void process.stderr.write(t), env: { ...env, [TOKEN_ENV]: token } },
         home,
         store,
         values: {} as Ctx['values'],
@@ -87,8 +89,9 @@ export async function work(job: Job, env: NodeJS.ProcessEnv): Promise<WorkerRepo
         const listed = await send('tools/call', { name: 'list_hubs', arguments: {} });
         report.times.push(listed.ms);
         report.sizes.push(listed.bytes);
-        const { hubs } = JSON.parse(listed.body) as { hubs: { id: number }[] };
-        for (const h of hubs.slice(0, job.hubs)) calls.push({ name: 'read_hub', args: { hub_id: h.id } });
+        // A framed reply (src/mcp/frame.ts): `hubs` is the count, `entries` the hubs on this page.
+        const { entries } = unframe(listed.body) as { entries: { id: number }[] };
+        for (const h of entries.slice(0, job.hubs)) calls.push({ name: 'read_hub', args: { hub_id: h.id } });
       }
       for (const c of calls) {
         const r = await send('tools/call', { name: c.name, arguments: c.args });
