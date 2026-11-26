@@ -129,6 +129,52 @@ describe('GET /api/ask/stream', () => {
     expect(done.result.message).toMatch(/^The local model didn't answer, so these are your entries alone\. No model server answers at http:\/\/127\.0\.0\.1:9\/v1/);
   });
 
+  it('trims the question, and refuses as JSON what /api/ask refuses: empty, or over 2,000 characters', async () => {
+    model = (async (input: string | URL | Request) => listsModel(input) || sse(['{"answer": "SQLite.", "cites": ["E1"]}'])) as typeof fetch;
+    const list = events(await (await fetch(`${base}/?q=${encodeURIComponent(`  ${QUESTION} \n`)}`)).text());
+    expect((list[0] as Extract<AskStreamEvent, { type: 'hits' }>).result.question).toBe(QUESTION);
+    for (const [q, status, error] of [
+      [' \t ', 400, 'Ask a question'],
+      ['x'.repeat(2001), 413, 'The question is too long'],
+    ] as const) {
+      const res = await fetch(`${base}/?q=${encodeURIComponent(q)}`);
+      expect(res.status).toBe(status);
+      expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
+      expect(await res.json()).toEqual({ error });
+    }
+    // 2,000 characters around spaces still count as 2,000.
+    expect((await fetch(`${base}/?q=${encodeURIComponent(`  ${'sqlite '.repeat(285)}sqlit  `)}`)).status).toBe(200);
+  });
+
+  it('writes one answer at a time: a second ask while one streams gets 409, and the next one after it runs', async () => {
+    let held: AbortSignal | null | undefined;
+    model = (async (input: string | URL | Request, init?: RequestInit) => {
+      const listed = listsModel(input);
+      if (listed) return listed;
+      held = init?.signal;
+      return sse(['{"answer": "Plotline went on', ' SQLite"}'], init?.signal, 0);
+    }) as typeof fetch;
+    const first = new AbortController();
+    const res = await fetch(`${base}/?q=${encodeURIComponent(QUESTION)}`, { signal: first.signal });
+    const reader = res.body!.getReader();
+    let text = '';
+    while (!text.includes('"type":"text"')) text += new TextDecoder().decode((await reader.read()).value);
+
+    const second = await fetch(`${base}/?q=${encodeURIComponent(QUESTION)}`);
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({ error: 'An answer is already being written. Stop it, or wait for it to finish.' });
+
+    first.abort();
+    const deadline = Date.now() + 3000;
+    while (!held?.aborted && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    model = (async (input: string | URL | Request) => listsModel(input) || sse(['{"answer": "SQLite.", "cites": ["E1"]}'])) as typeof fetch;
+    let after = await fetch(`${base}/?q=${encodeURIComponent(QUESTION)}`);
+    // The first stream's cleanup may still be finishing for a moment after its model was stopped.
+    while (after.status === 409 && Date.now() < deadline) after = await fetch(`${base}/?q=${encodeURIComponent(QUESTION)}`);
+    expect(after.status).toBe(200);
+    expect(events(await after.text()).at(-1)?.type).toBe('done');
+  });
+
   it('refuses before streaming: an empty question, an unknown engine', async () => {
     model = (async () => {
       throw new Error('not asked');

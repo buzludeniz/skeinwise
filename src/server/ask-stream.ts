@@ -10,8 +10,12 @@
 //
 // Closing the connection stops the model (llama-server stops writing when its own connection closes) and records the
 // run as stopped. A model that can't be reached ends, like /api/ask, with the entries alone and a line that says why.
-// Anything wrong before the stream starts (an empty question, an unknown engine) throws, so the app answers it as JSON
-// with a status.
+//
+// Nothing wrong before the stream starts is streamed: the answer is JSON with a status, as from the rest of the API.
+// The question is trimmed, and refused here as /api/ask refuses it: 400 when empty, 413 over 2,000 characters. One
+// answer is written at a time for a record, so a second ask while one streams gets 409. Anything else wrong before the
+// stream (a question with no words, an unknown engine, notes that can't be read) is thrown with nothing written, and the
+// caller answers it as JSON (the app's catch maps it to its status).
 
 import type { ServerResponse } from 'node:http';
 import { UsageError } from '../errors.ts';
@@ -40,8 +44,18 @@ export interface AskStreamInput {
   limit?: number;
 }
 
+/** The longest question asked, as for GET /api/ask. */
+export const MAX_QUESTION = 2000;
+
+/** The records with an answer being written now. */
+const writing = new WeakSet<Store>();
+
 export async function streamAsk(res: ServerResponse, input: AskStreamInput): Promise<void> {
-  const { store, home, question, deps, limit = 20 } = input;
+  const { store, home, deps, limit = 20 } = input;
+  const question = input.question.trim();
+  if (!question) return refuse(res, 400, 'Ask a question');
+  if (question.length > MAX_QUESTION) return refuse(res, 413, 'The question is too long');
+  if (writing.has(store)) return refuse(res, 409, 'An answer is already being written. Stop it, or wait for it to finish.');
   parseQuestion(question);
   const { engine, client, budget } = pickEngine(home, input.engine, deps);
   readNotes(store, home);
@@ -60,6 +74,7 @@ export async function streamAsk(res: ServerResponse, input: AskStreamInput): Pro
     if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
 
+  writing.add(store);
   try {
     const result = await ask(store, record, question, { engine, ...(client ? { client } : {}), budget, limit }, {
       onHits: (r) => send({ type: 'hits', result: r }),
@@ -73,6 +88,7 @@ export async function streamAsk(res: ServerResponse, input: AskStreamInput): Pro
     // Stopped: whoever stopped it has gone.
     if (!(error instanceof ModelCancelledError)) send(await fallback(error));
   } finally {
+    writing.delete(store);
     res.end();
   }
 
@@ -86,4 +102,17 @@ export async function streamAsk(res: ServerResponse, input: AskStreamInput): Pro
       return { type: 'error', message: again instanceof Error ? again.message : String(again) };
     }
   }
+}
+
+/** A refusal before the stream starts, as JSON, with the headers every API answer carries. */
+function refuse(res: ServerResponse, status: number, error: string): void {
+  const body = JSON.stringify({ error });
+  res
+    .writeHead(status, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Length': String(Buffer.byteLength(body)),
+    })
+    .end(body);
 }

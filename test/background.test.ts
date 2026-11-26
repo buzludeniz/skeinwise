@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,13 +12,13 @@ import { DEMO_NOW, writeDemo } from '../src/demo/demo.ts';
 import { openHome } from '../src/home.ts';
 import { readImports } from '../src/importers/detect.ts';
 import { readStatus, statusLines } from '../src/live/capture.ts';
-import { Background, type BackgroundOptions, type Exec, parsePmset, PMSET, readBattery } from '../src/live/organise.ts';
+import { Background, type BackgroundOptions, type Exec, parsePmset, passExecArgv, passReply, PMSET, readBattery } from '../src/live/organise.ts';
 import { startLive } from '../src/live/run.ts';
 import { type PollReport, pollConnectors } from '../src/connectors/poll.ts';
 import { type RunOptions, runSteps, steps } from '../src/organiser/organise.ts';
 import { serverKeyPath } from '../src/organiser/model.ts';
 import { RecordView } from '../src/organiser/record.ts';
-import { listRuns } from '../src/organiser/runs.ts';
+import { listRuns, startRun } from '../src/organiser/runs.ts';
 import type { Store } from '../src/store/store.ts';
 
 const NONE: Omit<RunOptions, 'task'> = { scope: { kind: 'all' }, engine: 'none', yes: false, budget: 0, progress: () => {} };
@@ -194,6 +195,135 @@ describe('a pass in a child process (isolate)', () => {
     } finally {
       for (const l of lives) l.stop();
     }
+  });
+});
+
+describe('a pass process that goes wrong', () => {
+  const FAKE = fileURLToPath(new URL('./fixtures/pass-child.mjs', import.meta.url));
+  /** A Background whose pass process is the scripted stand-in, sending these messages. */
+  function scripted(replies: unknown[], extra: { gapMs?: number; exit?: boolean } & Partial<BackgroundOptions> = {}) {
+    const { gapMs = 0, exit = false, ...options } = extra;
+    const pidFile = join(dir, `pass-${randomBytes(4).toString('hex')}.pid`);
+    const env = { FAKE_PASS_PID: pidFile, FAKE_PASS_REPLIES: JSON.stringify(replies), FAKE_PASS_GAP_MS: String(gapMs), ...(exit ? { FAKE_PASS_EXIT: '1' } : {}) };
+    const bg = background({ isolate: true, passScript: FAKE, env, ...options });
+    return { bg, pid: async () => {
+      const deadline = Date.now() + 10_000;
+      while (!existsSync(pidFile) || !readFileSync(pidFile, 'utf8')) {
+        if (Date.now() > deadline) throw new Error('the pass process never started');
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      return Number(readFileSync(pidFile, 'utf8'));
+    } };
+  }
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0); // signal 0: only asks whether the process is there
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  /** A run left running, as the pass process's own run would be while it works. */
+  const running = () => startRun(store.db, { task: 'tag', engine: 'local', model: 'fake-4b', scope: 'new', mark: 0, now: DEMO_NOW });
+
+  it('is ended when it goes quiet for too long, and the run it was on is marked failed', async () => {
+    const { bg, pid } = scripted([{ type: 'progress', line: 'tags: sending (1/3)' }], { silenceMs: 300 });
+    const id = running();
+    const started = Date.now();
+    const result = await bg.pass();
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(result.error).toBe('The background pass went 0.3 seconds without a word, so it was ended. Nothing it was doing was saved; the next capture tries again.');
+    expect(alive(await pid())).toBe(false);
+    expect(listRuns(store.db).find((r) => r.id === id)).toMatchObject({ status: 'failed', message: `Stopped: ${result.error}` });
+    expect(statusLines(readStatus(join(home, 'live.json')))[1]).toMatch(/organising stopped: The background pass went 0\.3 seconds without a word/);
+  }, 30_000);
+
+  it('is left alone while it keeps reporting, however long the pass', async () => {
+    const lines: string[] = [];
+    const progress = [1, 2, 3, 4, 5].map((i) => ({ type: 'progress', line: `tags: sending (${i}/5)` }));
+    const done = { type: 'done', result: { entries: 5, runs: [7, 8] } };
+    const { bg } = scripted([...progress, done], { silenceMs: 400, gapMs: 150, exit: true, progress: (l) => lines.push(l) });
+    const result = await bg.pass();
+    expect(result.error).toBeUndefined();
+    expect(result).toMatchObject({ entries: 5, runs: [7, 8] });
+    expect(lines).toEqual(progress.map((p) => p.line));
+  }, 30_000);
+
+  it('is ended when it sends something that is not a reply, and nothing in it is used', async () => {
+    const { bg, pid } = scripted([{ type: 'done', result: { entries: 'all of them', runs: [] } }]);
+    const id = running();
+    const result = await bg.pass();
+    expect(result.error).toBe("The background pass sent something that isn't a reply, so it was ended. Nothing it was doing was saved.");
+    expect(result.entries).toBe(0);
+    expect(alive(await pid())).toBe(false);
+    expect(listRuns(store.db).find((r) => r.id === id)?.status).toBe('failed');
+  }, 30_000);
+
+  it('frees the run it was on when it exits without a reply', async () => {
+    const { bg } = scripted([], { exit: true });
+    const id = running();
+    const result = await bg.pass();
+    expect(result.error).toBe('The background pass stopped (exit 0).');
+    expect(listRuns(store.db).find((r) => r.id === id)).toMatchObject({ status: 'failed', message: 'Stopped: The background pass stopped (exit 0).' });
+  }, 30_000);
+
+  it('is ended by stop(), which resolves once it has gone', async () => {
+    const { bg, pid } = scripted([{ type: 'progress', line: 'tags: sending (1/3)' }]);
+    bg.trigger();
+    const child = await pid();
+    expect(alive(child)).toBe(true);
+    const id = running();
+    await bg.stop();
+    expect(alive(child)).toBe(false);
+    expect(bg.active).toBe(false);
+    expect(listRuns(store.db).find((r) => r.id === id)).toMatchObject({ status: 'failed', message: 'Stopped: skeinwise live was closed while this ran. Nothing was saved.' });
+  }, 30_000);
+
+  it('has each message checked: only a reply, and only the fields a reply has', () => {
+    expect(passReply({ type: 'progress', line: 'tags (1/2)' })).toEqual({ type: 'progress', line: 'tags (1/2)' });
+    expect(passReply({ type: 'error', message: 'No model server answers' })).toEqual({ type: 'error', message: 'No model server answers' });
+    // What the pass process sends is all it can change: never the time, an error of its own making, or anything else.
+    expect(passReply({ type: 'done', result: { entries: 2, runs: [4], notStarted: ['hub'], waiting: 'busy', at: 'then', error: 'x', extra: 1 } })).toEqual({
+      type: 'done',
+      result: { entries: 2, runs: [4], notStarted: ['hub'], waiting: 'busy' },
+    });
+    for (const bad of [
+      null,
+      'done',
+      { type: 'stop' },
+      { type: 'progress', line: 3 },
+      { type: 'error' },
+      { type: 'done' },
+      { type: 'done', result: { entries: -1, runs: [] } },
+      { type: 'done', result: { entries: 1.5, runs: [] } },
+      { type: 'done', result: { entries: 1, runs: ['4'] } },
+      { type: 'done', result: { entries: 1, runs: {} } },
+      { type: 'done', result: { entries: 1, runs: [], waiting: 5 } },
+      { type: 'done', result: { entries: 1, runs: [], notStarted: [1] } },
+    ]) {
+      expect(passReply(bad)).toBeNull();
+    }
+  });
+});
+
+describe("the pass process's Node flags", () => {
+  it('keeps the parent\'s own, less --input-type and the inspector\'s', () => {
+    expect(
+      passExecArgv([
+        '--experimental-sqlite',
+        '--inspect',
+        '--inspect-brk=127.0.0.1:9230',
+        '--inspect-port',
+        '9231',
+        '--inspect-wait',
+        '--debug-port=9232',
+        '--inspect-publish-uid=http',
+        '--input-type=module',
+        '--input-type',
+        'module',
+        '--max-old-space-size=512',
+      ]),
+    ).toEqual(['--experimental-sqlite', '--max-old-space-size=512']);
   });
 });
 

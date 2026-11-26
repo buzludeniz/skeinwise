@@ -61,6 +61,8 @@ export function planLayers(ctx: TaskContext): Plan {
   const requests = batches.map((b, i) => layerRequest(b, `layers ${i + 1} of ${batches.length}`));
   return {
     requests,
+    // A batch without the model gets the No-AI Digest and Ideas of its entries.
+    fallback: (i) => batches[i]!.flatMap((e) => extractLayers(ctx, e)),
     finish: (answers) => {
       const sent = new Set(forModel.map((e) => e.id));
       const layers: NewLayer[] = [];

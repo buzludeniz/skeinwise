@@ -7,7 +7,7 @@ import { withoutNoteExt } from '../importers/note-ext.ts';
 import { safeLine } from '../safe-text.ts';
 import type { Entry } from '../store/store.ts';
 import { type Existing, type Group, groupName, groupUnits, namingRequest } from './groups.ts';
-import { invalid, isRecord, list, type ModelRequest, type Plan, type Product, round, type TaskContext } from './plan.ts';
+import { invalid, isRecord, list, type ModelRequest, noRequest, type Plan, type Product, round, type TaskContext } from './plan.ts';
 import { linkTargets, type RecordView } from './record.ts';
 import { replacedRuns } from './runs.ts';
 import { cosine, tokenize } from './text.ts';
@@ -43,10 +43,12 @@ function planTopics(ctx: TaskContext, schema: Schema): Plan {
   const fresh = groups.filter((g) => !g.existing);
   const request = ctx.model && fresh.length ? namingRequest(record, fresh, 'topic', 'one or two words', 'topic names') : undefined;
   const given = frontMatterTags(ctx.db, ctx.entries);
+  const noModelNames = () => uniqueNames(record, fresh, live.map((t) => t.name));
   return {
     requests: request ? [request] : [],
+    fallback: noModelNames,
     finish: (answers) => {
-      const names = request ? (answers[0] as string[]) : uniqueNames(record, fresh, live.map((t) => t.name));
+      const names = request ? (answers[0] as string[]) : noModelNames();
       const tags: NewTag[] = [];
       const taggings: Tagging[] = [];
       for (const g of groups) {
@@ -171,7 +173,7 @@ function planProjects(ctx: TaskContext, schema: Schema): Plan {
       else if (stems.length && hasAll(stemSet(e), stems)) taggings.push({ entryId: e.id, name, score: 0.8 });
     }
   }
-  return { requests: [], finish: () => product(ctx, schema, tags, taggings) };
+  return { requests: [], fallback: noRequest, finish: () => product(ctx, schema, tags, taggings) };
 }
 
 function projectName(note: Entry): string {
@@ -216,6 +218,8 @@ function planDefined(ctx: TaskContext, schema: Schema): Plan {
   const requests = batches.map((b, i) => unsureRequest(schema, b, `${schema.name} check ${i + 1} of ${batches.length}`));
   return {
     requests,
+    // Without the model, an entry that matched a tag by one word stays untagged.
+    fallback: () => [],
     finish: (answers) => {
       const taggings = [...sure];
       answers.forEach((a) => taggings.push(...(a as Tagging[])));
