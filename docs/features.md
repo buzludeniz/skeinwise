@@ -17,6 +17,9 @@ The record is one SQLite file, `~/.skeinwise/record.db`, plus Markdown notes in 
   source, a created date and a content hash.
 - **Originals are append-only.** An edit adds a version with its editor and date; nothing is overwritten.
 - **"Not mine":** a conversation marked this way leaves the brain, search and notes, but stays in history.
+- **Provenance:** each version records where it came from (the file and its SHA-256) and which account.
+- **Pending:** a capture you didn't start, or an export from another account than the source's, waits in pending
+  until you say yes.
 
 ## Importers
 
@@ -32,6 +35,12 @@ The record is one SQLite file, `~/.skeinwise/record.db`, plus Markdown notes in 
 
 Each importer accepts a zip file, a single file or a folder. Unknown fields are skipped, and missing fields don't stop
 an import.
+
+- **One bad value** skips or flags only its entry, named by file and place.
+- **Symbolic links, FIFOs and devices** are skipped and named.
+- **A zip is refused** past 20,000 files, 4 GiB unpacked, or 200 times its packed size.
+- **A file over 1 GiB** is refused.
+- **A time** more than a day ahead, before 1990 or missing is flagged, and the entry is sorted by when it was seen.
 
 ## Connectors
 
@@ -49,6 +58,7 @@ Details: [connectors.md](connectors.md).
 - Each entry is keyed by its source and its external id, so re-importing the same export adds nothing.
 - A changed text becomes a new version, and the newest version counts.
 - Re-importing an older export doesn't roll an entry back: text the entry already held in any version is ignored.
+- `skeinwise restore <entry> <version>` brings an old version back as a new one, so the versions in between are kept.
 
 ## Search
 
@@ -125,9 +135,9 @@ suggested one.
 The record keeps itself current without you running anything.
 
 1. **Live capture.** With **Record live** on (`skeinwise live` on the command line), Skeinwise watches Claude Code
-   and Codex history, the note folders and vaults you chose (`liveFolders`), and Downloads for new ChatGPT, Claude and
-   Gemini exports. New and changed entries are imported within seconds, through the same importers as a manual
-   import, so dedupe and versions work the same way. On start-up it catches up on whatever changed while it was off.
+   and Codex history and the note folders and vaults you chose (`liveFolders`). New and changed entries are imported
+   within seconds, through the same importers as a manual import, so dedupe and versions work the same way. On
+   start-up it catches up on whatever changed while it was off. Downloads is watched only when you ask (below).
 2. **Background organising.** After each capture, the organiser runs over the new entries only (`--scope new`:
    entries added or changed since that task's last run): tag, file, link, then the summaries of the hubs those entries
    joined, then a staleness check of the notes on those hubs. One pass runs at a time; captures that arrive during a
@@ -147,6 +157,17 @@ The record keeps itself current without you running anything.
 - **Off switch.** `skeinwise config liveOrganise off` keeps live capture and leaves organising to you.
 - **Connectors.** Live also pulls from the services you connected, and what a pull brings is organised like a
   capture.
+- **Downloads** is off by default; `skeinwise config liveDownloads on` turns it on. Then a ChatGPT, Claude or Gemini
+  export that lands there is proposed, never imported: review it with `skeinwise live pending` (`--all` for the ones
+  already decided), then `skeinwise live accept <n>` or `skeinwise live reject <n>`. The same file is never proposed
+  twice, and a rejected one is never proposed again. Accepting keeps the version each change replaced. Only chat
+  exports are proposed, a link is refused, and the status line counts what waits.
+- **One bad file never stops live.** It is listed by its path and tried again after 1 min, 5 min and 30 min, then
+  hourly, and at once when it changes. A bad line is skipped, or kept with no time, and named by `file:line`.
+- **A busy record** (another skeinwise command writing to it) makes live wait and try again.
+- **A corrupt `live.json`** is moved aside to `live.json.bad-<time>`, and live starts afresh.
+- **Large sessions.** A growing Claude Code session is read from where the last read stopped. The first pass after
+  an upgrade reads every watched file whole once.
 
 ## Tagging schemas
 
@@ -197,16 +218,20 @@ still holds, or skip. A skipped note comes back after the next review run.
 
 ## Agent memory (MCP)
 
-Two local MCP servers over stdio, so an agent can be given memory without the window, or both.
+A local MCP server over stdio gives an AI agent your record as its memory. `skeinwise connect <agent>` sets it up for
+Claude Code, Claude desktop, Codex or Cursor, and `skeinwise doctor` checks the setup.
 
-- **Memory server** (`skeinwise mcp`): `search`, `ask`, `read_entry`, `read_thread`, `timeline`, `list_hubs`,
-  `read_hub`, `write_note`, `append_daily_note`, `tag_entries`, `not_mine`, `undo_run`.
-- **Window server** (`skeinwise mcp --window`): `show_in_brain`, `open_entry`, `open_hub`, `set_layout`,
-  `highlight` (moves the app's view while you watch). *(The app's side of these is planned.)*
-- **Config snippets** for Claude Code, Claude desktop, Codex, Cursor and others, ready to copy.
+- **Read tools**, for every allowed agent: `search`, `ask`, `read_entry`, `read_thread`, `timeline`, `list_hubs`,
+  `read_hub`.
+- **Write tools**, only for an agent allowed with `--write`: `write_note`, `append_daily_note`, `tag_entries`,
+  `not_mine`, `undo_run`. `not_mine` and `undo_run` change nothing until you confirm them (`skeinwise mcp pending`,
+  `confirm`, `refuse`).
+- An agent is known by a token that `skeinwise mcp allow <agent>` shows once; the record keeps only its hash. Read is
+  the default scope. `skeinwise mcp lock` stops every agent tool at once.
+- Results are framed as untrusted data, with secrets replaced by placeholders, and cut to 20 entries and 32 KB a call
+  and 500 KB a session.
+- Every call is logged (`skeinwise mcp log`): the agent, the tool, the entries it was sent and how much.
 - Every agent write is a version under the agent's name. An agent never changes your notes or another agent's.
-- An agent's first call is refused until you allow it by name (`skeinwise mcp allow <agent>`). `skeinwise mcp lock`
-  stops every agent tool at once.
 
 Details: [mcp.md](mcp.md).
 
@@ -217,18 +242,6 @@ Details: [mcp.md](mcp.md).
 - Optionally, the latest ledger hash is stamped with OpenTimestamps to prove the record existed at that date. The
   proof is collected a few hours later and stored next to the ledger.
 
-## Encrypted sync
-
-- Sync writes an encrypted bundle of the record to any folder you pick, such as a cloud drive folder.
-- A random key encrypts the bundle (AES-256-GCM). That key is stored twice: once wrapped by a key from your
-  passphrase, and once by a key from a 24-word recovery phrase that is shown only once. Both keys are derived with
-  scrypt.
-- Another computer with an empty record joins with the passphrase, or restores with the recovery phrase; Skeinwise
-  can't merge two records yet.
-- Nothing goes to a Skeinwise server, because there isn't one.
-
-Details: [sync.md](sync.md).
-
 ## Command line
 
 | Command | Does |
@@ -236,19 +249,20 @@ Details: [sync.md](sync.md).
 | `skeinwise init` | Creates the record folder |
 | `skeinwise import <path>…` | Imports exports, history folders or note folders |
 | `skeinwise search <words>` | Full-text search |
+| `skeinwise history <entry>`, `skeinwise restore <entry> <version>` | Lists an entry's versions; brings an old one back as a new version |
 | `skeinwise ask <question>` | A question, answered as a view |
 | `skeinwise run <task> [--scope new]` | Runs an organiser task |
 | `skeinwise runs`, `skeinwise undo <run>` | Lists runs; undoes one |
 | `skeinwise note <text>` | Appends to today's daily note |
 | `skeinwise live [--once]` | Turns on the update stream: live capture and background organising, and pulls from connected services |
+| `skeinwise live pending [--all]`, `accept <n>`, `reject <n>` | Imports waiting for your yes (Downloads, another account's export); takes one in or leaves it out for good |
 | `skeinwise model check`, `fetch`, `serve` | Tests, downloads (after asking) or starts the local model |
 | `skeinwise serve` | Starts the app *(planned, v0.4)* |
-| `skeinwise mcp [--window]` | Starts the memory server, or the window server, for an agent over stdio |
-| `skeinwise mcp allow`, `revoke`, `agents`, `lock`, `unlock` | Which agents may use the record, and the lock that stops them all |
+| `skeinwise setup [--yes]` | Finds your AI histories and notes, brings them in, and names the agents to connect |
+| `skeinwise connect <agent> [--write] [--yes]` | Gives claude-code, codex, cursor or claude-desktop your record as memory; read only unless `--write` |
+| `skeinwise doctor` | Checks Node, the record, live capture, the model server and agent configs, with one fix per problem |
+| `skeinwise mcp` | Starts the memory server for an agent over stdio |
+| `skeinwise mcp allow`, `deny`, `agents`, `lock`, `unlock`, `log`, `pending`, `confirm`, `refuse` | Which agents may use the record, what they asked for, and the lock that stops them all |
 | `skeinwise demo` | Builds a demo record from invented data |
 | `skeinwise export` | Writes a zip of the record: chats, entries and notes as Markdown; tags, folders, hubs and runs as JSON |
-| `skeinwise sync init`, `push`, `join`, `restore`, `status` | Encrypted sync through a folder you pick |
-| `skeinwise connect <service>` | Connects Gmail, Calendar, Todoist or Slack, read-only, after showing what it reads |
-| `skeinwise connections` | What is connected and how the last pull went |
-| `skeinwise disconnect <service>` | Revokes the access and deletes the token; keeps or leaves out what was read |
 

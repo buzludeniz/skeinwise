@@ -39,7 +39,7 @@ skein:
 | v0.2.0 | The organiser: the local model (default), an outside model or No AI; runs with provenance and undo; corrections; notes; review; ask |
 | v0.3.0 | The update stream: live capture and background organising of what's new; `skeinwise model` to check or fetch the local model |
 | v0.4.0 | The app: first run, the 3D brain, Navigator, the reader, concept hubs, timeline, year rings, the Lab, themes, the command bar and settings |
-| v0.5.0 | Agents and safety: the memory and window MCP servers; the ledger with date proofs; encrypted sync and export |
+| v0.5.0 | Agents and safety: the memory and window MCP servers; the ledger with date proofs; export |
 | v1.0.0 | Work tools: read-only Gmail, Google Calendar, Todoist and Slack connectors |
 
 ## Quick start
@@ -104,19 +104,19 @@ node dist/src/cli.js search sourdough starter
 
 Importing again is safe: entries already in the record are skipped, and changed text becomes a new version.
 
-Keep it current with the update stream. After one `run all`, `live` imports new Claude Code and Codex chats, export
-files in Downloads and the note folders you name as they appear, and organises what is new in the background:
+Keep it current with the update stream. After one `run all`, `live` imports new Claude Code and Codex chats and the
+note folders you name as they appear, and organises what is new in the background. With `config liveDownloads on`,
+an export that lands in Downloads waits for your yes in `live pending`:
 
 ```bash
 node dist/src/cli.js config liveFolders ~/Notes
 node dist/src/cli.js live
 ```
 
-Take a copy, or keep two computers in step through a folder of yours. Sync encrypts everything it writes there:
+Take a plain-text copy of the record, as a zip on this computer:
 
 ```bash
 node dist/src/cli.js export
-node dist/src/cli.js sync init ~/Dropbox/skeinwise
 ```
 
 Run `node dist/src/cli.js help` for every command.
@@ -125,7 +125,7 @@ Run `node dist/src/cli.js help` for every command.
 
 - [Plan](docs/plan.md): stack, architecture, scope and milestones
 - [The organiser](docs/organiser.md): engines, the local model, runs, undo, hubs, asking and review
-- [Export and sync](docs/sync.md): what a bundle holds, the key scheme, and what join does
+- [Export](docs/export.md): what the zip holds and where each part goes
 - [Agent memory (MCP)](docs/mcp.md): the two servers, config for each agent, and allowing an agent
 - [Connectors](docs/connectors.md): what each one reads, its permissions, and how to make your own client
 - [Research](docs/research.md): the export formats and the landscape
