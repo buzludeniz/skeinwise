@@ -15,6 +15,7 @@ import { LIVE_COMMANDS, LIVE_FLAGS, LIVE_HELP } from './live/pending.ts';
 import { describeStatus, startLive } from './live/run.ts';
 import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP } from './mcp/commands.ts';
 import { MODEL_HELP } from './model-commands.ts';
+import { PA_COMMANDS, PA_FLAGS, PA_HELP } from './pa/commands.ts';
 import { safeIo, safeJson } from './safe-text.ts';
 import { serveFromArgs } from './server/serve.ts';
 import { SETUP_COMMANDS, SETUP_FLAGS, SETUP_HELP } from './setup.ts';
@@ -77,6 +78,8 @@ ${LIVE_HELP}
   serve                     Open the app in your browser, on this computer only
       --port <n>            Port to listen on (default 7319)
       --open                Open the browser too
+      --keep-token          Keep the last run's token, so an open page or bookmark still works
+                            (by default each start makes a new one)
 
 Organising (every run can be undone):
   run <task|all>            Run one task, or all in order: tag, file, link, hub, layer, review
@@ -119,6 +122,7 @@ ${MODEL_HELP}
 ${EXPORT_HELP}
 Agents (MCP):
 ${MCP_HELP}
+${PA_HELP}
 Settings:
   config [<key> [<value>...]]  Show or change a setting (--unset to go back to the default)
   define-tag <schema> <tag> [<words>...]
@@ -214,6 +218,7 @@ async function run(argv: string[], io: Io): Promise<number> {
       ...MCP_FLAGS,
       ...LIVE_FLAGS,
       ...STORE_FLAGS,
+      ...PA_FLAGS,
       // --yes (and --write, also in MCP_FLAGS) come from here; every command reads them the same way.
       ...SETUP_FLAGS,
     },
@@ -443,7 +448,7 @@ async function run(argv: string[], io: Io): Promise<number> {
       if (setupCommand) return setupCommand({ io, home: homeDir(io.env), values, args: positionals, json });
       // The connectors' commands (src/connectors/commands.ts) are left out: connectors are off in v1.0 and ship in v1.1
       // behind their own consent screen (Deniz, Nov 25). Of the sync module only export is wired (see EXPORT_COMMANDS).
-      const organiser = ORGANISER_COMMANDS[command] ?? STORE_COMMANDS[command] ?? EXPORT_COMMANDS[command] ?? MCP_COMMANDS[command];
+      const organiser = ORGANISER_COMMANDS[command] ?? STORE_COMMANDS[command] ?? EXPORT_COMMANDS[command] ?? MCP_COMMANDS[command] ?? PA_COMMANDS[command];
       if (!organiser) throw new UsageError(`Unknown command: ${command}. Run "skeinwise help" for the list.`);
       const home = homeDir(io.env);
       return withStore(io, (store) => organiser({ io, home, store, values, args: positionals, json }));

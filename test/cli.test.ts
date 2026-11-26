@@ -300,3 +300,73 @@ describe('agent access from the command line', () => {
     expect((await cli('mcp', 'allow', 'you')).code).toBe(2);
   });
 });
+
+describe('skeinwise serve', () => {
+  /** Starts `skeinwise serve` on a free port, in a pretend home folder, and returns the token its address carries. */
+  async function serve(...flags: string[]): Promise<{ base: string; token: string }> {
+    let out = '';
+    let err = '';
+    const scan = join(dir, 'scan');
+    mkdirSync(scan, { recursive: true });
+    const code = await main(['serve', '--port', '0', ...flags], {
+      out: (t) => (out += t),
+      err: (t) => (err += t),
+      env: { SKEINWISE_HOME: join(dir, 'home'), SKEINWISE_SCAN_ROOT: scan },
+    });
+    expect(code).toBe(0);
+    const deadline = Date.now() + 10_000;
+    while (!/^Open: /m.test(out)) {
+      if (err || Date.now() > deadline) throw new Error(`serve never printed its address: ${err}`);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const url = new URL(/^Open: (\S+)$/m.exec(out)![1]!);
+    return { base: url.origin, token: /^#token=([0-9a-f]{64})$/.exec(url.hash)![1]! };
+  }
+
+  /** Stops it through the app's own Quit, and waits until the port is closed. */
+  async function quit({ base, token }: { base: string; token: string }): Promise<void> {
+    const res = await fetch(`${base}/api/quit`, { method: 'POST', headers: { 'X-Skeinwise-Token': token } });
+    expect(res.status).toBe(200);
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      try {
+        await fetch(`${base}/api/status`, { headers: { 'X-Skeinwise-Token': token } });
+      } catch {
+        return;
+      }
+      if (Date.now() > deadline) throw new Error('serve never stopped');
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  }
+
+  it('names --keep-token in help', async () => {
+    const help = (await cli('help')).out;
+    const serveHelp = help.slice(help.indexOf('\n  serve '), help.indexOf('\nOrganising'));
+    expect(serveHelp).toMatch(/^ {6}--keep-token +\S/m);
+  });
+
+  it('makes a new token at every start, and keeps the last one with --keep-token', async () => {
+    const first = await serve();
+    await quit(first);
+    const kept = await serve('--keep-token');
+    expect(kept.token).toBe(first.token);
+    await quit(kept);
+    const next = await serve();
+    expect(next.token).not.toBe(first.token);
+    // The address from before the new start no longer opens anything.
+    const old = await fetch(`${next.base}/api/status`, { headers: { 'X-Skeinwise-Token': first.token } });
+    expect(old.status).toBe(401);
+    await quit(next);
+  });
+});
+
+describe("the assistant's commands, through skeinwise (src/pa/commands.ts)", () => {
+  it('lists them in help, in a section of their own, and runs them', async () => {
+    const help = (await cli('help')).out;
+    expect(help).toMatch(/\n\nThe assistant \(works with no model[^\n]*\n {2}brief /);
+    expect(help).toMatch(/nothing runs in the background\.\n\nSettings:/);
+    expect((await cli('tasks')).out).toBe('No open tasks.\n');
+    expect((await cli('task', 'add', 'order', 'rye', 'flour', '--due', '2030-01-02')).out).toBe('     1  [ ] Order rye flour  due 2030-01-02\n');
+    expect(JSON.parse((await cli('tasks', '--all', '--json')).out)).toMatchObject([{ id: 1, title: 'Order rye flour', dueDay: '2030-01-02' }]);
+  });
+});

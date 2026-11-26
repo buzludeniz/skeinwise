@@ -48,6 +48,7 @@ const PLACES: [string[], string, () => void][] = [
   [['profile', 'me'], 'Profile', () => go('profile')],
   [['workbench', 'table'], 'Workbench', () => go('workbench')],
   [['activity'], 'Activity', () => setState({ view: 'workbench', workbenchTab: 'activity', editor: null })],
+  [['assistant', 'brief', 'tasks', 'loops'], 'Assistant', () => go('assistant')],
   [['guide', 'help'], 'Guide', () => go('guide')],
   [['add', 'import'], 'Add', () => go('add')],
   [['review'], 'Review', () => openNav({ kind: 'review' })],
