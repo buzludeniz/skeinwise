@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../src/cli.ts';
 import { buildThreads, DEMO_NOW, writeDemo } from '../src/demo/demo.ts';
+import { expectMode } from './modes.ts';
 
 let dir: string;
 
@@ -59,7 +60,7 @@ describe('the skeinwise command', () => {
 
   it('creates an owner-only record folder', async () => {
     expect(JSON.parse((await cli('init', '--json')).out)).toEqual({ home: join(dir, 'home') });
-    expect(statSync(join(dir, 'home')).mode & 0o777).toBe(0o700);
+    expectMode(join(dir, 'home'), 0o700);
     expect(statSync(join(dir, 'home', 'record.db')).isFile()).toBe(true);
   });
 

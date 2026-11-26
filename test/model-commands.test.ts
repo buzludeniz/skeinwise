@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type Io, main } from '../src/cli.ts';
 import { loadConfig, setConfigValue } from '../src/config.ts';
 import { commandLine, findLlamaServer, gigabytes, LOCKED_FLAGS, SUGGESTED, serveCommand } from '../src/model-commands.ts';
+import { expectMode } from './modes.ts';
 
 // `skeinwise model check|trust|fetch|serve`, against a fake model server, a fake Hugging Face and a fake llama-server.
 // Every key and token here is made up, and built so that nothing in this file looks like a real one.
@@ -311,7 +312,7 @@ describe('skeinwise model serve', () => {
     );
     const key = readFileSync(keyFile(), 'utf8').trim();
     expect(key.length).toBeGreaterThanOrEqual(40);
-    expect(statSync(keyFile()).mode & 0o777).toBe(0o600);
+    expectMode(keyFile(), 0o600);
     expect(r.out).not.toContain(key);
     // The key is made once: a second serve keeps it, so a server already running still takes it.
     await sw(['model', 'serve']);
