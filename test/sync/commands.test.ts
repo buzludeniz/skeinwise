@@ -54,6 +54,7 @@ function computer(name = `c${++n}`) {
 }
 
 describe('the sync commands', () => {
+  // Real scrypt settings take seconds of CPU, more on a loaded machine: this checks the round trip, not the speed.
   it('init, join, restore and status, end to end on the real scrypt settings', async () => {
     const a = computer();
     newNote(a.store, a.home, 'Made-up note', new Date(DEMO_NOW));
@@ -88,7 +89,7 @@ describe('the sync commands', () => {
     const push = await b.run(['sync', 'push'], { json: true });
     expect(push.json).toMatchObject({ seq: 2, entries: 1, replaced: null });
     expect((await a.run(['sync', 'status'], { json: true })).json).toMatchObject({ behind: true, folderSeq: 2 });
-  });
+  }, 30_000);
 
   it('init with --json gives the phrase to the program that asked, and reads a passphrase file', async () => {
     const a = computer();
