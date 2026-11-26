@@ -65,7 +65,6 @@ describe('groups', () => {
     expect(lp[3]!.cluster).toBe(1000);
     expect(lp[4]!.cluster).toBe(0);
     expect(lp.map((p) => p.strand)).toEqual([0, 0, 0, 1, 1]);
-    expect(lp.map((p) => p.thread)).toEqual([3, 3, 3, 0, 0]);
   });
 
   it('joins thread entries in time order and skips links to missing points', () => {

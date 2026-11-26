@@ -65,7 +65,7 @@ engine (local | outside | none) ──► runs ──► derived layer (tags, fo
 
 App menu (command bar, add files, Live capture with status lines, connect, get an export, lock, settings) · first
 run (Set up, Bring in, Watch it grow) · rail with Brain, Threads, Stats, Timeline, Profile, Workbench, Views,
-Assistant, Guide and + Add · the 3D brain, a point cloud in the shape of a standing body with the brain as its head ·
+Assistant, Guide and + Add · the 3D brain, a point cloud that opens as one disc per group, with a Brain layout of two lobes and a stem ·
 Guide panel · concept hub panel · entry reader with its layers and history · the Activity layout · timeline ·
 Workbench (the table builder and Activity) · notes editor with `[[links]]` and a daily note · review queue · compact
 window · settings (agents, AI model, usage cap, backup, exclusions, appearance) · six themes and seven

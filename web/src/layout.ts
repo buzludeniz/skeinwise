@@ -1,10 +1,6 @@
-// Where every point sits, in three layouts: the brain (the standing body of brain/body.ts: notes in the head's two
-// lobes, laid out here by brainLayout, and every other entry on its source's nerve), activity (one ring per year, seen
-// from above), and flat clusters. Pure and seeded: the same record always gives the same picture.
+// Where every point sits, in three layouts: the brain (notes in two lobes, originals wound up the stem below them),
+// activity (one ring per year, seen from above), and flat clusters. Pure and seeded: the same record always gives the same picture.
 // Units: the brain is about 2.4 wide; y is up, +z is the front.
-
-// body.ts imports brainLayout back from here. The cycle is safe: neither module uses the other's exports while loading.
-import { bodyLayout } from './brain/body.ts';
 
 export interface LayoutPoint {
   id: number;
@@ -16,8 +12,6 @@ export interface LayoutPoint {
   cluster: number;
   /** Which strand of the braid an original winds on (its source). */
   strand: number;
-  /** The thread it belongs to, 0 for none, as the server sends it (queries.ts). The body's twigs branch on it. */
-  thread: number;
   /** The colour group under the current grouping; the clusters layout uses it. */
   group: number;
 }
@@ -361,17 +355,8 @@ export function stripLayout(points: readonly LayoutPoint[], sources: readonly { 
   return pos;
 }
 
-/** What the body needs beyond the points: the record's sources, in the order a point's `strand` indexes them, and now. */
-export interface LayoutContext {
-  sources: readonly { id: number; kind: string }[];
-  now: number;
-}
-
-/** Required, so a 'brain' call can never quietly fall back to the cortex alone. */
-export function layoutFor(kind: Layout, points: readonly LayoutPoint[], ctx: LayoutContext): Float32Array {
-  if (kind === 'rings') return ringsLayout(points);
-  if (kind === 'clusters') return clustersLayout(points);
-  return bodyLayout(points, ctx.sources, ctx.now).positions;
+export function layoutFor(kind: Layout, points: readonly LayoutPoint[]): Float32Array {
+  return kind === 'rings' ? ringsLayout(points) : kind === 'clusters' ? clustersLayout(points) : brainLayout(points);
 }
 
 /**

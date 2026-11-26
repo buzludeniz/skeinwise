@@ -52,6 +52,10 @@ async function applySeed(): Promise<void> {
     case 'clusters':
       setState({ view: 'brain', layout: seed });
       break;
+    // The brain opens on Clusters, so the Brain layout has a seed of its own.
+    case 'brain-layout':
+      setState({ view: 'brain', layout: 'brain' });
+      break;
     case 'activity':
       setState({ view: 'workbench', workbenchTab: 'activity' });
       break;

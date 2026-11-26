@@ -59,7 +59,7 @@ export const DEFAULT_CONFIG: Config = {
   firstRunDone: false,
   recordLive: false,
   appearance: { theme: 'dusk', palette: 'ember' },
-  brain: { pointSize: 1, lineDensity: 0.6, labels: true, turning: true, grouping: 'source', layout: 'brain' },
+  brain: { pointSize: 1, lineDensity: 0.6, labels: true, turning: true, grouping: 'source', layout: 'clusters' },
   agents: { chosen: [] },
   ai: {
     engine: 'local',

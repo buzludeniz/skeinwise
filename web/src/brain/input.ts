@@ -9,7 +9,7 @@ import { hexToRgb, mix, type Palette, pointColors, type Theme } from '../themes.
 
 export interface SceneInput {
   points: LayoutPoint[];
-  /** The record's sources, in the order a point's `strand` indexes them: the body hangs each on its own nerve. */
+  /** The record's sources, in the order a point's `strand` indexes them: the Timeline's strip gives each its own lane. */
   sources: { id: number; kind: string }[];
   colors: Float32Array;
   sizes: Float32Array;
@@ -109,7 +109,6 @@ function hubPoints(data: BrainData, points: LayoutPoint[], indexOf: Map<number, 
       time,
       cluster: commonest(members.map((i) => points[i]!.cluster), 0),
       strand: 0,
-      thread: 0,
       group: commonest(members.map((i) => points[i]!.group), 0),
     };
     out.push({ point, hub, members });
