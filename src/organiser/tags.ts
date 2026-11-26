@@ -278,21 +278,30 @@ function unsureRequest(schema: Schema, batch: { entry: Entry; tags: string[] }[]
 // Saving and counting
 
 function product(ctx: TaskContext, schema: Schema, tags: NewTag[], taggings: Tagging[], message?: string): Product {
-  const unique = dedupe(taggings);
-  const pairs = new Set(unique.map(pairKey));
+  // A Projects run can make over a million taggings at 50,000 entries, so no step keeps a string per pair: one key
+  // string per tagging, twice over, took `run all` past its memory budget.
+  const best = dedupe(taggings);
+  const unique = ordered(best, taggings);
   const live = livePairs(ctx.db, schema.id, null);
   const replaced = livePairs(ctx.db, schema.id, replacedRuns(ctx.db, 'tag', schema.id, ctx.scope));
-  const used = new Set(unique.map((t) => t.name.toLowerCase()));
+  const used = new Set(best.keys());
   const tagged = new Set(unique.map((t) => t.entryId)).size;
+  let unchanged = 0;
+  if (live.size) for (const t of unique) if (live.has(pairKey(t))) unchanged++;
+  let removed = 0;
+  for (const p of replaced) {
+    const at = p.indexOf(':');
+    if (!best.get(p.slice(at + 1))?.has(Number(p.slice(0, at)))) removed++;
+  }
   return {
     counts: {
       entries: ctx.entries.length,
       tagged,
       coverage: ctx.entries.length ? Math.round((100 * tagged) / ctx.entries.length) : 0,
       tags: used.size,
-      added: [...pairs].filter((p) => !live.has(p)).length,
-      removed: [...replaced].filter((p) => !pairs.has(p)).length,
-      unchanged: [...pairs].filter((p) => live.has(p)).length,
+      added: unique.length - unchanged,
+      removed,
+      unchanged,
     },
     ...(message ? { message } : {}),
     save: (db, runId) => {
@@ -308,19 +317,53 @@ function product(ctx: TaskContext, schema: Schema, tags: NewTag[], taggings: Tag
         ids.set(t.name.toLowerCase(), id);
       }
       const insert = db.prepare('INSERT INTO entry_tags (entry_id, tag_id, run_id, score) VALUES (?, ?, ?, ?)');
-      for (const t of unique) insert.run(t.entryId, ids.get(t.name.toLowerCase())!, runId, t.score);
+      const lower = lowerCase();
+      for (const t of unique) insert.run(t.entryId, ids.get(lower(t.name))!, runId, t.score);
     },
   };
 }
 
-function dedupe(taggings: Tagging[]): Tagging[] {
-  const best = new Map<string, Tagging>();
+/** The best-scored tagging of each entry and tag name (lowercased), the first of equals kept, by name then entry. */
+function dedupe(taggings: Tagging[]): Map<string, Map<number, Tagging>> {
+  const best = new Map<string, Map<number, Tagging>>();
+  const lower = lowerCase();
   for (const t of taggings) {
-    const k = pairKey(t);
-    const had = best.get(k);
-    if (!had || t.score > had.score) best.set(k, t);
+    const name = lower(t.name);
+    let byEntry = best.get(name);
+    if (!byEntry) best.set(name, (byEntry = new Map()));
+    const had = byEntry.get(t.entryId);
+    if (!had || t.score > had.score) byEntry.set(t.entryId, t);
   }
-  return [...best.values()].sort((a, b) => a.entryId - b.entryId || a.name.localeCompare(b.name));
+  return best;
+}
+
+/**
+ * The taggings by entry, then by name as localeCompare orders it: the order the save has always used. One comparison
+ * per name rather than per pair. When two different names compare equal, the old sort's tie order (the order the pairs
+ * were first seen) decides, so that case sorts the old way.
+ */
+function ordered(best: Map<string, Map<number, Tagging>>, taggings: Tagging[]): Tagging[] {
+  const all: Tagging[] = [];
+  for (const byEntry of best.values()) for (const t of byEntry.values()) all.push(t);
+  const names = [...new Set(all.map((t) => t.name))].sort((a, b) => a.localeCompare(b));
+  if (names.some((name, i) => i > 0 && names[i - 1]!.localeCompare(name) === 0)) {
+    const seen = new Set<string>();
+    const lower = lowerCase();
+    const inOrder = taggings.flatMap((t) => (seen.has(pairKey(t)) ? [] : (seen.add(pairKey(t)), [best.get(lower(t.name))!.get(t.entryId)!])));
+    return inOrder.sort((a, b) => a.entryId - b.entryId || a.name.localeCompare(b.name));
+  }
+  const rank = new Map(names.map((name, i) => [name, i]));
+  return all.sort((a, b) => a.entryId - b.entryId || rank.get(a.name)! - rank.get(b.name)!);
+}
+
+/** toLowerCase, remembered per name: a run's taggings share a few thousand names. */
+function lowerCase(): (name: string) => string {
+  const seen = new Map<string, string>();
+  return (name) => {
+    let low = seen.get(name);
+    if (low === undefined) seen.set(name, (low = name.toLowerCase()));
+    return low;
+  };
 }
 
 const pairKey = (t: { entryId: number; name: string }) => `${t.entryId}:${t.name.toLowerCase()}`;
