@@ -240,7 +240,6 @@ function saveAsAgent(
   agent: string,
   { speaker, created, now, sha256 }: { speaker: boolean; created: boolean; now: Date; sha256: string },
 ): { entryId: number; runId: number } {
-  // The entries' "/" id, which on Windows differs from relative()'s.
   const file = pathInside(dir, path);
   const batches = readImports(dir).filter((b) => b.source.kind === 'notes');
   const db = store.db;
@@ -375,7 +374,7 @@ export function homeNoteFile(store: Store, home: string, entry: Entry): string |
  * person: rewriteNoteFile would write Markdown over it and ruin it.
  */
 export function wordNoteFile(home: string, file: string): string | null {
-  return extname(file).toLowerCase() === '.docx' ? relative(home, file) : null;
+  return extname(file).toLowerCase() === '.docx' ? pathInside(home, file) : null;
 }
 
 /**
