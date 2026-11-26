@@ -6,6 +6,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { unzipSync } from 'fflate';
 import { readImportsInWorker } from '../importers/detect.ts';
+import { isNoteFile } from '../importers/note-ext.ts';
 import type { Source } from '../store/store.ts';
 
 export type FoundKind = 'claude-code' | 'codex' | 'chatgpt' | 'claude' | 'gemini' | 'notes';
@@ -135,7 +136,7 @@ export function findSources(root: string, inRecord: readonly Source[]): Found[] 
     }
   }
   for (const dir of candidates) {
-    const n = countFiles(dir, (f) => /\.(md|markdown|txt)$/i.test(f));
+    const n = countFiles(dir, isNoteFile);
     if (!n) continue;
     const vault = existsSync(join(dir, '.obsidian'));
     add('notes', vault ? `Obsidian vault: ${basename(dir)}` : `Notes: ${basename(dir)}`, dir, `${n} note${n === 1 ? '' : 's'}`);

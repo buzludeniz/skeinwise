@@ -5,13 +5,11 @@
 import { extname } from 'node:path';
 import type { SafeOptions } from '../fsafe.ts';
 import { docxNoteText, readDocx } from './docx.ts';
+import { NOTE_FILE_EXT } from './note-ext.ts';
 import { readTextFile } from './text.ts';
 
-/** The extensions an import reads from a folder or a named file. Everything else is passed over. */
-export const IMPORT_EXT: ReadonlySet<string> = new Set(['.json', '.jsonl', '.md', '.markdown', '.txt', '.docx']);
-
-/** The extensions read as notes. */
-export const NOTE_FILE_EXT: ReadonlySet<string> = new Set(['.md', '.markdown', '.txt', '.docx']);
+/** The extensions an import reads from a folder or a named file: exports and notes. Everything else is passed over. */
+export const IMPORT_EXT: ReadonlySet<string> = new Set(['.json', '.jsonl', ...NOTE_FILE_EXT]);
 
 export interface ImportText {
   path: string;
