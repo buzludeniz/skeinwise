@@ -1,12 +1,13 @@
 // The Brain: the record as a glowing point cloud, with search, Fit, view settings, layouts and the legend. One click
 // on a point or its label pins a card for it; double-click opens it.
 
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Focus, Info, Plus, Search, SlidersHorizontal, X } from 'lucide-preact';
 import { clearLight, go, light, message, openEntry, openPanel, saveConfig, setGrouping, setLayout, toast } from '../actions.ts';
 import { api, qs } from '../api.ts';
 import { PartCard } from '../brain/PartCard.tsx';
 import { indexOfPoint, KIND_NAMES, type Part, partAt } from '../brain/parts.ts';
+import type { Framing } from '../brain/framing.ts';
 import { useBrainModel, useBrainScene } from '../brain/useBrain.ts';
 import '../brain/brain.css';
 import { fmtDate, fmtNum, plural, speakerName } from '../format.ts';
@@ -22,6 +23,12 @@ const LAYOUTS: [Layout, string][] = [
   ['clusters', 'Clusters'],
 ];
 
+const FRAMINGS: [Framing, string][] = [
+  ['body', 'Body'],
+  ['head', 'Head'],
+  ['cord', 'Cord'],
+];
+
 /** What the screen reader hears when a point is selected. */
 function selectedText(part: Part): string {
   return part.kind === 'entry'
@@ -33,10 +40,42 @@ export function BrainView() {
   const host = useRef<HTMLDivElement>(null);
   const { scene, model, ok, loadFailed, hover } = useBrainScene(host, 'full');
   const brain = useApp((s) => s.brain);
+  // The brain is small in the whole body, so a record of notes alone opens on the head until a framing is picked.
+  const [picked, setFraming] = useState<Framing | null>(null);
+  const onlyNotes = useMemo(() => !!brain && brain.points.length > 0 && brain.points.every((p) => p[1] === 1), [brain]);
+  const framing: Framing = picked ?? (onlyNotes ? 'head' : 'body');
+  useEffect(() => scene?.setFraming(framing), [scene, framing]);
   const layout = useApp((s) => s.layout);
   const lit = useApp((s) => s.lit);
   const compact = useApp((s) => s.compact);
   const clip = useApp((s) => s.clip);
+
+  // The bands the controls cover along the canvas's top and bottom, which the brain layout fits between. The search row
+  // is measured, not the whole top bar, so a lit chip never moves the camera; an open legend keeps its closed band.
+  useEffect(() => {
+    const area = host.current;
+    const root = area?.parentElement;
+    if (!scene || !area || !root) return;
+    const bars = () => [...root.querySelectorAll<HTMLElement>('.brain-tools, .brain-layouts, .legend')];
+    let last = 0;
+    const measure = () => {
+      const box = area.getBoundingClientRect();
+      let top = 0;
+      let bottom = 0;
+      for (const bar of bars()) {
+        const r = bar.getBoundingClientRect();
+        if (!r.height) continue;
+        if (r.top + r.height / 2 < box.top + box.height / 2) top = Math.max(top, r.bottom - box.top);
+        else bottom = Math.max(bottom, bar.classList.contains('open') ? last : box.bottom - r.top);
+      }
+      last = bottom;
+      scene.setInsets(top, bottom);
+    };
+    measure();
+    const watch = new ResizeObserver(measure);
+    for (const el of [root, ...bars()]) watch.observe(el);
+    return () => watch.disconnect();
+  }, [scene, compact, layout, model]);
   const [settings, setSettings] = useState(false);
   const [help, setHelp] = useState(layout === 'rings');
   // The selected point, by its point id (an entry id, or a hub id negated), so it outlives a regroup or a reload.
@@ -131,9 +170,13 @@ export function BrainView() {
         )
       )}
       {empty && (
-        <div class="brain-fallback">
+        // Beside the body, not over it: on an empty record the body is the picture of what is to come.
+        <div class="brain-fallback empty-body">
           <Empty title="Nothing woven yet">
-            <p>Add an export, a note folder or your agent history, and the brain fills in point by point.</p>
+            <p>
+              Each source you bring in gets its own nerve: chat assistants down the arms, coding agents down the legs,
+              and the rest round the trunk. Notes fill the head.
+            </p>
             <Button icon={Plus} kind="primary" onClick={() => go('add')}>
               Add files or a source
             </Button>
@@ -169,6 +212,7 @@ export function BrainView() {
 
       <div class="brain-layouts">
         <Segmented label="Layout" options={LAYOUTS} value={layout} onChange={setLayout} />
+        {layout === 'brain' && <Segmented label="Framing" options={FRAMINGS} value={framing} onChange={setFraming} />}
         {layout !== 'brain' && (
           <Button
             icon={Info}
