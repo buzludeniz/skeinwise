@@ -320,7 +320,7 @@ function restoreEdits(db: DatabaseSync, run: Run, home: string | undefined, now:
   const edits = db
     .prepare('SELECT entry_id AS entryId, MIN(version) AS first, MAX(version) AS last FROM versions WHERE run_id = ? GROUP BY entry_id ORDER BY entry_id')
     .all(run.id) as { entryId: number; first: number; last: number }[];
-  if (!edits.length) return { restored: [], purged: [] };
+  if (!edits.length) return { restored: [], purged: [], word: [] };
   if (home === undefined) throw new UsageError(`Run ${run.id} changed notes, so undoing it needs the record's folder to put their files back.`);
   const store = new Store(db, now);
   readNotes(store, home);
