@@ -64,7 +64,7 @@ function oneAtATime<T>(home: string, work: () => T | Promise<T>): Promise<T> {
 /** Imports the notes folder and returns the entry id of one file in it. */
 async function importNote(home: string, store: Store, file: string): Promise<number> {
   const dir = notesDir(home);
-  for (const batch of await readImportsInWorker(dir)) store.ingest(batch, 'you');
+  for (const batch of await readImportsInWorker(dir)) store.ingest(batch, { editor: 'you', ownFiles: true });
   const externalId = pathInside(dir, file);
   const row = store.db
     .prepare(`SELECT e.id FROM entries e JOIN sources s ON s.id = e.source_id WHERE s.kind = 'notes' AND s.location = ? AND e.external_id = ?`)

@@ -221,12 +221,12 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
 export function readNotes(store: Store, home: string): void {
   const dir = notesDir(home);
   if (!existsSync(dir)) return;
-  for (const batch of readImports(dir, { emptyOk: true })) if (batch.source.kind === 'notes') store.ingest(batch, 'you');
+  for (const batch of readImports(dir, { emptyOk: true })) if (batch.source.kind === 'notes') store.ingest(batch, { editor: 'you', ownFiles: true });
 }
 
 /** Reads the notes folder into the record, and returns the entry for one file in it. */
 function readBack(store: Store, dir: string, path: string): number {
-  for (const batch of readImports(dir)) if (batch.source.kind === 'notes') store.ingest(batch, 'you');
+  for (const batch of readImports(dir)) if (batch.source.kind === 'notes') store.ingest(batch, { editor: 'you', ownFiles: true });
   return entryOf(store, dir, path);
 }
 
@@ -261,7 +261,7 @@ function saveAsAgent(
     });
     for (const batch of batches) {
       const entries = (batch.entries ?? []).filter((e) => e.externalId === file).map((e) => (speaker ? { ...e, speaker: agent } : e));
-      store.ingest({ ...batch, threads: [], entries }, { editor: agentEditor(agent), runId });
+      store.ingest({ ...batch, threads: [], entries }, { editor: agentEditor(agent), runId, ownFiles: true });
     }
     const entryId = entryOf(store, dir, path);
     const saved = Number((db.prepare('SELECT COUNT(*) AS n FROM versions WHERE run_id = ?').get(runId) as { n: number }).n);
