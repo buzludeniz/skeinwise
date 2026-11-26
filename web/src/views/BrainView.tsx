@@ -113,10 +113,11 @@ export function BrainView() {
       {loadFailed ? (
         <div class="brain-fallback">
           <Empty title="The brain didn't load">
-            {/* No reload button: the page keeps its token in memory only (api.ts), so a reload can't open the record. */}
+            {/* No reload button: the page keeps its token in memory only (api.ts), so a reload can't open the record. And
+                not this tab: the address differs from this page's only in its #fragment, so the browser would just scroll. */}
             <p>
               Its drawing code couldn't be fetched, most often because Skeinwise was updated after this page opened. To load the new version,
-              open the address Skeinwise printed when it started.
+              open a new tab at the address Skeinwise printed when it started.
             </p>
           </Empty>
         </div>

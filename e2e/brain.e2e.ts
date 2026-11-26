@@ -277,13 +277,16 @@ test("says the brain didn't load, not that WebGL is missing, when its drawing co
   await expect(page.getByText("This browser can't draw the brain")).toHaveCount(0);
   await expect(page.locator('.brain-host canvas')).toHaveCount(0);
   expect(await axeFails(page, "the brain didn't load")).toEqual([]);
-  // A reload would lose the token, which the page keeps in memory only, so the way back is the address serve printed.
-  await expect(page.getByText('open the address Skeinwise printed when it started')).toBeVisible();
+  // A reload would lose the token, which the page keeps in memory only, and in this tab the address only scrolls (it
+  // differs in its #fragment alone): the way back is a new tab at the address serve printed.
+  await expect(page.getByText('open a new tab at the address Skeinwise printed when it started')).toBeVisible();
   await expect(page.getByRole('button', { name: /reload/i })).toHaveCount(0);
-  await page.unroute(sceneFile);
-  await page.goto(`/?seedview=brain#token=${token()}`);
-  await expect(page.locator('.brain-host canvas')).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText("The brain didn't load")).toHaveCount(0);
+  const fresh = await page.context().newPage();
+  fresh.on('pageerror', (e) => errors.push(String(e)));
+  await fresh.emulateMedia({ reducedMotion: 'reduce' });
+  await fresh.goto(`/?seedview=brain#token=${token()}`);
+  await expect(fresh.locator('.brain-host canvas')).toBeVisible({ timeout: 30_000 });
+  await expect(fresh.getByText("The brain didn't load")).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
