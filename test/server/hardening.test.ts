@@ -102,7 +102,8 @@ beforeAll(async () => {
   mkdirSync(join(dir, 'outside', 'private-notes'), { recursive: true });
   writeFileSync(join(dir, 'outside', 'recovery-codes.txt'), 'Recovery codes\nCANARY-a1b2c\n');
   writeFileSync(join(dir, 'outside', 'private-notes', 'bank.md'), '# Bank\n\nCANARY-hunter2\n');
-  symlinkSync(join(dir, 'outside'), join(scan, 'Elsewhere'));
+  // A junction on Windows, which needs no privilege; the type is ignored elsewhere.
+  symlinkSync(join(dir, 'outside'), join(scan, 'Elsewhere'), 'junction');
   // A 1 MiB upload cap stands in for the real 1 GiB one.
   app = await startServer({ home, port: 0, webDir: null, scanRoot: scan, uploadLimit: MiB });
 });
@@ -280,7 +281,7 @@ describe('L8: note files', () => {
     symlinkSync(outside('victim.txt'), join(notes(), 'swap.md'));
     const res = await api(`entries/${id}`, { method: 'PUT', body: { body: 'OVERWRITTEN BY PUT /api/entries' } });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("notes/swap.md is a symbolic link, so Skeinwise won't read through it");
+    expect(res.body.error).toMatch(/^notes[\\/]swap\.md is a symbolic link, so Skeinwise won't read through it$/);
     expect(readFileSync(outside('victim.txt'), 'utf8')).toBe('ORIGINAL CONTENT OF A FILE OUTSIDE THE RECORD\n');
     expect((await api(`entries/${id}`)).body.entry.body).toContain('before');
     rmSync(join(notes(), 'swap.md'));
@@ -289,7 +290,7 @@ describe('L8: note files', () => {
   it('won\'t write the daily note into a folder that leads outside notes/', async () => {
     rmSync(join(notes(), 'daily'), { recursive: true, force: true });
     mkdirSync(outside('daily-elsewhere'));
-    symlinkSync(outside('daily-elsewhere'), join(notes(), 'daily'));
+    symlinkSync(outside('daily-elsewhere'), join(notes(), 'daily'), 'junction');
     const res = await api('daily', { body: { text: 'a daily line' } });
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('notes/daily leads outside notes/');

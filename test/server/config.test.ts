@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { loadConfig } from '../../src/config.ts';
 import { CLI_ONLY, CliOnly, ConfigError, DEFAULT_CONFIG, readConfig, writeConfig } from '../../src/server/config.ts';
 import { loadToken, sameToken } from '../../src/server/token.ts';
@@ -50,8 +50,10 @@ describe('settings', () => {
     expect(next.live).toEqual({ folders: [], organise: false, remote: false, downloads: false });
     expect(loadConfig(home)).toMatchObject({ liveOrganise: false });
     expect(existsSync(join(home, 'app.json'))).toBe(false);
-    writeFileSync(join(home, 'config.json'), JSON.stringify({ liveFolders: [{ path: '/notes' }, { path: '/mara', owner: 'Mara' }], liveDownloads: true }));
-    expect(readConfig(home).live).toEqual({ folders: [{ path: '/notes' }, { path: '/mara', owner: 'Mara' }], organise: true, remote: false, downloads: true });
+    // The organiser resolves the folders, so on Windows /notes comes back as D:\notes: the test writes them resolved.
+    const folders = [{ path: resolve('/notes') }, { path: resolve('/mara'), owner: 'Mara' }];
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ liveFolders: folders, liveDownloads: true }));
+    expect(readConfig(home).live).toEqual({ folders, organise: true, remote: false, downloads: true });
     expect(() => writeConfig(home, { live: { folders: [{ path: ' ' }] } })).toThrow(ConfigError);
     expect(() => writeConfig(home, { live: { folders: ['/notes'] } })).toThrow(ConfigError);
   });
