@@ -14,6 +14,7 @@ import type { Caller } from '../../src/mcp/session.ts';
 import { notesDir, rewriteNoteFile, writeAgentNote } from '../../src/notes.ts';
 import { findSchema } from '../../src/organiser/views.ts';
 import { currentMark, finishRun, getRun, listRuns, startRun, undoRun } from '../../src/organiser/runs.ts';
+import { entryDetail } from '../../src/server/queries.ts';
 import { Store } from '../../src/store/store.ts';
 import { call, context, demoRecord, initialize } from './helpers.ts';
 
@@ -83,6 +84,8 @@ describe("an agent's save is a run of its own", () => {
     expect(history.out).toMatch(/^v1 .* by agent:claude-code /);
     expect(JSON.parse((await sw('history', String(note.entryId), '--json')).out)).toMatchObject([{ editor: 'agent:claude-code', runId: note.runId }]);
     expect((await sw('runs')).out).toContain(`Run ${note.runId}: note · agent claude-code · scope agent · done`);
+    // The Reader's "Edited by an agent (…)" names the agent, not its editor string.
+    expect(entryDetail(store, note.entryId)?.editedByAgent).toBe('claude-code');
 
     const undone = await sw('undo', String(note.runId));
     expect(undone).toEqual({ code: 0, err: '', out: `Undid run ${note.runId} (note). Removed 1 notes an agent started.\n` });

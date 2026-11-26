@@ -44,6 +44,11 @@ export function agentEditor(agent: string): string {
   return `agent:${agent}`;
 }
 
+/** The agent's own name in an editor agentEditor made; any other editor as it is. */
+export function editorName(editor: string): string {
+  return editor.startsWith('agent:') ? editor.slice('agent:'.length) : editor;
+}
+
 export function notesDir(home: string): string {
   return resolve(home, 'notes');
 }
@@ -196,7 +201,7 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
   if (!same(owner)) throw new UsageError(`${file} was written by ${owner}, and only ${owner} can change it. Pick another title.`);
   const last = store.history(entryOf(store, dir, path)).at(-1);
   // An agent name has no colon (access.ts), so `agent:<name>` and an older save's plain name can't be confused.
-  const byAgent = (editor: string) => same(editor.startsWith('agent:') ? editor.slice('agent:'.length) : editor);
+  const byAgent = (editor: string) => same(editorName(editor));
   if (last && !byAgent(last.editor)) {
     throw new UsageError(`${file} was changed by ${last.editor} after ${agent} wrote it, so it stays as it is. Pick another title.`);
   }
