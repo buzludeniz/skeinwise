@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from 'preact/hooks';
 import { BotMessageSquare, Copy, History, Link2, Network, PencilLine, UserX } from 'lucide-preact';
 import { changed, engineName, loadRecord, message, openEditor, openEntry, openPanel, openThread, toast } from '../actions.ts';
 import { api } from '../api.ts';
-import { fmtDate, plural, speakerName } from '../format.ts';
+import { entryTitle, fmtDate, plural, speakerName } from '../format.ts';
 import { renderMarkdown } from '../markdown.ts';
 import { useApp } from '../store.ts';
 import type { Brief, Entry, EntryDetail, EntryOrganised, LayerName, Thread } from '../types.ts';
@@ -100,14 +100,15 @@ function EntryReader({ id }: { id: number }) {
   const { entry, history, thread, before, after, similar, editedByAgent, layers, hubs } = detail;
   const written = layer === 'original' ? null : (layers.find((l) => l.layer === layer) ?? null);
   const shown = showVersion === null ? entry.body : (history.find((v) => v.version === showVersion)?.body ?? entry.body);
+  const title = entryTitle(entry, thread?.title || 'Untitled');
 
   return (
-    <article class="reader" aria-label={entry.title ?? 'Entry'}>
+    <article class="reader" aria-label={title}>
       <header class="reader-head">
         <p class="eyebrow">
           {KIND_LABEL[entry.kind] ?? entry.kind} · {speakerName(entry.speaker)}
         </p>
-        <h2>{entry.title || (thread ? thread.title : 'Untitled')}</h2>
+        <h2>{title}</h2>
         <p class="soft">
           {fmtDate(entry.createdAt)} · {entry.sourceLabel}
           {entry.version > 1 && ` · version ${entry.version}`}

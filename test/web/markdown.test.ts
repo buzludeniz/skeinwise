@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderMarkdown, snippetHtml, wikiLinks } from '../../web/src/markdown.ts';
+import { renderMarkdown, snippetHtml, snippetText, wikiLinks } from '../../web/src/markdown.ts';
 
 describe('the Markdown renderer', () => {
   it('renders headings, paragraphs, lists, quotes and code', () => {
@@ -29,6 +29,24 @@ describe('the Markdown renderer', () => {
   });
 
   it('marks search matches in snippets', () => {
-    expect(snippetHtml('…the [rye] <loaf>…')).toBe('…the <mark>rye</mark> &lt;loaf&gt;…');
+    expect(snippetHtml('…the \u0002rye\u0003 <loaf>…')).toBe('…the <mark>rye</mark> &lt;loaf&gt;…');
+    expect(snippetHtml('\u0002rye\u0003 and \u0002spelt\u0003')).toBe('<mark>rye</mark> and <mark>spelt</mark>');
+  });
+
+  it('shows brackets in a snippet as the note has them, never as a match', () => {
+    // A [[link]] once came out as a highlighted "[link" and a stray "]".
+    expect(snippetHtml('…moved to [[Postgres]] for the \u0002waiting\u0003 list…')).toBe(
+      '…moved to [[Postgres]] for the <mark>waiting</mark> list…',
+    );
+    expect(snippetHtml('[a] [b]')).toBe('[a] [b]');
+  });
+
+  it('drops a mark left without its pair', () => {
+    expect(snippetHtml('…the \u0002rye loaf…')).toBe('…the rye loaf…');
+    expect(snippetHtml('rye\u0003 <loaf>')).toBe('rye &lt;loaf&gt;');
+  });
+
+  it('gives a snippet as plain text without its marks', () => {
+    expect(snippetText('…the \u0002rye\u0003\n loaf [[Bread]]…')).toBe('…the rye loaf [[Bread]]…');
   });
 });

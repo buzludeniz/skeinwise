@@ -87,9 +87,23 @@ export function renderMarkdown(src: string): string {
   return out.join('\n');
 }
 
-/** Turns a search snippet ("…the [rye] loaf…") into safe HTML with the matches marked. */
+/**
+ * The marks the search puts around each match in a snippet (src/store/store.ts, search). They are control characters
+ * rather than brackets, so a [[link]] or a [bracket] in the note reads as itself and is never taken for a match.
+ */
+const MATCH = /\u0002([^\u0002\u0003]{1,200})\u0003/g;
+const MARK = /[\u0002\u0003]/g;
+
+/** Turns a search snippet ("…the \u0002rye\u0003 loaf…") into safe HTML with the matches marked. */
 export function snippetHtml(snippet: string): string {
-  return escapeHtml(snippet.replace(/\s+/g, ' ')).replace(/\[([^\]]{1,200})\]/g, '<mark>$1</mark>');
+  return escapeHtml(snippet.replace(/\s+/g, ' '))
+    .replace(MATCH, '<mark>$1</mark>')
+    .replace(MARK, '');
+}
+
+/** A search snippet as plain text, with the match marks dropped. */
+export function snippetText(snippet: string): string {
+  return snippet.replace(MARK, '').replace(/\s+/g, ' ');
 }
 
 /** The [[link]] targets in a note. */

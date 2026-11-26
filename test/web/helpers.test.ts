@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BrainData, BrainPoint } from '../../src/server/queries.ts';
 import { niceMax, scale, smooth, sparseLabels } from '../../web/src/chart.ts';
+import { entryTitle } from '../../web/src/format.ts';
 import { openLink } from '../../web/src/markdown.ts';
 import { folderCounts, navItems, sourceCounts } from '../../web/src/nav.ts';
 import { batchId, importSummary, LOOSE_FOLDER, uploadPath, usable } from '../../web/src/upload.ts';
@@ -120,5 +121,32 @@ describe('open wiki link', () => {
     expect(openLink(text, text.length)).toEqual({ start: 6, typed: 'Garden pl' });
     expect(openLink('See [[Beans]] now', 17)).toBeNull();
     expect(openLink('no link', 7)).toBeNull();
+  });
+});
+
+describe('entryTitle', () => {
+  it('names a daily note by its day', () => {
+    expect(entryTitle({ title: '2024-11-24' })).toBe('Daily note · Sun 24 Nov 2024');
+    expect(entryTitle({ title: ' 2026-02-28 ', body: 'Pruned the apple trees.' })).toBe('Daily note · Sat 28 Feb 2026');
+  });
+
+  it("takes a daily note's first heading when it has one", () => {
+    expect(entryTitle({ title: '2024-11-24', body: 'Notes\n## Shed laptop backup ##\nCopied the list.' })).toBe('Shed laptop backup');
+    // A heading that is the date again says nothing more.
+    expect(entryTitle({ title: '2024-11-24', body: '# 2024-11-24\nCopied the list.' })).toBe('Daily note · Sun 24 Nov 2024');
+    // A tag is not a heading.
+    expect(entryTitle({ title: '2024-11-24', body: '#garden pruning' })).toBe('Daily note · Sun 24 Nov 2024');
+  });
+
+  it('leaves every other title as it is', () => {
+    expect(entryTitle({ title: 'Postgres or SQLite for the waiting list?' })).toBe('Postgres or SQLite for the waiting list?');
+    expect(entryTitle({ title: 'Meeting 2024-11-24' })).toBe('Meeting 2024-11-24');
+    expect(entryTitle({ title: '2024-13-45' })).toBe('2024-13-45');
+  });
+
+  it('falls back when there is no title', () => {
+    expect(entryTitle({ title: '' })).toBe('Untitled');
+    expect(entryTitle({ title: null }, 'Plot offers')).toBe('Plot offers');
+    expect(entryTitle({ title: '   ' }, 'Plot offers')).toBe('Plot offers');
   });
 });
