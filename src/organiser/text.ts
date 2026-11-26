@@ -266,6 +266,7 @@ export class Postings {
       if (t + 1 >= this.start.length) continue;
       for (let p = this.start[t]!; p < this.start[t + 1]!; p++) {
         const i = this.ids[p]!;
+        // 0 can mean untouched only because every weight is positive: tf and idf are both at least 1 before normalising.
         if (this.dot[i] === 0) this.touched[n++] = i;
         this.dot[i]! += w * this.weights[p]!;
       }
