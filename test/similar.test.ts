@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -90,6 +90,26 @@ describe('similar from the full-text index', () => {
       expect(() => similarEntries(store, notes.id, 5)).toThrow(/No entry/);
     } finally {
       store.db.prepare("UPDATE sources SET status = 'in' WHERE id = ?").run(notes.sourceId);
+    }
+  });
+});
+
+describe('similar takes any entry text', () => {
+  it('never hands the full-text index query syntax, and an entry of stop words finds nothing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-similar-syntax-'));
+    try {
+      // Quotes, *, NEAR, a lone -, ^, a column filter and brackets: each would be syntax in a raw MATCH.
+      writeFileSync(join(dir, 'syntax.md'), '# "Plot" NEAR(line fence)\n\n"unterminated col:fence ^plot plot* - AND OR NOT + (open');
+      writeFileSync(join(dir, 'beds.md'), '# Raised beds\n\nThe plot along the fence line gets the raised beds.');
+      writeFileSync(join(dir, 'a.md'), 'the and of it - * " (');
+      const store = new Store(openDb(':memory:'), () => DEMO_NOW);
+      for (const b of readImports(dir)) store.ingest(b);
+      const id = (file: string) => store.allEntries().find((e) => e.externalId === file)!.id;
+
+      expect(similarEntries(store, id('syntax.md'), 5).map((h) => h.entryId)).toEqual([id('beds.md')]);
+      expect(similarEntries(store, id('a.md'), 5)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
