@@ -24,12 +24,15 @@ export const BODY = {
   hipX: 0.45,
 } as const;
 
-/** The cord, the body's time axis: from its bottom (the oldest month) to its top (this month), behind the trunk. */
+/**
+ * The cord, the body's time axis: from its bottom (the oldest month) to its top (this month), behind the trunk. Its
+ * top meets the base of phase 1's brain stem (layout.ts), which sits at (0, -0.72, -0.5) in the world.
+ */
 export const CORD: V3[] = [
   [0, -3.5, -0.3],
   [0, -2.4, -0.22],
   [0, -1.2, -0.3],
-  [0, -0.35, -0.25],
+  [0, -0.27, -0.17],
 ];
 
 /** One side's capsules, for x ≥ 0; the left side mirrors them. */

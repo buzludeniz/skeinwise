@@ -66,8 +66,8 @@ const unit = (v: V3): V3 => {
   return [v[0] / l, v[1] / l, v[2] / l];
 };
 
-/** Two directions square to a path at u, for spreading entries round it. */
-function across(path: Path, u: number): [V3, V3] {
+/** Two directions square to a path at u, for spreading entries round it and drawing rings on it. */
+export function across(path: Path, u: number): [V3, V3] {
   const t = unit(sub(pointAlong(path, Math.min(1, u + 0.01)), pointAlong(path, Math.max(0, u - 0.01))));
   const a = unit(Math.abs(t[2]) < 0.9 ? cross(t, [0, 0, 1]) : cross(t, [1, 0, 0]));
   return [a, cross(t, a)];
