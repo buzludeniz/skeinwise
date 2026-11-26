@@ -61,7 +61,8 @@ export interface StartOptions {
   scanRoot?: string;
   onQuit?: () => void;
   /** Keep the token from the last run, so an open page or bookmark still works. By default each start makes a new one. */
-  keepToken?: boolean;  /** The upload cap in bytes (tests set a small one); 1 GB otherwise. */
+  keepToken?: boolean;
+  /** The upload cap in bytes (tests set a small one); 1 GB otherwise. */
   uploadLimit?: number;
 }
 
