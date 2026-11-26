@@ -2,6 +2,7 @@
 // Each zip and each top-level folder becomes its own import; loose Markdown files go in a folder of their own.
 
 import { api } from './api.ts';
+import { plural } from './format.ts';
 import type { ImportResult } from './types.ts';
 
 /** The folder that loose files (not zips, not inside a picked folder) are put in, so they import as one notes source. */
@@ -44,12 +45,32 @@ export async function uploadFiles(
   return api.post<ImportResult[]>('upload/finish', { batch, owner });
 }
 
-/** "Added 120 entries from ChatGPT" or the like, for a toast. */
+/** A source the server held back: its changes wait for a yes, so its zero counts don't mean "nothing new". */
+const heldBack = (r: ImportResult) => !!r.proposed;
+
+/** Whether any source was held back, so the toast doesn't read as a plain success. */
+export const anyHeldBack = (results: readonly ImportResult[]) => results.some(heldBack);
+
+/** What a held-back source says, as the CLI's import line does: where its changes wait, or that they waited before. */
+function heldLine(r: ImportResult): string {
+  const n = r.proposed ?? 0;
+  if (r.pendingId) return `${r.source}: ${plural(n, 'change')} from another account ${n === 1 ? 'waits' : 'wait'} for your yes as #${r.pendingId}: skeinwise live pending.`;
+  return `${r.source}: nothing brought in; this export from another account was proposed before.`;
+}
+
+/** "Added 120 entries from ChatGPT" or the like, for a toast, then a line for each source held back. */
 export function importSummary(results: readonly ImportResult[]): string {
+  if (!results.length) return 'Nothing in those files could be read.';
+  const came = results.filter((r) => !heldBack(r));
+  const lines = results.filter(heldBack).map(heldLine);
+  if (came.length) lines.unshift(cameLine(came));
+  return lines.join(' ');
+}
+
+function cameLine(results: readonly ImportResult[]): string {
   const added = results.reduce((n, r) => n + r.added, 0);
   const versioned = results.reduce((n, r) => n + r.versioned, 0);
   const names = [...new Set(results.map((r) => r.source))];
-  if (!results.length) return 'Nothing in those files could be read.';
   const from = names.length === 1 ? names[0] : `${names.length} sources`;
   if (!added && !versioned) return `Already in the record: nothing new from ${from}.`;
   const parts = [`${added} new ${added === 1 ? 'entry' : 'entries'}`];

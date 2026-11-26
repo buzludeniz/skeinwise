@@ -23,7 +23,7 @@ import {
   undo,
 } from '../actions.ts';
 import { api, qs } from '../api.ts';
-import { fmtDate, plural, speakerName } from '../format.ts';
+import { entryTitle, fmtDate, plural, speakerName } from '../format.ts';
 import { snippetHtml } from '../markdown.ts';
 import { setState, useApp } from '../store.ts';
 import { THEMES } from '../themes.ts';
@@ -276,7 +276,7 @@ function Bar({ initial }: { initial: string }) {
         out.push({
           key: `hit-${h.id}`,
           icon: h.kind === 'message' ? MessageSquareText : FileText,
-          title: h.title || h.threadTitle || 'Untitled',
+          title: entryTitle(h, h.threadTitle || 'Untitled'),
           meta: `${fmtDate(h.createdAt)} · ${speakerName(h.speaker)} · ${h.sourceLabel}`,
           snippet: h.snippet,
           run: () => openHit(h),
