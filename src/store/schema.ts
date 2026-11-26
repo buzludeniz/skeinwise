@@ -373,4 +373,45 @@ export const MIGRATIONS: readonly string[] = [
   CREATE UNIQUE INDEX pending_origin ON pending (origin_sha256, source_kind) WHERE origin_sha256 IS NOT NULL;
   CREATE INDEX pending_status ON pending (status);
   `,
+
+  // 7. An agent's note saved through the memory server is a run of its own (task 'note', engine 'agent'), and the
+  // versions it saves carry its run_id, so undoing the run takes the note back. runs is rebuilt for the new task as in
+  // migration 3, with the same ids. A note run makes nothing the organiser shows, so live_runs leaves it out.
+  `
+  DROP VIEW live_runs;
+
+  CREATE TABLE runs_new (
+    id INTEGER PRIMARY KEY,
+    task TEXT NOT NULL CHECK (task IN ('tag', 'file', 'link', 'hub', 'layer', 'review', 'ask', 'correction', 'note')),
+    engine TEXT NOT NULL CHECK (engine IN ('none', 'local', 'remote', 'you', 'agent')),
+    model TEXT,
+    scope TEXT NOT NULL,
+    schema_id INTEGER REFERENCES schemas(id),
+    status TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed', 'undone')),
+    counts TEXT NOT NULL DEFAULT '{}',
+    message TEXT,
+    detail TEXT,
+    mark INTEGER NOT NULL DEFAULT 0,
+    tokens_in INTEGER NOT NULL DEFAULT 0,
+    tokens_out INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+  );
+  INSERT INTO runs_new (id, task, engine, model, scope, schema_id, status, counts, message, detail, mark, tokens_in,
+                        tokens_out, started_at, finished_at)
+    SELECT id, task, engine, model, scope, schema_id, status, counts, message, detail, mark, tokens_in, tokens_out,
+           started_at, finished_at FROM runs;
+  DROP TABLE runs;
+  ALTER TABLE runs_new RENAME TO runs;
+  CREATE INDEX runs_task ON runs (task, status);
+
+  CREATE VIEW live_runs AS
+    SELECT r.id, r.task, r.schema_id FROM runs r
+    WHERE r.status = 'done' AND r.task NOT IN ('ask', 'correction', 'note') AND (r.engine = 'agent' OR NOT EXISTS (
+      SELECT 1 FROM runs later
+      WHERE later.status = 'done' AND later.task = r.task AND later.id > r.id AND later.engine <> 'agent'
+        AND COALESCE(later.schema_id, 0) = COALESCE(r.schema_id, 0)
+        AND (later.scope = 'all' OR (later.scope = r.scope AND later.scope <> 'new'))
+    ));
+  `,
 ];

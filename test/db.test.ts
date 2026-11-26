@@ -214,6 +214,41 @@ describe('openDb', () => {
     ]);
   });
 
+  // Migration 7 (MCP-5): note runs. It is the last migration on this branch (v1/pa's 6 goes before it).
+  it('upgrades a record to note runs, keeping every run, its versions and what points at it', () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec('PRAGMA foreign_keys = ON');
+    const before = MIGRATIONS.length - 1;
+    for (const m of MIGRATIONS.slice(0, before)) db.exec(m);
+    db.exec(`PRAGMA user_version = ${before}`);
+    db.exec(`
+      INSERT INTO runs (id, task, engine, model, scope, schema_id, status, counts, started_at) VALUES
+        (7, 'tag', 'none', NULL, 'all', 1, 'done', '{"tags":1}', 'x'),
+        (8, 'tag', 'agent', 'claude-code', 'agent', 1, 'done', '{}', 'x');
+      INSERT INTO tags (schema_id, name, run_id) VALUES (1, 'bread', 7);
+      INSERT INTO sources (id, kind, label, location, added_at) VALUES (1, 'notes', 'Notes', '/n', 'x');
+      INSERT INTO entries (id, source_id, external_id, kind, speaker, created_at) VALUES (1, 1, 'a.md', 'note', 'you', 'x');
+      INSERT INTO versions (entry_id, version, body, content_hash, editor, edited_at, observed_at, run_id)
+        VALUES (1, 1, 'rye', 'h1', 'claude-code', 'x', 'x', 8);
+    `);
+    expect(() => db.prepare("INSERT INTO runs (task, engine, scope, status, started_at) VALUES ('note', 'agent', 'agent', 'done', 'x')").run()).toThrow(/CHECK/);
+    migrate(db);
+    expect(schemaVersion(db)).toBe(MIGRATIONS.length);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    expect(db.prepare('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
+    expect(db.prepare('SELECT id, task, engine, model, counts FROM runs ORDER BY id').all()).toEqual([
+      { id: 7, task: 'tag', engine: 'none', model: null, counts: '{"tags":1}' },
+      { id: 8, task: 'tag', engine: 'agent', model: 'claude-code', counts: '{}' },
+    ]);
+    expect(db.prepare('SELECT run_id FROM versions').all()).toEqual([{ run_id: 8 }]);
+    const note = Number(db.prepare("INSERT INTO runs (task, engine, model, scope, status, started_at) VALUES ('note', 'agent', 'claude-code', 'agent', 'done', 'x')").run().lastInsertRowid);
+    expect(db.prepare('SELECT id FROM live_runs ORDER BY id').all()).toEqual([{ id: 7 }, { id: 8 }]);
+    expect(note).toBe(9);
+    expect(() => db.prepare("INSERT INTO runs (task, engine, scope, status, started_at) VALUES ('nap', 'agent', 'agent', 'done', 'x')").run()).toThrow(/CHECK/);
+    expect(() => db.prepare("INSERT INTO tags (schema_id, name, run_id) VALUES (1, 'rye', 99)").run()).toThrow(/FOREIGN KEY/);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'runs' AND sql IS NOT NULL").all()).toEqual([{ name: 'runs_task' }]);
+  });
+
   it('refuses a migration that would leave a broken reference, and changes nothing', () => {
     const db = new DatabaseSync(':memory:');
     db.exec(MIGRATIONS[0]!);
