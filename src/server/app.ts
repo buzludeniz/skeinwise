@@ -2,19 +2,19 @@
 // in the X-Skeinwise-Token header; requests must name this server's own host, so pages from other sites can't reach it.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { extname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { UsageError } from '../errors.ts';
 import { readImports } from '../importers/detect.ts';
 import { deleteHub, mergeFolders, REVIEW_ACTIONS, type ReviewAction, renameHub, resolveReview } from '../organiser/corrections.ts';
+import { isLocked, readAccess, setLocked } from '../mcp/access.ts';
 import { type ModelDeps, readServerKey } from '../organiser/model.ts';
 import { undoRun } from '../organiser/runs.ts';
 import type { Store } from '../store/store.ts';
 import { backup } from './backup.ts';
 import { cellEntries, parseFilter, tableCounts, type TableProp, tides, timelineBuckets } from './buckets.ts';
 import { CliOnly, ConfigError, readConfig, TABLE_PROPS, writeConfig } from './config.ts';
-import { writeOver } from './files.ts';
 import { findAgents, findSources, preview } from './found.ts';
 import type { AppLive } from './live.ts';
 import { appendDaily, createNote, NoteError, noteTitles, ownFile, saveEntry } from './notes.ts';
@@ -83,11 +83,6 @@ interface Req {
 type Handler = (req: Req) => unknown;
 
 const JSON_LIMIT = 2 * 1024 * 1024;
-/**
- * The screen lock's file in the record folder. The lock hides the record from the page until it is unlocked; it is not
- * encryption, and anything running as you can still read record.db.
- */
-export const LOCK_FILE = 'screen-lock';
 
 async function readJson(raw: IncomingMessage): Promise<Record<string, unknown>> {
   const type = raw.headers['content-type'] ?? '';
@@ -152,14 +147,19 @@ const NOT_BUILT = `<!doctype html><meta charset="utf-8"><title>Skeinwise</title>
 
 export function createHandler(ctx: AppContext): (req: IncomingMessage, res: ServerResponse) => void {
   const { store, home } = ctx;
-  // The screen lock outlasts a restart (L7): the file's being there is the lock, and anything at that name counts.
-  const lockFile = join(home, LOCK_FILE);
-  let locked = lstatSync(lockFile, { throwIfNoEntry: false }) !== undefined;
-  const setLocked = (on: boolean) => {
-    if (on) writeOver(lockFile, `${new Date().toISOString()}\n`);
-    else rmSync(lockFile, { force: true });
-    locked = on;
-    return { locked };
+  // One lock for the page and the agents: the one `skeinwise mcp lock` sets, kept in agents.json, so it outlasts a
+  // restart (L7) and locking here stops the agent servers too. It hides the record; it is not encryption, and anything
+  // running as you can still read record.db. A file that can't be read keeps everything locked.
+  const locked = (): boolean => {
+    try {
+      return isLocked(home);
+    } catch {
+      return true;
+    }
+  };
+  const lock = (on: boolean) => {
+    setLocked(home, on);
+    return { locked: readAccess(home).locked };
   };
   const uploads = resolve(home, 'imports');
   // The record folder goes in too, so asks and the model test send the key of the server `model serve --run` locked for
@@ -186,14 +186,14 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
   const routes: [string, RegExp, Handler][] = [
     ['GET', /^\/api\/status$/, () => ({
       version: ctx.version,
-      locked,
+      locked: locked(),
       entries: store.stats().entries,
       lastSaved: lastSaved(store.db),
       organiser: organiserReady(store.db),
       live: ctx.live.state(),
     })],
-    ['POST', /^\/api\/lock$/, () => setLocked(true)],
-    ['POST', /^\/api\/unlock$/, () => setLocked(false)],
+    ['POST', /^\/api\/lock$/, () => lock(true)],
+    ['POST', /^\/api\/unlock$/, () => lock(false)],
     ['POST', /^\/api\/quit$/, () => {
       setTimeout(() => ctx.onQuit?.(), 50);
       return { stopping: true };
@@ -513,7 +513,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
         if (!match) continue;
         pathMatched = true;
         if (m !== method) continue;
-        if (locked && !/^\/api\/(status|unlock|quit)$/.test(url.pathname)) throw new HttpError(423, 'Skeinwise is locked');
+        if (!/^\/api\/(status|unlock|quit)$/.test(url.pathname) && locked()) throw new HttpError(423, 'Skeinwise is locked');
         let body: Promise<Record<string, unknown>> | undefined;
         const req: Req = { method, url, params: match.slice(1), raw, json: () => (body ??= readJson(raw)) };
         send(raw, res, 200, await handler(req));

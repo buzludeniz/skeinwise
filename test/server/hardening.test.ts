@@ -12,6 +12,7 @@ import { publicMessage } from '../../src/server/app.ts';
 import { type Running, startServer } from '../../src/server/serve.ts';
 import { sameToken } from '../../src/server/token.ts';
 import { keyShaped } from '../samples.ts';
+import { AccessError, checkAccess, isLocked, readAccess, setLocked } from '../../src/mcp/access.ts';
 import { cleanUploads } from '../../src/server/uploads.ts';
 
 let dir: string;
@@ -354,9 +355,21 @@ describe('M11 / SETTINGS-1: the page cannot choose where your words go', () => {
   });
 });
 
-describe('L7: the screen lock', () => {
-  it('is still on after a restart (web/poc/10)', async () => {
+describe('L7: one lock for the page and the agents', () => {
+  const agentRefusal = () => {
+    try {
+      checkAccess(home, keyShaped('not-', 'an-agent-token'));
+      return '';
+    } catch (error) {
+      expect(error).toBeInstanceOf(AccessError);
+      return (error as Error).message;
+    }
+  };
+
+  it('a lock from the page stops the agents and outlasts a restart (web/poc/10)', async () => {
     expect((await api('lock', { body: {} })).body).toEqual({ locked: true });
+    expect(readAccess(home).locked).toBe(true);
+    expect(agentRefusal()).toMatch(/locked/);
     const again = await startServer({ home, port: 0, webDir: null, scanRoot: scan, keepToken: true });
     const call = (path: string, method = 'GET') =>
       fetch(`http://127.0.0.1:${again.port}/api/${path}`, {
@@ -373,14 +386,31 @@ describe('L7: the screen lock', () => {
     } finally {
       await again.close();
     }
+    expect(readAccess(home).locked).toBe(false);
+    expect(agentRefusal()).not.toMatch(/locked/);
+  });
+
+  it('a lock from the terminal (skeinwise mcp lock) closes the page at once', async () => {
+    setLocked(home, true);
+    expect((await api('status')).body.locked).toBe(true);
+    expect((await api('search?q=One')).status).toBe(423);
     expect((await api('unlock', { body: {} })).body).toEqual({ locked: false });
-    const third = await startServer({ home, port: 0, webDir: null, scanRoot: scan, keepToken: true });
+    expect(isLocked(home)).toBe(false);
+    expect((await api('search?q=One')).status).toBe(200);
+  });
+
+  it('stays locked when agents.json cannot be read', async () => {
+    const file = join(home, 'agents.json');
+    const kept = existsSync(file) ? readFileSync(file, 'utf8') : null;
+    writeFileSync(file, '{ not json');
     try {
-      const status = await fetch(`http://127.0.0.1:${third.port}/api/status`, { headers: { 'X-Skeinwise-Token': third.token } });
-      expect(((await status.json()) as any).locked).toBe(false);
+      expect((await api('status')).body.locked).toBe(true);
+      expect((await api('search?q=One')).status).toBe(423);
     } finally {
-      await third.close();
+      if (kept === null) rmSync(file);
+      else writeFileSync(file, kept);
     }
+    expect((await api('search?q=One')).status).toBe(200);
   });
 });
 
