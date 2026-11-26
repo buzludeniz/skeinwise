@@ -111,10 +111,14 @@ describe('Projects name matches', () => {
 describe('name uses over part of the record', () => {
   // A run over a few entries counts only the names those entries hold, and reads the rest of the record only around
   // each name's key word. It must count those names exactly as a run over the whole record does.
-  const NAMES = ['Learning Rust', 'Butterfly garden', "Plot'line", 'Index', 'Hiring note 12', 'Kiwi', 'Mill Lane', 'Market stall'];
+  // Keys come first ("learn"), in the middle ("101") and last ("12", "orchard"): the window reaches back as well as on.
+  const NAMES = ['Learning Rust', 'Butterfly garden', "Plot'line", 'Index', 'Hiring note 12', 'Kiwi', 'Mill Lane', 'Market stall', 'Room 101 plans',
+    'The big kiwi orchard'];
   const WORDS = ['Learning', 'learning', 'learned', 'Rust', "rust's", 'RUST', 'Butterflies', 'butterflies', 'Butterfly', 'garden', 'Garden',
     'Plotline', "plot'line", 'Plot’line', 'PLOTLINE', 'index', 'Index', 'reindex', 'indexes', 'Hiring', 'hiring', 'note', 'Note', '12', '120',
-    'Kiwi', 'kiwis', 'KIWI', 'Kİwi', 'Mill', 'mill', 'Lane', 'lane', 'Market', 'market', 'stalls', 'stall', 'the', 'a', 'of', 'we', 'went'];
+    'Kiwi', 'kiwis', 'KIWI', 'Kİwi', 'Mill', 'mill', 'Lane', 'lane', 'Market', 'market', 'stalls', 'stall', 'the', 'a', 'of', 'we', 'went',
+    'Hiring note 12', 'hiring Note 12', 'Hiring. Note 12', '[[Hiring note 12]]', 'Room 101 plans', 'room 101 Plans', 'The big kiwi orchard',
+    'the Big Kiwi Orchards', 'big kiwi orchard', 'Learning Rust', 'learning rust', 'Mill Lane', 'Market stalls'];
   const GAPS = [' ', ' ', ' ', ' ', ', ', '. ', '! ', '? ', '\n', ' - ', ' ☕ ', ' 😀 ', ' [[', ']] ', '[[Learning Rust]] ', ' [[Index|the index]] '];
 
   /** Entries of invented text over those words, the same for the same seed. */

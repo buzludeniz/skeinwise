@@ -461,7 +461,6 @@ interface NameWords {
 function readName(name: string): NameWords {
   const stems: string[] = [];
   const upper: boolean[] = [];
-  // match, not matchAll: matchAll would start where the shared WORD's last exec stopped.
   for (const w of name.replace(APOSTROPHES, '').match(WORD) ?? []) {
     stems.push(stem(w.toLowerCase()));
     upper.push(capital(w));
@@ -614,18 +613,21 @@ function countUses(entries: Entry[], read: NameWords[], ks: number[], uses: Name
   const counted = new Int32Array(read.length).fill(-1);
   // A word's stem, by the word as written: most words come back again and again.
   const stems = new Map<string, string>();
+  // Regexes of this call's own: a global regex keeps where its last exec stopped, and the next call would start there.
+  const word = new RegExp(WORD.source, 'gu');
   const ahead = new RegExp(WORD.source, 'gu');
+  const links = new RegExp(LINK.source, 'g');
   entries.forEach((e, r) => {
     for (const text of [e.title ?? '', e.body]) {
       if (keys && !keys.text.test(text)) continue;
       const t = text.replace(APOSTROPHES, '');
-      LINK.lastIndex = 0;
-      let link = LINK.exec(t);
+      links.lastIndex = 0;
+      let link = links.exec(t);
       let active = 0;
       let i = 0;
       const visit = (m: RegExpExecArray) => {
         const w = m[0];
-        while (link && link.index + link[0].length <= m.index) link = LINK.exec(t);
+        while (link && link.index + link[0].length <= m.index) link = links.exec(t);
         ring[i % depth] = (capital(w) ? CAPITAL : 0) | (opensAt(t, m.index) ? OPENS : 0) | (link && m.index >= link.index ? LINKED : 0);
         let s = stems.get(w);
         if (s === undefined) {
@@ -659,9 +661,9 @@ function countUses(entries: Entry[], read: NameWords[], ks: number[], uses: Name
         }
         i++;
       };
-      WORD.lastIndex = 0;
+      word.lastIndex = 0;
       if (!keys) {
-        for (let m = WORD.exec(t); m; m = WORD.exec(t)) visit(m);
+        for (let m = word.exec(t); m; m = word.exec(t)) visit(m);
         continue;
       }
       // The end of the last word read: a window that starts past it shares no word with what was read.
@@ -675,8 +677,8 @@ function countUses(entries: Entry[], read: NameWords[], ks: number[], uses: Name
         if (to <= read_) continue;
         const from = wordsBack(t, h.index, depth - 1);
         if (from >= read_) active = 0;
-        WORD.lastIndex = Math.max(from, read_);
-        for (let m = WORD.exec(t); m && m.index < to; m = WORD.exec(t)) {
+        word.lastIndex = Math.max(from, read_);
+        for (let m = word.exec(t); m && m.index < to; m = word.exec(t)) {
           visit(m);
           read_ = m.index + m[0].length;
         }
