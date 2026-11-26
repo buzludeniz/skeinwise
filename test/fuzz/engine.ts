@@ -24,8 +24,15 @@ export interface Target {
   tokens: string[];
   /** The input is written to this file in the target's folder before each run, for targets that read files. */
   fileName?: string;
-  /** Runs one input (`file` holds it when `fileName` is set). Throws a refusal it promises, or anything else on a bug. */
-  run: (input: Uint8Array, file: string) => void;
+  /**
+   * Runs one input (`file` holds it when `fileName` is set). Throws a refusal it promises, or anything else on a bug.
+   * It may return a promise: the input is done when it settles, and one that never settles is a hang.
+   */
+  run: (input: Uint8Array, file: string) => void | Promise<void>;
+  /** Makes the target's folder ready: once in each worker, before its first input and before the write guard is on. */
+  setUp?: (folder: string) => void;
+  /** Where in its folder the target may write, when that is narrower than the folder itself. */
+  writesIn?: (folder: string) => string;
   /** The errors that are the parser saying no, as it should. */
   refused: (error: unknown) => boolean;
   /** A mutation that knows the format, used instead of the generic one (which it may call). */
@@ -198,15 +205,15 @@ export interface Outcome {
 const describe = (e: unknown): string => (e instanceof Error ? `${e.name}: ${e.message}\n${e.stack ?? ''}` : `threw a ${typeof e}: ${String(e)}`);
 
 /** Runs one input in this thread: a finding when it breaks a promise the target makes, except for hangs and crashes. */
-export function runOne(target: Target, input: Uint8Array, folder: string, budgetMs: number): Outcome {
+export async function runOne(target: Target, input: Uint8Array, folder: string, budgetMs: number): Promise<Outcome> {
   const file = target.fileName ? join(folder, target.fileName) : '';
   if (file) writeFileSync(file, input);
-  beginWrites(folder);
+  beginWrites(target.writesIn?.(folder) ?? folder);
   const started = performance.now();
   let error: string | undefined;
   let refused = false;
   try {
-    target.run(input, file);
+    await target.run(input, file);
   } catch (e) {
     if (target.refused(e)) refused = true;
     else error = describe(e);
@@ -241,8 +248,9 @@ const MiB = 1024 ** 2;
  * An input that leaves a file open is run once more, and is a finding when it leaves one open again. Open files are
  * counted by the guard (leftOpen), so only where it is installed: in the worker.
  */
-export function loop(target: Target, o: LoopOptions): { runs: number; refused: number; ms: number } {
+export async function loop(target: Target, o: LoopOptions): Promise<{ runs: number; refused: number; ms: number }> {
   prepare(target);
+  target.setUp?.(o.folder);
   const started = performance.now();
   const budget = target.memoryMiB * MiB;
   const peakAtStart = process.resourceUsage().maxRSS * 1024;
@@ -258,12 +266,12 @@ export function loop(target: Target, o: LoopOptions): { runs: number; refused: n
       Atomics.add(o.progress, 1, 1);
     }
     const before = process.memoryUsage.rss();
-    const outcome = runOne(target, input, o.folder, o.budgetMs);
+    const outcome = await runOne(target, input, o.folder, o.budgetMs);
     runs++;
     if (outcome.refused) refused++;
     if (outcome.kind) finding(outcome.kind, outcome.error ?? '', outcome.ms);
     if (leftOpen() > 0) {
-      runOne(target, input, o.folder, o.budgetMs);
+      await runOne(target, input, o.folder, o.budgetMs);
       const left = leftOpen();
       if (left > 0) finding('leak', `it left ${left} file${left === 1 ? '' : 's'} open on ${input.length} bytes`, outcome.ms);
     }
