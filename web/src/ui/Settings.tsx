@@ -13,9 +13,9 @@ import type { Agent, Config } from '../types.ts';
 import { AgentRequests } from './AgentRequests.tsx';
 import { Button, Segmented, Switch, useFocusTrap } from './common.tsx';
 
-const GROUPS = ['AI agents', 'AI model', 'Usage cap', 'Proof of date', 'Backup', 'Exclusions', 'Appearance'] as const;
-
-const LATER_NOTE = 'Not available yet. The choice is kept.';
+// Proof of date and daily backups aren't in 1.0, so they get no switch, as sync gets no group. A choice stored by an
+// earlier build stays in the config untouched.
+const GROUPS = ['AI agents', 'AI model', 'Usage cap', 'Backup', 'Exclusions', 'Appearance'] as const;
 
 function slug(g: string): string {
   return `set-${g.toLowerCase().replace(/[^a-z]+/g, '-')}`;
@@ -389,18 +389,13 @@ function Sheet() {
                 hint={`Now ${fmtNum(config.usageCap.monthlyTokens)}. At the cap, runs wait for the next month.`}
               />
             </Group>
-            <Group title="Proof of date">
-              <Switch label="Prove when each entry was written" checked={config.proofOfDate} onChange={(proofOfDate) => void saveConfig({ proofOfDate })} />
-              <Note>{LATER_NOTE}</Note>
-            </Group>
             <Group title="Backup">
               <div class="row">
                 <Button icon={Archive} onClick={() => void backup()} disabled={backingUp}>
                   {backingUp ? 'Backing up…' : 'Back up now'}
                 </Button>
               </div>
-              <Switch label="Back up every day" checked={config.backup.daily} onChange={(daily) => void saveConfig({ backup: { daily } })} />
-              <Note>A backup is a zip of the record in the backups folder of your Skeinwise home. Daily backups: {LATER_NOTE.toLowerCase()}</Note>
+              <Note>A backup is a zip of the record in the backups folder of your Skeinwise home.</Note>
             </Group>
             <Group title="Exclusions">
               <label class="field">

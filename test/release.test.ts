@@ -12,6 +12,8 @@ const file = (path: string, size = 1000, mode = 0o644): PackFile => ({ path, siz
 const CLEAN: PackFile[] = [
   file('LICENSE'),
   file('README.md'),
+  file('CHANGELOG.md'),
+  file('SECURITY.md'),
   file('package.json'),
   file(BIN, 600, 0o755),
   file('dist/src/cli.js', 20_000),
@@ -24,11 +26,17 @@ describe('the package check', () => {
     expect(packProblems(CLEAN, BIN, 'linux')).toEqual([]);
   });
 
-  it('needs the bin, the web app, the README and the licence', () => {
+  it('needs the bin, the web app, the README, the licence, the changelog and the security policy', () => {
     const without = (path: string) => CLEAN.filter((f) => f.path !== path);
     expect(packProblems(without(BIN), BIN, 'linux')).toEqual([`${BIN} is missing`]);
     expect(packProblems(without('dist/web/index.html'), BIN, 'linux')).toEqual(['dist/web/index.html is missing']);
     expect(packProblems(without('LICENSE'), BIN, 'linux')).toEqual(['LICENSE is missing']);
+    expect(packProblems(without('CHANGELOG.md'), BIN, 'linux')).toEqual(['CHANGELOG.md is missing']);
+    expect(packProblems(without('SECURITY.md'), BIN, 'linux')).toEqual(['SECURITY.md is missing']);
+  });
+
+  it('lets only the named top-level files ship beside dist', () => {
+    expect(packProblems([...CLEAN, file('CONTRIBUTING.md')], BIN, 'linux')).toEqual(['CONTRIBUTING.md: outside dist/src and dist/web']);
   });
 
   it("refuses supply/06's leftovers: tests, a .env and a JSON dump in dist", () => {
@@ -70,7 +78,7 @@ describe('the package check', () => {
 
   it('ships only dist/src and dist/web from dist, and builds them fresh before every pack', () => {
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { files: string[]; scripts: Record<string, string> };
-    expect(pkg.files).toEqual(['dist/src', 'dist/web', 'README.md', 'LICENSE']);
+    expect(pkg.files).toEqual(['dist/src', 'dist/web', 'README.md', 'LICENSE', 'CHANGELOG.md', 'SECURITY.md']);
     expect(pkg.scripts.prepack).toBe('npm run clean && npm run build');
     expect(pkg.scripts.build).toContain("chmodSync('dist/src/bin.js', 0o755)");
   });
