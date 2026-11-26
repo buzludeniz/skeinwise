@@ -1,4 +1,4 @@
-import type { DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { inTransaction } from './db.ts';
 
@@ -328,18 +328,31 @@ export class Store {
     this.now = now;
   }
 
+  private readonly statements = new Map<string, StatementSync>();
+
+  /**
+   * The import path's statements, prepared once per store. Each prepare holds a compiled statement in native memory
+   * that V8 doesn't count, and frees it only when the object is collected, so a fresh prepare per entry piled up
+   * about 100 MB on a 30,000-message import before a scavenge ran.
+   */
+  private stmt(sql: string): StatementSync {
+    let statement = this.statements.get(sql);
+    if (!statement) this.statements.set(sql, (statement = this.db.prepare(sql)));
+    return statement;
+  }
+
   upsertSource(source: SourceInput, account: string | null = null): number {
     const location = source.location ?? '';
-    const row = this.db.prepare('SELECT id, account FROM sources WHERE kind = ? AND location = ?').get(source.kind, location) as
+    const row = this.stmt('SELECT id, account FROM sources WHERE kind = ? AND location = ?').get(source.kind, location) as
       | { id: number; account: string | null }
       | undefined;
     if (row) {
       // The first import that names an account claims the source for it.
-      if (row.account === null && account !== null) this.db.prepare('UPDATE sources SET account = ? WHERE id = ?').run(account, row.id);
+      if (row.account === null && account !== null) this.stmt('UPDATE sources SET account = ? WHERE id = ?').run(account, row.id);
       return row.id;
     }
-    const res = this.db
-      .prepare('INSERT INTO sources (kind, label, location, owner, added_at, account) VALUES (?, ?, ?, ?, ?, ?)')
+    const res = this
+      .stmt('INSERT INTO sources (kind, label, location, owner, added_at, account) VALUES (?, ?, ?, ?, ?, ?)')
       .run(source.kind, source.label, location, source.owner ?? 'you', this.now(), account);
     return Number(res.lastInsertRowid);
   }
@@ -366,7 +379,7 @@ export class Store {
   }
 
   private knownAccount(source: SourceInput): string | null {
-    const row = this.db.prepare('SELECT account FROM sources WHERE kind = ? AND location = ?').get(source.kind, source.location ?? '') as
+    const row = this.stmt('SELECT account FROM sources WHERE kind = ? AND location = ?').get(source.kind, source.location ?? '') as
       | { account: string | null }
       | undefined;
     return row?.account ?? null;
@@ -404,7 +417,7 @@ export class Store {
   }
 
   private threadId(sourceId: number, externalId: string): number | null {
-    const row = this.db.prepare('SELECT id FROM threads WHERE source_id = ? AND external_id = ?').get(sourceId, externalId) as
+    const row = this.stmt('SELECT id FROM threads WHERE source_id = ? AND external_id = ?').get(sourceId, externalId) as
       | { id: number }
       | undefined;
     return row?.id ?? null;
@@ -416,8 +429,8 @@ export class Store {
       this.retitle(existing, title, context);
       return existing;
     }
-    const res = this.db
-      .prepare('INSERT INTO threads (source_id, external_id, title, started_at) VALUES (?, ?, ?, ?)')
+    const res = this
+      .stmt('INSERT INTO threads (source_id, external_id, title, started_at) VALUES (?, ?, ?, ?)')
       .run(sourceId, externalId, title, startedAt);
     const id = Number(res.lastInsertRowid);
     this.writeTitle(id, 1, title, context);
@@ -426,18 +439,18 @@ export class Store {
 
   /** A changed title becomes a new title version; a title any version already had (an older export) changes nothing. */
   private retitle(threadId: number, title: string, context: WriteContext): boolean {
-    if (this.db.prepare('SELECT 1 FROM thread_titles WHERE thread_id = ? AND title = ?').get(threadId, title)) return false;
-    const { latest } = this.db.prepare('SELECT COALESCE(MAX(version), 0) AS latest FROM thread_titles WHERE thread_id = ?').get(threadId) as {
+    if (this.stmt('SELECT 1 FROM thread_titles WHERE thread_id = ? AND title = ?').get(threadId, title)) return false;
+    const { latest } = this.stmt('SELECT COALESCE(MAX(version), 0) AS latest FROM thread_titles WHERE thread_id = ?').get(threadId) as {
       latest: number;
     };
     this.writeTitle(threadId, latest + 1, title, context);
-    this.db.prepare('UPDATE threads SET title = ? WHERE id = ?').run(title, threadId);
+    this.stmt('UPDATE threads SET title = ? WHERE id = ?').run(title, threadId);
     return true;
   }
 
   private writeTitle(threadId: number, version: number, title: string, context: WriteContext): void {
-    this.db
-      .prepare(
+    this
+      .stmt(
         `INSERT INTO thread_titles (thread_id, version, title, editor, observed_at, origin_path, origin_sha256, account, run_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
@@ -457,14 +470,14 @@ export class Store {
     const body = normalizeText(input.body);
     const hash = hashText(body);
     const speaker = input.speaker === 'you' && owner !== 'you' ? owner : input.speaker;
-    const existing = this.db
-      .prepare('SELECT id FROM entries WHERE source_id = ? AND external_id = ?')
+    const existing = this
+      .stmt('SELECT id FROM entries WHERE source_id = ? AND external_id = ?')
       .get(sourceId, input.externalId) as { id: number } | undefined;
     if (!existing) {
       const flag = timeFlag(input.createdAt, observed);
       const createdAt = flag ? observed : input.createdAt!;
-      const res = this.db
-        .prepare(
+      const res = this
+        .stmt(
           `INSERT INTO entries (source_id, thread_id, external_id, kind, speaker, title, created_at, seq, version,
                                 observed_at, claimed_at, time_flag, project, git_branch)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
@@ -494,14 +507,14 @@ export class Store {
       return;
     }
     // Any version already holding this text means it is an older or identical export: the newest version stands.
-    const known = this.db
-      .prepare('SELECT 1 FROM versions WHERE entry_id = ? AND content_hash = ?')
+    const known = this
+      .stmt('SELECT 1 FROM versions WHERE entry_id = ? AND content_hash = ?')
       .get(existing.id, hash);
     if (known) {
       // An entry imported before sessions kept their folder and branch gains them here; one already set stays.
       if (input.project || input.gitBranch) {
-        this.db
-          .prepare('UPDATE entries SET project = COALESCE(project, ?), git_branch = COALESCE(git_branch, ?) WHERE id = ? AND (project IS NULL OR git_branch IS NULL)')
+        this
+          .stmt('UPDATE entries SET project = COALESCE(project, ?), git_branch = COALESCE(git_branch, ?) WHERE id = ? AND (project IS NULL OR git_branch IS NULL)')
           .run(input.project ?? null, input.gitBranch ?? null, existing.id);
       }
       result.unchanged++;
@@ -514,8 +527,8 @@ export class Store {
       properties: input.properties ?? null,
     });
     if (input.project || input.gitBranch) {
-      this.db
-        .prepare('UPDATE entries SET project = COALESCE(?, project), git_branch = COALESCE(?, git_branch) WHERE id = ?')
+      this
+        .stmt('UPDATE entries SET project = COALESCE(?, project), git_branch = COALESCE(?, git_branch) WHERE id = ?')
         .run(input.project ?? null, input.gitBranch ?? null, existing.id);
     }
     result.versioned++;
@@ -624,7 +637,7 @@ export class Store {
       properties?: Record<string, unknown> | null;
     } = {},
   ): Version {
-    const row = this.db.prepare('SELECT version, title FROM entries WHERE id = ?').get(entryId) as
+    const row = this.stmt('SELECT version, title FROM entries WHERE id = ?').get(entryId) as
       | { version: number; title: string | null }
       | undefined;
     if (!row) throw new Error(`No entry ${entryId}`);
@@ -634,8 +647,8 @@ export class Store {
     const title = extra.title !== undefined ? extra.title : row.title;
     const properties = extra.properties ?? null;
     const contentHash = hashText(body);
-    this.db
-      .prepare(
+    this
+      .stmt(
         `INSERT INTO versions (entry_id, version, body, content_hash, editor, edited_at, observed_at, claimed_at, title,
                                properties, origin_path, origin_sha256, account, run_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -656,7 +669,7 @@ export class Store {
         context.account,
         context.runId,
       );
-    this.db.prepare('UPDATE entries SET version = ?, title = ? WHERE id = ?').run(version, title, entryId);
+    this.stmt('UPDATE entries SET version = ?, title = ? WHERE id = ?').run(version, title, entryId);
     this.index(entryId, title, body);
     return {
       version,
@@ -675,8 +688,8 @@ export class Store {
   }
 
   private index(entryId: number, title: string | null, body: string): void {
-    this.db.prepare('DELETE FROM entry_search WHERE rowid = ?').run(entryId);
-    this.db.prepare('INSERT INTO entry_search (rowid, title, body) VALUES (?, ?, ?)').run(entryId, title ?? '', body);
+    this.stmt('DELETE FROM entry_search WHERE rowid = ?').run(entryId);
+    this.stmt('INSERT INTO entry_search (rowid, title, body) VALUES (?, ?, ?)').run(entryId, title ?? '', body);
   }
 
   // ---------- pending proposals ----------
@@ -696,7 +709,7 @@ export class Store {
 
   /** What a batch would add or change, and the batch cut down to just that. Writes nothing. */
   private plan(batch: ImportBatch): { batch: ImportBatch; result: ImportResult; proposed: number; threads: number; entries: number } {
-    const source = this.db.prepare('SELECT id FROM sources WHERE kind = ? AND location = ?').get(batch.source.kind, batch.source.location ?? '') as
+    const source = this.stmt('SELECT id FROM sources WHERE kind = ? AND location = ?').get(batch.source.kind, batch.source.location ?? '') as
       | { id: number }
       | undefined;
     const result: ImportResult = { added: 0, versioned: 0, unchanged: 0, skipped: 0, threads: 0 };
@@ -708,9 +721,9 @@ export class Store {
           return false;
         }
         const existing = source
-          ? (this.db.prepare('SELECT id FROM entries WHERE source_id = ? AND external_id = ?').get(source.id, e.externalId) as { id: number } | undefined)
+          ? (this.stmt('SELECT id FROM entries WHERE source_id = ? AND external_id = ?').get(source.id, e.externalId) as { id: number } | undefined)
           : undefined;
-        if (existing && this.db.prepare('SELECT 1 FROM versions WHERE entry_id = ? AND content_hash = ?').get(existing.id, hashText(body))) {
+        if (existing && this.stmt('SELECT 1 FROM versions WHERE entry_id = ? AND content_hash = ?').get(existing.id, hashText(body))) {
           result.unchanged++;
           return false;
         }
@@ -722,7 +735,7 @@ export class Store {
       const changed = changes(thread.entries);
       const threadId = source ? this.threadId(source.id, thread.externalId) : null;
       const retitled =
-        threadId !== null && !this.db.prepare('SELECT 1 FROM thread_titles WHERE thread_id = ? AND title = ?').get(threadId, thread.title);
+        threadId !== null && !this.stmt('SELECT 1 FROM thread_titles WHERE thread_id = ? AND title = ?').get(threadId, thread.title);
       if (!changed.length && !retitled) continue;
       threads.push({ ...thread, entries: changed });
       entries += changed.length;
@@ -747,8 +760,8 @@ export class Store {
     const { origin } = options;
     if (origin && this.pendingByHash(origin.sha256, batch.source.kind)) return null;
     const json = JSON.stringify({ ...batch, origin, account: options.account });
-    const res = this.db
-      .prepare(
+    const res = this
+      .stmt(
         `INSERT INTO pending (reason, source_kind, source_label, origin_path, origin_sha256, account, threads, entries, bytes, batch, observed_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
