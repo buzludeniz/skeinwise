@@ -99,10 +99,15 @@ for review. The footer reads "Woven from N entries" and links to Stats.
 
 ## Brain
 
-The main view: a dark canvas holding a 3D point cloud in the shape of a brain, with a stem below it.
+The main view: a dark canvas holding a 3D point cloud in the shape of a standing body, with the brain as its head.
 
-- **Points.** In the two lobes, each point is a note, a concept hub or a summary. The stem holds the originals
-  (messages and files), wound in time order from the bottom up, so the oldest words sit lowest.
+- **Points.** In the head's two lobes, each point is a note, a concept hub or a summary. Every other entry (messages
+  and files) hangs on its source's nerve: chat assistants down the arms, coding agents down the legs, other sources
+  round the trunk. Along each nerve, time runs from its root at the cord, the oldest, to its tip, today.
+- **The cord** down the back is the calendar: a ring at the edge of each month, this month at the top, and a run of
+  empty months folded into one fainter ring.
+- **Framing** (Brain layout only): Body, Head or Cord brings the camera to that part, fitted to the space the controls
+  leave clear. A record of notes alone opens on the head.
 - **Colour** is the group: project, folder, source, speaker or hub, chosen in the legend.
 - **Moving.** Drag to rotate, scroll or pinch to zoom, double-click a point to open it. The cloud turns slowly on its
   own until you touch it.
@@ -118,14 +123,17 @@ The main view: a dark canvas holding a 3D point cloud in the shape of a brain, w
 A side panel titled "Reading your brain", in short plain paragraphs:
 
 - **Hubs:** the large labelled points, one per concept the organiser found.
-- **The stem:** the originals, oldest at the bottom.
+- **The body:** notes and hubs in the head, every other entry on its source's nerve, the cord as the calendar, and
+  what the framings show.
 - **Clusters:** points close together share words and links.
 - **The index:** what search reads, and how it ranks your own words first.
 - **Colour and labels:** what the legend's grouping does, and when labels show.
 - **The lines:** a *thread line* joins messages in one conversation; a *cross link* joins two entries in different
-  threads that read alike; a *note link* is a `[[link]]` you wrote; a *hub spoke* joins a hub to each entry it holds;
-  a *time chain* joins entries in date order; a *label spark* flashes from a label to its points on hover; a *label
-  leader* holds a label to its point.
+  threads that read alike, and in the Brain layout one that reaches down the body stays faint until you light its
+  entries or select one of them; a *note link* is a `[[link]]` you wrote; a *hub spoke* joins a hub to each entry it
+  holds, but in the Brain layout only to the notes and hubs in the head (Activity, Clusters and the Timeline strip
+  join every entry); a *time chain* joins entries in date order; a *label spark* flashes from a label to its points on
+  hover; a *label leader* holds a label to its point. Time chains and label sparks are marked Later: not drawn yet.
 
 ## Concept hub panel
 
