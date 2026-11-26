@@ -30,9 +30,8 @@ skein:
 - **Plain data.** The record is one SQLite file plus your Markdown notes.
 - **Ready for agents.** Two MCP servers give Claude Code, Codex, Cursor and other tools memory over your record and a
   way to steer the app's view.
-- **Sized for a big record.** 1.0 supports records of up to 50,000 entries. On an M1 with 16 GB, 50,000 entries
-  import in 8 seconds or less, a search returns in 150 ms or less, and a question answered without AI takes 1 second
-  or less.
+- **Sized for a big record.** 1.0 is made for records of up to 50,000 entries. Its times at that size are pending:
+  they go here once the 50,000-entry benchmark has run on main.
 
 ## Roadmap
 
@@ -41,7 +40,7 @@ skein:
 | v0.1.0 | The record: importers for ChatGPT, Claude, Gemini, Claude Code, Codex, Markdown folders and text; dedupe and versions; full-text search; the `skeinwise` command; a demo record |
 | v0.2.0 | The organiser: the local model (default), an outside model or No AI; runs with provenance and undo; corrections; notes; review; ask |
 | v0.3.0 | The update stream: live capture and background organising of what's new; `skeinwise model` to check or fetch the local model |
-| v1.0.0 | The app: first run, the 3D brain, the reader, hubs, the timeline, themes, the command bar and settings. Agent memory over MCP, with a token for each agent. `setup`, `connect` and `doctor`. Export. Word (.docx) imports. Install with `npx` |
+| v1.0.0 | The app: first run, the 3D brain, the reader, hubs, the timeline, themes, the command bar and settings. Agent memory over MCP, with a token for each agent. `setup`, `connect` and `doctor`. Export. Word (.docx) imports. On npm at release, to run with `npx` |
 | v1.1 | Work tools: read-only Gmail, Google Calendar, Todoist and Slack connectors, and the rest of [Coming in 1.1](#coming-in-11) |
 
 ## Coming in 1.1
@@ -55,8 +54,8 @@ These were planned for 1.0 and moved to 1.1, so that 1.0 ships with every check 
   20,000 and says so.
 - **Obsidian aliases and folder links:** `[[Note|alias]]` and `[[Folder/Note]]`. 1.0 keeps a note's front matter,
   its tags included, and skips your templates.
-- **Streaming beyond `ask`:** layers, hubs, review and the brief appear as they are written. In 1.0, `ask` streams and
-  can be cancelled, and the rest show a progress line.
+- **Streaming:** answers from `ask`, layers, hubs, review and the brief appear as they are written, and `ask` can be
+  cancelled. In 1.0 each appears when it is done, and an organise run shows a progress line.
 - **Held imports in the app:** a card for an export that waits for your yes. In 1.0 you review them with
   `skeinwise live pending`.
 - **A first run with three doors:** try the demo, bring in an export while the demo plays, or connect an agent.

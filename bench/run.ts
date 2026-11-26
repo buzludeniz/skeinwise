@@ -30,6 +30,8 @@ import type { Job, WorkerReport } from './worker.ts';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const WORKER = fileURLToPath(new URL('./worker.ts', import.meta.url));
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+/** The `skeinwise` command as it ships (package.json "bin"), built by `pnpm build`. */
+const BUILT_BIN = join(ROOT, 'dist', 'src', 'bin.js');
 /** Marks a folder the bench made, so it only ever clears its own. */
 const MARK = '.skeinwise-bench';
 
@@ -290,7 +292,9 @@ async function live(env: NodeJS.ProcessEnv, home: string, user: string, results:
     `${JSON.stringify({ type: role, sessionId: 'bench-live', uuid: `bench-${(t += 60_000)}`, timestamp: new Date(t).toISOString(), cwd: '/home/bench/code/live', message: { role, content: role === 'user' ? text : [{ type: 'text', text }] } })}\n`;
   writeFileSync(session, line('user', 'Starting the live bench session.') + line('assistant', 'Ready when you are.'));
 
-  const child = spawn(process.execPath, [CLI, 'live'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  // Measured as it ships: the built command. The source, run through type stripping, holds about 40 MB more.
+  const built = existsSync(BUILT_BIN);
+  const child = spawn(process.execPath, [built ? BUILT_BIN : CLI, 'live'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   let err = '';
   child.stdout.on('data', (d: Buffer) => (out += d.toString()));
@@ -323,8 +327,14 @@ async function live(env: NodeJS.ProcessEnv, home: string, user: string, results:
     await sleep(3_000);
     const organised = existsSync(statusFile) ? readStatus(statusFile).organised : undefined;
     const rss = await residentMB(child.pid!);
-    const note = organised?.waiting ? `no background pass ran: ${organised.waiting}` : organised?.error ? `the pass stopped: ${organised.error}` : 'after one append and its background pass';
-    results.set('live.idle', { value: rss, note });
+    // A reading with no pass behind it isn't the measure: passAfter counts a waiting pass (a busy machine) as over.
+    if (organised?.waiting) {
+      results.set('live.idle', { error: `no background pass ran (${organised.waiting}), so idle memory after a pass wasn't measured` });
+    } else {
+      const from = built ? '' : ' (from source: pnpm build first to measure what ships)';
+      const note = organised?.error ? `the pass stopped: ${organised.error}` : `after one append and its background pass${from}`;
+      results.set('live.idle', { value: rss, note });
+    }
   } finally {
     child.kill('SIGINT');
     const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);

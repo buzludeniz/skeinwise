@@ -3,7 +3,8 @@
 // bomb is refused in one place, with a message that names the file and the limit it broke.
 //
 // - A symbolic link is refused unless the person named that path themself (followLink), and even then only the path
-//   itself: nothing inside a folder is followed. The open uses O_NOFOLLOW, so a link swapped in after the check fails.
+//   itself: nothing inside a folder is followed. The open uses O_NOFOLLOW, so a link swapped in after the check fails;
+//   where there is none (Windows), the file opened must be the one the check saw (same device and file id).
 // - The open uses O_NONBLOCK and the open file must be a regular file, so a FIFO can't hang the process.
 // - With a root, the file's real path must sit inside the root's real path, and must be the file that was opened.
 // - Files and zip entries are capped in bytes. A zip is read through its central directory first: too many entries, too
@@ -29,7 +30,7 @@ const ZIP_MAX_DIRECTORY_BYTES = 64 * 1024 ** 2;
 const INFLATE_CHUNK = 64 * 1024;
 const READ_CHUNK = 1024 * 1024;
 
-// Windows has neither flag; there the lstat check before opening stands in for O_NOFOLLOW.
+// Windows has neither flag. There openSafe checks that the file it opened is the one its lstat saw, in place of O_NOFOLLOW.
 const O_NOFOLLOW = constants.O_NOFOLLOW ?? 0;
 const O_NONBLOCK = constants.O_NONBLOCK ?? 0;
 
@@ -88,11 +89,10 @@ export interface SafeHandle {
  */
 export function openSafe(path: string, options: SafeOptions = {}): SafeHandle {
   const abs = resolve(path);
-  if (!options.followLink) {
-    const link = lstatSync(abs);
-    if (link.isSymbolicLink()) throw new UnsafeFileError(abs, 'symlink', `${abs}: skipped, it is a symbolic link`);
-    if (!link.isFile()) throw new UnsafeFileError(abs, 'not-a-file', `${abs}: skipped, it is not a regular file`);
-  }
+  // In bigint, because a Windows file id needs all 64 bits to tell two files apart.
+  const link = options.followLink ? undefined : lstatSync(abs, { bigint: true });
+  if (link?.isSymbolicLink()) throw new UnsafeFileError(abs, 'symlink', `${abs}: skipped, it is a symbolic link`);
+  if (link && !link.isFile()) throw new UnsafeFileError(abs, 'not-a-file', `${abs}: skipped, it is not a regular file`);
   let fd: number;
   try {
     fd = openSync(abs, constants.O_RDONLY | O_NONBLOCK | (options.followLink ? 0 : O_NOFOLLOW));
@@ -105,6 +105,17 @@ export function openSafe(path: string, options: SafeOptions = {}): SafeHandle {
   try {
     const stat = fstatSync(fd);
     if (!stat.isFile()) throw new UnsafeFileError(abs, 'not-a-file', `${abs}: skipped, it is not a regular file`);
+    // Without O_NOFOLLOW (Windows) the open follows a link swapped in after the lstat, so the file opened must be the one
+    // the lstat saw. A file system that reports no file id (0) can't show that, and its file is refused, not guessed at.
+    if (link && !O_NOFOLLOW) {
+      const opened = fstatSync(fd, { bigint: true });
+      if (link.ino === 0n) {
+        throw new UnsafeFileError(abs, 'symlink', `${abs}: skipped, its drive gives no file ids, so a link put in its place couldn't be told apart`);
+      }
+      if (opened.dev !== link.dev || opened.ino !== link.ino) {
+        throw new UnsafeFileError(abs, 'symlink', `${abs}: skipped, it was replaced, by a link or another file, while it was being opened`);
+      }
+    }
     if (options.root !== undefined) {
       const real = realpathSync(abs);
       if (!isInside(realpathSync(options.root), real)) {
