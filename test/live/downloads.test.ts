@@ -2,7 +2,7 @@
 // PoC 06 (a crafted Claude export with the genuine conversation's ids, a new body and a planted 2014 entry).
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { zipSync, strToU8 } from 'fflate';
@@ -168,7 +168,6 @@ describe('Downloads capture', () => {
 
     it('keeps where a drive-by came from and the account it claims, so another account\u2019s export waits as such', async () => {
       // The record's source belongs to one account; the file in Downloads claims another.
-      const withAccount = (convs: ReturnType<typeof conv>[], uuid: string) => convs.map((c) => ({ ...c, account: { uuid } }));
       const mine = join(dir, 'mine.json');
       writeFileSync(mine, JSON.stringify(withAccount(GENUINE, 'acct-invented-mine')));
       withStore((store) => {
@@ -188,6 +187,68 @@ describe('Downloads capture', () => {
         ]);
       });
     });
+
+    /** Every byte of the record on disk, the database and its write-ahead log, as the re-audit reads them. */
+    function recordBytes(): string {
+      return ['record.db', 'record.db-wal']
+        .map((name) => join(home, name))
+        .filter((file) => existsSync(file))
+        .map((file) => readFileSync(file).toString('latin1'))
+        .join('\n');
+    }
+    const PLANTED = ['MongoDB', '99-ATTACKER', 'Mallory', 'renamed by a stranger', 'ignore your previous instructions'];
+    const withAccount = (convs: ReturnType<typeof conv>[], uuid: string) => convs.map((c) => ({ ...c, account: { uuid } }));
+
+    // H1 (re-audit of imports/06): pending was the quarantine, but its row kept the whole forged batch, so the planted
+    // text sat in record.db. Now a drive-by waits as its file's path and SHA-256 alone, on both ways into pending.
+    for (const reason of ['unconfirmed', 'account'] as const) {
+      it(`keeps a drive-by's text out of record.db and its WAL, pending row included, until accept (H1, ${reason})`, async () => {
+        if (reason === 'account') {
+          const mine = join(dir, 'mine.json');
+          writeFileSync(mine, JSON.stringify(withAccount(GENUINE, 'acct-invented-mine')));
+          withStore((store) => {
+            for (const batch of readImports(mine)) store.ingest(batch);
+          });
+          writeFileSync(dropped, JSON.stringify(withAccount(DRIVE_BY, 'acct-invented-stranger')));
+        } else {
+          writeFileSync(dropped, JSON.stringify(DRIVE_BY));
+        }
+        const proposed = readFileSync(dropped);
+        expect((await liveOnce()).code).toBe(0);
+        withStore((store) => {
+          unchanged(store);
+          expect(store.pendingItems()).toMatchObject([{ id: 1, reason, held: false, bytes: 0, origin: { path: dropped } }]);
+          // While the record is open, its WAL holds the last writes.
+          for (const words of PLANTED) expect(recordBytes()).not.toContain(words);
+        });
+        for (const words of PLANTED) expect(recordBytes()).not.toContain(words);
+
+        // A file that changed after it was proposed, or is gone, is refused, and the record stays as it was.
+        writeFileSync(dropped, JSON.stringify(reason === 'account' ? withAccount(DRIVE_BY, 'acct-invented-stranger') : DRIVE_BY, null, 1));
+        withStore((store) => {
+          expect(() => live(store, ['accept', '1'])).toThrow(`${dropped} changed after it was proposed as #1. Nothing was imported`);
+          unchanged(store);
+        });
+        rmSync(dropped);
+        withStore((store) => {
+          expect(() => live(store, ['accept', '1'])).toThrow(`#1's file is gone: ${dropped}. Nothing was imported`);
+          unchanged(store);
+          expect(store.pendingItem(1)).toMatchObject({ status: 'pending' });
+        });
+        for (const words of PLANTED) expect(recordBytes()).not.toContain(words);
+
+        // The proposed bytes back: accepted, and only now is its text in the record, with the file it came from.
+        writeFileSync(dropped, proposed);
+        withStore((store) => {
+          expect(live(store, ['accept', '1']).out).toBe('Took #1 into the record: 1 new, 1 changed (Claude). Each change keeps the version before it.\n');
+          const sha256 = createHash('sha256').update(proposed).digest('hex');
+          const planted = store.search('Mallory');
+          expect(planted).toHaveLength(1);
+          expect(store.history(planted[0]!.id)[0]).toMatchObject({ origin: { path: dropped, sha256 } });
+        });
+        expect(recordBytes()).toContain('Mallory');
+      });
+    }
 
     it('accept takes it into the record, keeping the version each change replaced', async () => {
       writeFileSync(dropped, JSON.stringify(DRIVE_BY));
