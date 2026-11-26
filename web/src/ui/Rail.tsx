@@ -1,7 +1,7 @@
-// The rail: the mark (opening the app menu), the views with keys 1 to 8, and the "Woven from N entries" footer.
+// The rail: the mark (opening the app menu), the views with keys 1 to 9, and the "Woven from N entries" footer.
 
 import type { LucideIcon } from 'lucide-preact';
-import { Brain, CalendarRange, Compass, FlaskConical, GraduationCap, Hash, Plus, Search, UserRound } from 'lucide-preact';
+import { Brain, CalendarRange, Compass, FlaskConical, GraduationCap, Hash, ListTodo, Plus, Search, UserRound } from 'lucide-preact';
 import { go, openCommand } from '../actions.ts';
 import { fmtNum } from '../format.ts';
 import { setState, type Target, useApp } from '../store.ts';
@@ -14,6 +14,7 @@ export const RAIL: { target: Target; label: string; icon: LucideIcon; hint: stri
   { target: 'timeline', label: 'Timeline', icon: CalendarRange, hint: 'Activity over time' },
   { target: 'profile', label: 'Profile', icon: UserRound, hint: 'What the record says about you' },
   { target: 'workbench', label: 'Workbench', icon: FlaskConical, hint: 'The table builder and Activity' },
+  { target: 'assistant', label: 'Assistant', icon: ListTodo, hint: 'Your brief, open loops and tasks' },
   { target: 'guide', label: 'Guide', icon: GraduationCap, hint: 'How to read the brain' },
   { target: 'add', label: 'Add', icon: Plus, hint: 'Add files, a note or a source' },
 ];

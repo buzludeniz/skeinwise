@@ -15,6 +15,16 @@ export const CHANGE_CUES = cue([
   'mov(?:e|ing|ed) to',
 ]);
 
+/** You turned from what you said before. Stronger than a decision, which may only confirm a note. */
+export const TURN_CUES = cue([
+  'changing my mind',
+  'changed my mind',
+  'no longer',
+  'instead',
+  'switch(?:ing|ed)? to',
+  'mov(?:e|ing|ed) to',
+]);
+
 /** You settled something. */
 export const DECISION_CUES = cue([
   'decided',

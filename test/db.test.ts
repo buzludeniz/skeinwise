@@ -310,6 +310,7 @@ describe('two processes opening one old record', () => {
       { entry_id: 1, version: 1, body: 'later' },
       { entry_id: 2, version: 1, body: 'planted' },
     ]);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'pa\\_%' ESCAPE '\\' ORDER BY name").all().map((r) => r.name)).toEqual(['pa_briefs', 'pa_found', 'pa_loops', 'pa_tasks']);
     db.close();
   }
 

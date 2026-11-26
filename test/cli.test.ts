@@ -118,7 +118,10 @@ describe('the skeinwise command', () => {
       writeFileSync(join(folder, `${id}.jsonl`), `${JSON.stringify({ ...line, message: { role: 'user', content: prompt } })}\n`);
     }
     expect((await cli('import', join(dir, 'claude-code'))).code).toBe(0);
-    expect((await cli('help')).out).toMatch(/--to <date> .*\n {6}--project <name> +Only coding sessions/);
+    const help = (await cli('help')).out;
+    expect(help).toMatch(/--to <date> .*\n {6}--project <name> +Only coding sessions/);
+    // ask takes --project too, documented under its --engine line.
+    expect(help).toMatch(/\n  ask <question>.*\n.*\n {6}--engine <name> .*\n {6}--project <name> +Only coding sessions.*\n  similar <entry>/);
 
     const all = JSON.parse((await cli('search', 'reminders', '--json')).out) as { id: number }[];
     expect(all).toHaveLength(2);
@@ -357,5 +360,16 @@ describe('skeinwise serve', () => {
     const old = await fetch(`${next.base}/api/status`, { headers: { 'X-Skeinwise-Token': first.token } });
     expect(old.status).toBe(401);
     await quit(next);
+  });
+});
+
+describe("the assistant's commands, through skeinwise (src/pa/commands.ts)", () => {
+  it('lists them in help, in a section of their own, and runs them', async () => {
+    const help = (await cli('help')).out;
+    expect(help).toMatch(/\n\nThe assistant \(works with no model[^\n]*\n {2}brief /);
+    expect(help).toMatch(/nothing runs in the background\.\n\nSettings:/);
+    expect((await cli('tasks')).out).toBe('No open tasks.\n');
+    expect((await cli('task', 'add', 'order', 'rye', 'flour', '--due', '2030-01-02')).out).toBe('     1  [ ] Order rye flour  due 2030-01-02\n');
+    expect(JSON.parse((await cli('tasks', '--all', '--json')).out)).toMatchObject([{ id: 1, title: 'Order rye flour', dueDay: '2030-01-02' }]);
   });
 });
