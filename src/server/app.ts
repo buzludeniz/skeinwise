@@ -13,6 +13,7 @@ import { confirmRequest, pendingRequests, refuseRequest } from '../mcp/requests.
 import { type ModelDeps, readServerKey } from '../organiser/model.ts';
 import { undoRun } from '../organiser/runs.ts';
 import type { Store } from '../store/store.ts';
+import { streamAsk } from './ask-stream.ts';
 import { backup } from './backup.ts';
 import { cellEntries, parseFilter, tableCounts, type TableProp, tides, timelineBuckets } from './buckets.ts';
 import { CliOnly, ConfigError, readConfig, TABLE_PROPS, writeConfig } from './config.ts';
@@ -80,8 +81,13 @@ interface Req {
   url: URL;
   params: string[];
   raw: IncomingMessage;
+  /** For a handler that writes its own answer (a stream): it returns STREAMED. */
+  res: ServerResponse;
   json: () => Promise<Record<string, unknown>>;
 }
+
+/** A handler's answer when it has written the response itself. */
+const STREAMED = Symbol('streamed');
 
 type Handler = (req: Req) => unknown;
 
@@ -261,6 +267,15 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
         to: to ? `${to}￿` : undefined,
       });
       return { query: q, question: isQuestion(q), hits: hits.map((h) => ({ ...brief(h), snippet: h.snippet, threadId: h.threadId })) };
+    }],
+    // The same question, answered as server-sent events: the entries at once, then the answer as it is written
+    // (src/server/ask-stream.ts). An empty question or an unknown engine is refused before the stream starts.
+    ['GET', /^\/api\/ask\/stream$/, async (req) => {
+      const q = req.url.searchParams.get('q')?.trim() ?? '';
+      if (!q) throw new HttpError(400, 'Ask a question');
+      if (q.length > 2000) throw new HttpError(413, 'The question is too long');
+      await streamAsk(req.res, { store, home, question: q, engine: req.url.searchParams.get('engine') ?? undefined, deps: deps() });
+      return STREAMED;
     }],
     ['GET', /^\/api\/ask$/, (req) => {
       const q = req.url.searchParams.get('q')?.trim() ?? '';
@@ -543,8 +558,9 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
         if (m !== method) continue;
         if (!/^\/api\/(status|unlock|quit)$/.test(url.pathname) && locked()) throw new HttpError(423, 'Skeinwise is locked');
         let body: Promise<Record<string, unknown>> | undefined;
-        const req: Req = { method, url, params: match.slice(1), raw, json: () => (body ??= readJson(raw)) };
-        send(raw, res, 200, await handler(req));
+        const req: Req = { method, url, params: match.slice(1), raw, res, json: () => (body ??= readJson(raw)) };
+        const answer = await handler(req);
+        if (answer !== STREAMED) send(raw, res, 200, answer);
         return;
       }
       throw new HttpError(pathMatched ? 405 : 404, pathMatched ? 'Method not allowed' : 'No such API');
