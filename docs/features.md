@@ -17,6 +17,9 @@ The record is one SQLite file, `~/.skeinwise/record.db`, plus Markdown notes in 
   source, a created date and a content hash.
 - **Originals are append-only.** An edit adds a version with its editor and date; nothing is overwritten.
 - **"Not mine":** a conversation marked this way leaves the brain, search and notes, but stays in history.
+- **Provenance:** each version records where it came from (the file and its SHA-256) and which account.
+- **Pending:** a capture you didn't start, or an export from another account than the source's, waits in pending
+  until you say yes.
 
 ## Importers
 
@@ -32,6 +35,12 @@ The record is one SQLite file, `~/.skeinwise/record.db`, plus Markdown notes in 
 
 Each importer accepts a zip file, a single file or a folder. Unknown fields are skipped, and missing fields don't stop
 an import.
+
+- **One bad value** skips or flags only its entry, named by file and place.
+- **Symbolic links, FIFOs and devices** are skipped and named.
+- **A zip is refused** past 20,000 files, 4 GiB unpacked, or 200 times its packed size.
+- **A file over 1 GiB** is refused.
+- **A time** more than a day ahead, before 1990 or missing is flagged, and the entry is sorted by when it was seen.
 
 ## Connectors
 
@@ -49,6 +58,7 @@ Details: [connectors.md](connectors.md).
 - Each entry is keyed by its source and its external id, so re-importing the same export adds nothing.
 - A changed text becomes a new version, and the newest version counts.
 - Re-importing an older export doesn't roll an entry back: text the entry already held in any version is ignored.
+- `skeinwise restore <entry> <version>` brings an old version back as a new one, so the versions in between are kept.
 
 ## Search
 
@@ -228,6 +238,7 @@ Details: [mcp.md](mcp.md).
 | `skeinwise init` | Creates the record folder |
 | `skeinwise import <path>…` | Imports exports, history folders or note folders |
 | `skeinwise search <words>` | Full-text search |
+| `skeinwise history <entry>`, `skeinwise restore <entry> <version>` | Lists an entry's versions; brings an old one back as a new version |
 | `skeinwise ask <question>` | A question, answered as a view |
 | `skeinwise run <task> [--scope new]` | Runs an organiser task |
 | `skeinwise runs`, `skeinwise undo <run>` | Lists runs; undoes one |
