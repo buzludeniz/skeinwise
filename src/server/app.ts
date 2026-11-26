@@ -19,6 +19,7 @@ import { CliOnly, ConfigError, readConfig, TABLE_PROPS, writeConfig } from './co
 import { findAgents, findSources, preview } from './found.ts';
 import type { AppLive } from './live.ts';
 import { appendDaily, createNote, NoteError, noteTitles, ownFile, saveEntry } from './notes.ts';
+import { paRoutes } from './pa.ts';
 import {
   askQuestion,
   entryLines,
@@ -266,6 +267,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       if (q.length > 2000) throw new HttpError(413, 'The question is too long');
       return askQuestion(store, home, q, req.url.searchParams.get('engine') ?? undefined, deps());
     }],
+    ...paRoutes({ store, home, deps }),
     ['GET', /^\/api\/claim$/, (req) => {
       const q = req.url.searchParams.get('q')?.trim() ?? '';
       if (!q) throw new HttpError(400, 'Give a sentence to check');

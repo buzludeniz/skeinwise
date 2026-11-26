@@ -359,3 +359,14 @@ describe('skeinwise serve', () => {
     await quit(next);
   });
 });
+
+describe("the assistant's commands, through skeinwise (src/pa/commands.ts)", () => {
+  it('lists them in help, in a section of their own, and runs them', async () => {
+    const help = (await cli('help')).out;
+    expect(help).toMatch(/\n\nThe assistant \(works with no model[^\n]*\n {2}brief /);
+    expect(help).toMatch(/nothing runs in the background\.\n\nSettings:/);
+    expect((await cli('tasks')).out).toBe('No open tasks.\n');
+    expect((await cli('task', 'add', 'order', 'rye', 'flour', '--due', '2030-01-02')).out).toBe('     1  [ ] Order rye flour  due 2030-01-02\n');
+    expect(JSON.parse((await cli('tasks', '--all', '--json')).out)).toMatchObject([{ id: 1, title: 'Order rye flour', dueDay: '2030-01-02' }]);
+  });
+});
