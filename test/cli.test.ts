@@ -118,7 +118,10 @@ describe('the skeinwise command', () => {
       writeFileSync(join(folder, `${id}.jsonl`), `${JSON.stringify({ ...line, message: { role: 'user', content: prompt } })}\n`);
     }
     expect((await cli('import', join(dir, 'claude-code'))).code).toBe(0);
-    expect((await cli('help')).out).toMatch(/--to <date> .*\n {6}--project <name> +Only coding sessions/);
+    const help = (await cli('help')).out;
+    expect(help).toMatch(/--to <date> .*\n {6}--project <name> +Only coding sessions/);
+    // ask takes --project too, documented under its --engine line.
+    expect(help).toMatch(/\n  ask <question>.*\n.*\n {6}--engine <name> .*\n {6}--project <name> +Only coding sessions.*\n  similar <entry>/);
 
     const all = JSON.parse((await cli('search', 'reminders', '--json')).out) as { id: number }[];
     expect(all).toHaveLength(2);

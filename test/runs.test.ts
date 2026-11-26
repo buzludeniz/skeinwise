@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { openDb } from '../src/store/db.ts';
 import { Store } from '../src/store/store.ts';
+import { DEFAULT_CONFIG } from '../src/config.ts';
+import { createModel } from '../src/organiser/model.ts';
+import { previewRun, type RunOptions, runTask } from '../src/organiser/organise.ts';
 import { RecordView } from '../src/organiser/record.ts';
 import {
   currentMark,
   failRun,
   finishRun,
   getRun,
+  listRuns,
   parseScope,
   remoteTokensThisMonth,
   scopeEntries,
@@ -183,5 +187,66 @@ describe('undo', () => {
     undoRun(store.db, second);
     undoRun(store.db, first);
     expect(store.db.prepare('SELECT name FROM hubs WHERE id = ?').get(hub)).toEqual({ name: 'Plotline' });
+  });
+});
+
+// LS-15 (security audit M13): a server can report usage that is negative or missing, and a request can time out after
+// the server did the work. The fake below is a function standing in for fetch: nothing leaves the process.
+describe('the outside-model budget holds (LS-15)', () => {
+  const REMOTE = { ...DEFAULT_CONFIG, remoteUrl: 'https://models.example.net/v1', remoteModel: 'big-1', apiKeyEnv: 'SKEINWISE_TEST_KEY', remoteHosts: ['models.example.net'] };
+  const HUB = JSON.stringify({ name: 'Rye baking', in_short: [{ text: 'Notes on rye.', cites: ['S1'] }], found: ['S1'], open_ends: [] });
+
+  beforeEach(() => {
+    const words = ['rye loaf', 'sourdough starter', 'rye proof', 'nitrate samples', 'river samples', 'nitrate rain'];
+    for (const [i, w] of words.entries()) addNote(`n${i}.md`, `Notes on the ${w}. The ${w} and the oven matter, and the dough or the flow too.`);
+  });
+
+  it('counts a negative report as no report and a timeout as its max_tokens, and stops at the budget', async () => {
+    const chats: { sent: number; maxTokens: number }[] = [];
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/models')) return Response.json({ object: 'list', data: [{ id: 'big-1' }] });
+      const body = JSON.parse(String(init!.body)) as { messages: { content: string }[]; max_tokens: number };
+      chats.push({ sent: Math.ceil(body.messages.reduce((n, m) => n + m.content.length, 0) / 4), maxTokens: body.max_tokens });
+      if (chats.length > 1) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      return Response.json({ choices: [{ message: { role: 'assistant', content: HUB }, finish_reason: 'stop' }], usage: { total_tokens: -500 } });
+    }) as typeof globalThis.fetch;
+    const client = createModel(REMOTE, 'remote', { fetch, env: { SKEINWISE_TEST_KEY: 'k' } });
+    const base: RunOptions = { task: 'hub', scope: { kind: 'all' }, engine: 'remote', client, yes: false, budget: 0, progress: () => {} };
+    const preview = previewRun(store, new RecordView(store), base);
+    expect(preview.requests.length).toBe(2);
+    const need = preview.estimate;
+    const options = { ...base, budget: 2 * need };
+    const run = () => runTask(store, new RecordView(store), options);
+
+    // The first answer reports -500 tokens: the run counts its own estimate of what it sent and, from an outside
+    // model, the most the answer could be. The second request times out, and counts in full.
+    await expect(run()).rejects.toThrow(/took longer than .* It counts in full against the budget/);
+    const [a, b] = chats;
+    expect(listRuns(store.db)[0]).toMatchObject({ status: 'failed', tokensIn: a!.sent + b!.sent, tokensOut: a!.maxTokens + b!.maxTokens });
+    expect(remoteTokensThisMonth(store.db, NOW)).toBe(need);
+
+    // What is left still fits a run, and its first request times out too.
+    await expect(run()).rejects.toThrow(/took longer than/);
+    const c = chats[2]!;
+    expect(listRuns(store.db)[0]).toMatchObject({ status: 'failed', tokensIn: c.sent, tokensOut: c.maxTokens });
+    const spent = need + c.sent + c.maxTokens;
+    expect(remoteTokensThisMonth(store.db, NOW)).toBe(spent);
+
+    // The next would pass the budget: refused before anything is sent.
+    await expect(run()).rejects.toThrow(`hub needs about ${need} tokens, and ${2 * need - spent} of the outside model's monthly budget of ${2 * need} is left`);
+    expect(chats).toHaveLength(3);
+    expect(listRuns(store.db)).toHaveLength(2);
+  });
+
+  it('adds up only what runs counted: a negative figure adds nothing', () => {
+    const id = startRun(store.db, { task: 'hub', engine: 'remote', model: 'big-1', scope: 'all', mark: 0, now: NOW });
+    finishRun(store.db, id, { counts: {}, tokensIn: -500, tokensOut: 40, now: NOW });
+    expect(getRun(store.db, id)).toMatchObject({ tokensIn: 0, tokensOut: 40 });
+    const failed = startRun(store.db, { task: 'hub', engine: 'remote', model: 'big-1', scope: 'all', mark: 0, now: NOW });
+    failRun(store.db, failed, 'timed out', 30, -Infinity, NOW);
+    expect(getRun(store.db, failed)).toMatchObject({ tokensIn: 30, tokensOut: 0 });
+    // A row an earlier version wrote, or a synced record brought in, can still hold one.
+    store.db.prepare('UPDATE runs SET tokens_in = -500 WHERE id = ?').run(id);
+    expect(remoteTokensThisMonth(store.db, NOW)).toBe(70);
   });
 });

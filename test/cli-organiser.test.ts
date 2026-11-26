@@ -130,7 +130,8 @@ describe('organising the demo record from the command line', () => {
   it('review flags the Plotline note after the April 2026 move to Postgres, and saves an update only with --yes', async () => {
     const items = parsed<{ id: number; noteEntry: number; reasons: { entryId: number }[] }[]>(await sw('review', '--json'));
     const item = items.find((i) => i.noteEntry === 587)!;
-    expect(item.reasons.map((r) => r.entryId)).toEqual([559, 475, 219, 531]);
+    // #219 decides about the waiting list without naming Plotline, so it confirms nothing about this note (LS-14).
+    expect(item.reasons.map((r) => r.entryId)).toEqual([559, 475, 531]);
     expect((await sw('review')).out).toContain(`Item ${item.id}: #587  2025-02-05  you · Plotline may be out of date. Later entries:`);
 
     const shown = await sw('review', '--resolve', String(item.id), 'update');
