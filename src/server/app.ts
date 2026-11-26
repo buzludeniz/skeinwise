@@ -9,6 +9,7 @@ import { UsageError } from '../errors.ts';
 import { readImportsInWorker } from '../importers/detect.ts';
 import { deleteHub, mergeFolders, REVIEW_ACTIONS, type ReviewAction, renameHub, resolveReview } from '../organiser/corrections.ts';
 import { isLocked, readAccess, setLocked } from '../mcp/access.ts';
+import { confirmRequest, pendingRequests, refuseRequest } from '../mcp/requests.ts';
 import { type ModelDeps, readServerKey } from '../organiser/model.ts';
 import { undoRun } from '../organiser/runs.ts';
 import type { Store } from '../store/store.ts';
@@ -162,6 +163,11 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     return { locked: readAccess(home).locked };
   };
   const uploads = resolve(home, 'imports');
+  /** An agent request's number when it is waiting, else a 404 decided from the list, never from an error's text. */
+  const waitingRequest = (n: number): number => {
+    if (!pendingRequests(home, new Date().toISOString()).some((r) => r.id === n)) throw new HttpError(404, `No agent request ${n} is waiting`);
+    return n;
+  };
   // The record folder goes in too, so asks and the model test send the key of the server `model serve --run` locked for
   // this record (<home>/models/.key), whatever SKEINWISE_HOME the process happens to hold.
   const deps = (): ModelDeps => ({ fetch: ctx.fetch ?? fetch, env: ctx.env ?? process.env, home });
@@ -404,6 +410,22 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       return resolveReview(store, home, id(req.params[0]), action as ReviewAction, yes === true);
     }],
     ['POST', /^\/api\/runs\/(\d+)\/undo$/, (req) => undoRun(store.db, id(req.params[0]))],
+
+    // The agents' requests that wait for the person's yes (src/mcp/requests.ts): the same list, confirm and refuse as
+    // `skeinwise mcp pending`, `confirm` and `refuse`, on the same file, so either side sees what the other did.
+    ['GET', /^\/api\/requests$/, () => pendingRequests(home, new Date().toISOString())],
+    ['POST', /^\/api\/requests\/(\d+)\/confirm$/, (req) => {
+      const n = waitingRequest(id(req.params[0]));
+      try {
+        return confirmRequest(home, store, n, new Date().toISOString());
+      } catch (error) {
+        // The request is dropped either way: a change that can no longer be made (the thread gone or left out, the
+        // run already undone) says why.
+        if (error instanceof UsageError) throw new HttpError(409, error.message);
+        throw error;
+      }
+    }],
+    ['POST', /^\/api\/requests\/(\d+)\/refuse$/, (req) => ({ refused: refuseRequest(home, waitingRequest(id(req.params[0])), new Date().toISOString()) })],
     ['POST', /^\/api\/folders\/merge$/, async (req) => {
       const { from, into } = await req.json();
       const ref = (v: unknown, what: string) => (typeof v === 'number' ? String(v) : text(v, what, 300));
