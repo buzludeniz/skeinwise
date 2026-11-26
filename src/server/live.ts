@@ -48,7 +48,12 @@ export class AppLive {
   set(on: boolean): void {
     this.wanted = on;
     if (!on) {
-      if (this.run) this.stopping = this.run.stop();
+      // A stop that fails is said under the switch, and never holds up the next start.
+      if (this.run) {
+        this.stopping = this.run.stop().catch((error: unknown) => {
+          this.error = `Live capture didn't stop cleanly: ${text(error)}`;
+        });
+      }
       this.run = null;
       return;
     }

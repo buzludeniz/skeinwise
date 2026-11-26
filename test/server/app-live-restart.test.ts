@@ -47,4 +47,21 @@ describe('Record live, off and on again', () => {
     await settle();
     expect(startLive).toHaveBeenCalledTimes(2);
   });
+
+  it('says so when the old stream fails to stop, and still starts again', async () => {
+    vi.mocked(startLive).mockClear();
+    started.length = 0;
+    const live = new AppLive({} as never, '/nonexistent-home', { userHome: '/nonexistent-user' });
+    live.set(true);
+    await settle();
+    started[0]!.stop.mockReturnValue(Promise.reject(new Error('the status file is read-only')));
+    live.set(false);
+    await settle();
+    expect(live.state()).toMatchObject({ on: false, error: "Live capture didn't stop cleanly: the status file is read-only" });
+
+    live.set(true);
+    await settle();
+    expect(startLive).toHaveBeenCalledTimes(2);
+    expect(live.state()).toMatchObject({ on: true, error: null });
+  });
 });
