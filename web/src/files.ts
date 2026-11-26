@@ -2,7 +2,7 @@
 
 import { loadRecord, message, toast } from './actions.ts';
 import { growOnNextLoad } from './brain/useBrain.ts';
-import { importSummary, uploadFiles } from './upload.ts';
+import { anyHeldBack, importSummary, uploadFiles } from './upload.ts';
 
 export function pickFiles(folder = false): void {
   const input = document.createElement('input');
@@ -21,7 +21,7 @@ export async function bringInFiles(files: File[], owner = 'you'): Promise<void> 
     const results = await uploadFiles(files, owner);
     growOnNextLoad();
     await loadRecord();
-    toast(importSummary(results), { tone: 'ok' });
+    toast(importSummary(results), { tone: anyHeldBack(results) ? undefined : 'ok' });
   } catch (error) {
     toast(message(error), { tone: 'error' });
   }

@@ -41,4 +41,10 @@ export interface ImportResult {
   versioned: number;
   unchanged: number;
   threads: number;
+  /**
+   * Only when the server held the batch back, because its export claims another account than its source's: nothing
+   * came in, and the changes wait for a yes as pending #pendingId. A null pendingId means this file was proposed before.
+   */
+  proposed?: number;
+  pendingId?: number | null;
 }

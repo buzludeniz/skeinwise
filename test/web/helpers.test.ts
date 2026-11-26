@@ -4,7 +4,7 @@ import { niceMax, scale, smooth, sparseLabels } from '../../web/src/chart.ts';
 import { entryTitle } from '../../web/src/format.ts';
 import { openLink } from '../../web/src/markdown.ts';
 import { folderCounts, navItems, sourceCounts } from '../../web/src/nav.ts';
-import { batchId, importSummary, LOOSE_FOLDER, uploadPath, usable } from '../../web/src/upload.ts';
+import { anyHeldBack, batchId, importSummary, LOOSE_FOLDER, uploadPath, usable } from '../../web/src/upload.ts';
 
 const t = (iso: string) => Date.parse(iso);
 
@@ -112,6 +112,22 @@ describe('upload helpers', () => {
     expect(importSummary([r('ChatGPT', 0)])).toBe('Already in the record: nothing new from ChatGPT.');
     expect(importSummary([r('ChatGPT', 1)])).toBe('Brought in 1 new entry from ChatGPT.');
     expect(importSummary([r('ChatGPT', 3, 2), r('Claude', 1)])).toBe('Brought in 4 new entries and 2 updated from 2 sources.');
+  });
+
+  it('says where a held-back import waits, never "nothing new"', () => {
+    const held = (source: string, proposed: number, pendingId: number | null) => ({ ...r0(source), proposed, pendingId });
+    const r0 = (source: string) => ({ source, kind: 'x', added: 0, versioned: 0, unchanged: 0, threads: 0 });
+    expect(importSummary([held('ChatGPT', 12, 7)])).toBe('ChatGPT: 12 changes from another account wait for your yes as #7: skeinwise live pending.');
+    expect(importSummary([held('ChatGPT', 1, 7)])).toBe('ChatGPT: 1 change from another account waits for your yes as #7: skeinwise live pending.');
+    expect(importSummary([held('ChatGPT', 12, null)])).toBe('ChatGPT: nothing brought in; this export from another account was proposed before.');
+    // A batch with nothing to propose reads as any other import.
+    expect(importSummary([held('ChatGPT', 0, null)])).toBe('Already in the record: nothing new from ChatGPT.');
+    expect(importSummary([{ ...r0('Claude'), added: 3 }, held('ChatGPT', 2, 9)])).toBe(
+      'Brought in 3 new entries from Claude. ChatGPT: 2 changes from another account wait for your yes as #9: skeinwise live pending.',
+    );
+    expect(anyHeldBack([held('ChatGPT', 2, 9)])).toBe(true);
+    expect(anyHeldBack([held('ChatGPT', 2, null)])).toBe(true);
+    expect(anyHeldBack([held('ChatGPT', 0, null), r0('Claude')])).toBe(false);
   });
 });
 
