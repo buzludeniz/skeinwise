@@ -107,6 +107,7 @@ function hubPoints(data: BrainData, points: LayoutPoint[], indexOf: Map<number, 
       time,
       cluster: commonest(members.map((i) => points[i]!.cluster), 0),
       strand: 0,
+      thread: 0,
       group: commonest(members.map((i) => points[i]!.group), 0),
     };
     out.push({ point, hub, members });

@@ -15,7 +15,7 @@ const sources = [
   { id: 2, kind: 'codex' },
   { id: 3, kind: 'gemini' },
 ];
-const pt = (id: number, strand: number, daysAgo: number): LayoutPoint => ({ id, kind: 0, time: NOW - daysAgo * DAY, cluster: 0, strand, group: 0 });
+const pt = (id: number, strand: number, daysAgo: number): LayoutPoint => ({ id, kind: 0, time: NOW - daysAgo * DAY, cluster: 0, strand, thread: 0, group: 0 });
 // Chats this month and last spring, coding that stopped in the summer, and nothing yet from the third source.
 const layout = bodyLayout([pt(1, 0, 2), pt(2, 0, 230), pt(3, 1, 150), pt(4, 1, 200)], sources, NOW);
 const triple = (a: Float32Array, i: number): V3 => [a[i * 3]!, a[i * 3 + 1]!, a[i * 3 + 2]!];

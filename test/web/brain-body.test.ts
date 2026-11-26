@@ -20,13 +20,13 @@ const sources = [
 function record(): LayoutPoint[] {
   const out: LayoutPoint[] = [];
   let id = 1;
-  const add = (kind: 0 | 1 | 2, strand: number, time: number, cluster = 0) => out.push({ id: id++, kind, time, cluster, strand, group: 0 });
+  const add = (kind: 0 | 1 | 2, strand: number, time: number, cluster = 0) => out.push({ id: id++, kind, time, cluster, strand, thread: 0, group: 0 });
   for (let d = 0; d < 365; d += 3) add(0, 0, NOW - d * DAY);
   for (let d = 260; d < 420; d += 2) add(0, 1, NOW - d * DAY);
   for (let d = 0; d < 200; d += 5) add(1, 2, NOW - d * DAY, d % 3);
   for (let d = 10; d < 300; d += 20) add(2, 2, NOW - d * DAY);
   for (let d = 30; d < 90; d += 1) add(0, 3, NOW - d * DAY);
-  out.push({ id: -1, kind: 1, time: NOW - DAY, cluster: 1, strand: 0, group: 0 });
+  out.push({ id: -1, kind: 1, time: NOW - DAY, cluster: 1, strand: 0, thread: 0, group: 0 });
   return out;
 }
 
@@ -49,7 +49,7 @@ describe('the head', () => {
   });
 
   it('holds a full cortex at the 20,000-point cap inside the skull', () => {
-    const many = Array.from({ length: 20_000 }, (_, i): LayoutPoint => ({ id: i + 1, kind: 1, time: i, cluster: i % 37, strand: 0, group: 0 }));
+    const many = Array.from({ length: 20_000 }, (_, i): LayoutPoint => ({ id: i + 1, kind: 1, time: i, cluster: i % 37, strand: 0, thread: 0, group: 0 }));
     const { positions } = bodyLayout(many, sources, NOW);
     const skull = CAPSULES.filter((c) => c.part === 'head');
     let worst = 0;
@@ -78,10 +78,10 @@ describe('the nerves', () => {
     }
     const same = bodyLayout(
       [
-        { id: 1, kind: 0, time: NOW - 40 * DAY, cluster: 0, strand: 0, group: 0 },
-        { id: 2, kind: 0, time: NOW - 40 * DAY, cluster: 0, strand: 1, group: 0 },
-        { id: 3, kind: 2, time: NOW - 40 * DAY, cluster: 0, strand: 2, group: 0 },
-        { id: 4, kind: 0, time: NOW - 400 * DAY, cluster: 0, strand: 3, group: 0 },
+        { id: 1, kind: 0, time: NOW - 40 * DAY, cluster: 0, strand: 0, thread: 0, group: 0 },
+        { id: 2, kind: 0, time: NOW - 40 * DAY, cluster: 0, strand: 1, thread: 0, group: 0 },
+        { id: 3, kind: 2, time: NOW - 40 * DAY, cluster: 0, strand: 2, thread: 0, group: 0 },
+        { id: 4, kind: 0, time: NOW - 400 * DAY, cluster: 0, strand: 3, thread: 0, group: 0 },
       ],
       sources,
       NOW,
@@ -116,9 +116,9 @@ describe('entries without a place of their own', () => {
   it('hangs entries whose source is not listed on one extra trunk nerve, last in line', () => {
     const odd = bodyLayout(
       [
-        { id: 1, kind: 0, time: NOW - DAY, cluster: 0, strand: 0, group: 0 },
-        { id: 2, kind: 0, time: NOW - DAY, cluster: 0, strand: 8, group: 0 },
-        { id: 3, kind: 2, time: NOW - DAY, cluster: 0, strand: 9, group: 0 },
+        { id: 1, kind: 0, time: NOW - DAY, cluster: 0, strand: 0, thread: 0, group: 0 },
+        { id: 2, kind: 0, time: NOW - DAY, cluster: 0, strand: 8, thread: 0, group: 0 },
+        { id: 3, kind: 2, time: NOW - DAY, cluster: 0, strand: 9, thread: 0, group: 0 },
       ],
       sources,
       NOW,
@@ -126,14 +126,14 @@ describe('entries without a place of their own', () => {
     expect(odd.nerves.map((nv) => nv.source)).toEqual([4, 7, 9, 12, UNLISTED]);
     expect(odd.nerves.at(-1)!.region).toBe('trunk');
     expect([odd.nerveOf[1], odd.nerveOf[2]]).toEqual([4, 4]);
-    expect(bodyLayout([{ id: 1, kind: 0, time: NOW, cluster: 0, strand: 0, group: 0 }], sources, NOW).nerves).toHaveLength(4);
+    expect(bodyLayout([{ id: 1, kind: 0, time: NOW, cluster: 0, strand: 0, thread: 0, group: 0 }], sources, NOW).nerves).toHaveLength(4);
   });
 
   it('waits an entry with no usable date at its nerve root, and leaves it out of the reach', () => {
     const undated = bodyLayout(
       [
-        { id: 1, kind: 0, time: Number.NaN, cluster: 0, strand: 1, group: 0 },
-        { id: 2, kind: 0, time: NOW - 10 * DAY, cluster: 0, strand: 1, group: 0 },
+        { id: 1, kind: 0, time: Number.NaN, cluster: 0, strand: 1, thread: 0, group: 0 },
+        { id: 2, kind: 0, time: NOW - 10 * DAY, cluster: 0, strand: 1, thread: 0, group: 0 },
       ],
       sources,
       NOW,

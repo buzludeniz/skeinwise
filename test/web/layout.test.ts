@@ -19,6 +19,7 @@ function record(n: number, seed = 1): LayoutPoint[] {
     time: start + Math.floor(r() * 3 * 365 * 86_400_000),
     cluster: Math.floor(r() * 6),
     strand: Math.floor(r() * 4),
+    thread: 0,
     group: Math.floor(r() * 5),
   }));
 }
@@ -70,7 +71,7 @@ describe('the brain layout', () => {
     expect(brainLayout([])).toHaveLength(0);
     expect(ringsLayout([])).toHaveLength(0);
     expect(clustersLayout([])).toHaveLength(0);
-    const one = brainLayout([{ id: 1, kind: 0, time: 0, cluster: 0, strand: 0, group: 0 }]);
+    const one = brainLayout([{ id: 1, kind: 0, time: 0, cluster: 0, strand: 0, thread: 0, group: 0 }]);
     expect([...one].every(Number.isFinite)).toBe(true);
   });
 

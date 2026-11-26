@@ -12,6 +12,8 @@ export interface LayoutPoint {
   cluster: number;
   /** Which strand of the braid an original winds on (its source). */
   strand: number;
+  /** The thread it belongs to, 0 for none, as the server sends it (queries.ts). The body's twigs branch on it. */
+  thread: number;
   /** The colour group under the current grouping; the clusters layout uses it. */
   group: number;
 }
