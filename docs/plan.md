@@ -63,12 +63,13 @@ engine (local | outside | none) ──► runs ──► derived layer (tags, fo
 
 ### Screens
 
-App menu (command bar, add files, Record live with status lines, connect, get an export, lock, settings) · first run
-(Set up, Bring in, Watch it grow) · rail with Search ⌘K, Brain, Navigator, Numbers, Timeline, You, Lab, Learn, + Add
-· the 3D brain with brainstem and spine · Learn panel · concept hub panel · entry reader with its layers and history ·
-year rings · timeline · table builder and Tides · notes editor with `[[links]]` and a daily note · review queue ·
-compact window · settings (agents, AI model, usage cap, proof of date, backup, exclusions, appearance) · six
-themes and seven palettes. Full detail: [ui.md](ui.md).
+App menu (command bar, add files, Live capture with status lines, connect, get an export, lock, settings) · first
+run (Set up, Bring in, Watch it grow) · rail with Brain, Threads, Stats, Timeline, Profile, Workbench, Views,
+Assistant, Guide and + Add · the 3D brain, a point cloud in the shape of a standing body with the brain as its head ·
+Guide panel · concept hub panel · entry reader with its layers and history · the Activity layout · timeline ·
+Workbench (the table builder and Activity) · notes editor with `[[links]]` and a daily note · review queue · compact
+window · settings (agents, AI model, usage cap, proof of date, backup, exclusions, appearance) · six themes and seven
+palettes. Full detail: [ui.md](ui.md).
 
 ### Features
 
@@ -89,6 +90,8 @@ A browser extension, Notion and Evernote connectors, mobile apps, sync between c
 | v0.1.0 | Record store, importers, dedupe and versions, search, CLI, demo record |
 | v0.2.0 | The organiser: the local model (default), outside model and No-AI engines; runs with provenance and undo; `--scope new`; corrections; notes; review; ask |
 | v0.3.0 | The update stream: live capture, background organising of new entries, `skeinwise model` |
-| v0.4.0 | Web UI: first run, app menu, rail, 3D brain, Learn, hubs, reader, year rings, timeline, Lab, themes, command bar, settings |
-| v0.5.0 | Memory and window MCP servers, ledger and proof of date, export |
+| v1.0.0 | The app: first run, the 3D brain, the reader, hubs, the timeline, themes, the command bar and settings. Agent memory over MCP, with a token for each agent. `setup`, `connect` and `doctor`. Export. Word (.docx) imports |
+| v1.1 | Work tools: read-only Gmail, Google Calendar, Todoist and Slack connectors, and the rest of README's [Coming in 1.1](../README.md#coming-in-11) |
+
+History: the first plan split the app and the MCP servers into v0.4.0 and v0.5.0; they ship together as v1.0.0.
 
