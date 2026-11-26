@@ -93,8 +93,11 @@ describe('the demo record', () => {
     demo = await organisedDemo();
   });
 
-  it('builds about 600 entries in under a second', () => {
-    expect(demo.ms).toBeLessThan(1000);
+  // The timed part writes the demo's files to disk before importing them, and a Windows runner's file writes are
+  // several times slower: on main at adceaff it took 1.65 s on windows-latest, Node 24, where the same commit had passed
+  // on the branch. So on Windows the limit is three seconds.
+  it('builds about 600 entries in under a second (three on Windows)', () => {
+    expect(demo.ms).toBeLessThan(process.platform === 'win32' ? 3000 : 1000);
     const added = demo.built.results.reduce((n, r) => n + r.added, 0);
     expect(added).toBeGreaterThanOrEqual(550);
     expect(added).toBeLessThanOrEqual(650);
