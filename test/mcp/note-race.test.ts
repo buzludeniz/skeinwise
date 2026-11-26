@@ -1,9 +1,13 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import type { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openHome } from '../../src/home.ts';
-import { appendDailyNote, readNotes, writeAgentNote } from '../../src/notes.ts';
+import { appendDailyNote, newNote, type NoteWrite, readNotes, rewriteNoteFile, writeAgentNote } from '../../src/notes.ts';
+import { resolveReview } from '../../src/organiser/corrections.ts';
+import { currentMark, finishRun, startRun, undoRun } from '../../src/organiser/runs.ts';
+import { createNote } from '../../src/server/notes.ts';
 import { isBusy, openDb } from '../../src/store/db.ts';
 import { Store } from '../../src/store/store.ts';
 
@@ -12,7 +16,7 @@ import { Store } from '../../src/store/store.ts';
 // read of the folder: between the agent's file write and its save, or between a reader's read and its ingest. The
 // other reader is a second connection to the record with a short busy wait, standing in for another process.
 
-const seam = vi.hoisted(() => ({ hook: null as ((dir: string) => boolean) | null }));
+const seam = vi.hoisted(() => ({ hook: null as ((dir: string) => boolean) | null, worker: null as (() => void) | null }));
 vi.mock('../../src/importers/detect.ts', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/importers/detect.ts')>();
   return {
@@ -24,6 +28,14 @@ vi.mock('../../src/importers/detect.ts', async (importOriginal) => {
         seam.hook = null;
         if (!hook(args[0])) seam.hook = hook;
       }
+      return read;
+    },
+    // The app's read, in a worker: `seam.worker` runs once it has read the folder, before the app files what it read.
+    readImportsInWorker: async (...args: Parameters<typeof real.readImportsInWorker>) => {
+      const read = await real.readImportsInWorker(...args);
+      const hook = seam.worker;
+      seam.worker = null;
+      hook?.();
       return read;
     },
   };
@@ -58,6 +70,7 @@ beforeEach(() => {
 
 afterEach(() => {
   seam.hook = null;
+  seam.worker = null;
   agent.db.close();
   other.db.close();
   rmSync(dir, { recursive: true, force: true });
@@ -117,5 +130,131 @@ describe('a read of the notes folder made before an agent writes', () => {
       ['agent:cursor', first.runId],
       ['agent:cursor', second!.runId],
     ]);
+  });
+});
+
+describe("the app's note import, when an agent saves while the worker reads the folder", () => {
+  it("reads the folder again under the lock, never filing the agent's older text as yours", async () => {
+    const first = writeAgentNote(agent, home, 'cursor', 'Rye plan', 'Try 80% hydration.', new Date(NOW));
+    let second: NoteWrite | null = null;
+    seam.worker = () => {
+      second = writeAgentNote(agent, home, 'cursor', 'Rye plan', 'Try 78% hydration.', new Date(NOW));
+    };
+    await createNote(home, other, 'Garden plan', 'Beds by the fence.', new Date(NOW));
+    expect(second).not.toBeNull();
+    readNotes(agent, home);
+    expect(versions(agent, first.entryId)).toEqual([
+      ['agent:cursor', first.runId],
+      ['agent:cursor', second!.runId],
+    ]);
+  });
+});
+
+/** db, calling `then` once, at its first use after the file at `path` stops holding what it holds now. */
+function onFileChange(db: DatabaseSync, path: string, then: () => void): DatabaseSync {
+  const contents = () => (existsSync(path) ? readFileSync(path, 'utf8') : null);
+  const before = contents();
+  let fired = false;
+  return new Proxy(db, {
+    get(target, key) {
+      const value = Reflect.get(target, key, target) as unknown;
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        if (!fired && contents() !== before) {
+          fired = true;
+          then();
+        }
+        return (value as (...a: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+}
+
+describe("undoing an agent's note run while another process reads the notes folder", () => {
+  const later = () => '2026-11-26T10:00:00.000Z';
+
+  it('holds the reader off from the file written back until the record has it', () => {
+    const first = writeAgentNote(agent, home, 'cursor', 'Rye plan', 'Try 80% hydration.', new Date(NOW));
+    const second = writeAgentNote(agent, home, 'cursor', 'Rye plan', 'Try 78% hydration.', new Date(NOW));
+    let reader: 'done' | 'busy' | null = null;
+    const db = onFileChange(agent.db, first.path, () => (reader = attempt(() => readNotes(other, home))));
+    undoRun(db, second.runId!, home, later);
+    expect(reader).toBe('busy');
+    readNotes(other, home);
+    expect(readFileSync(first.path, 'utf8')).toContain('80%');
+    expect(versions(agent, first.entryId)).toEqual([
+      ['agent:cursor', first.runId],
+      ['agent:cursor', second.runId],
+      ['you', null],
+    ]);
+  });
+
+  it("reads the folder again when the undo came after the reader's read, never filing the undone text as yours", () => {
+    const first = writeAgentNote(agent, home, 'cursor', 'Rye plan', 'Try 80% hydration.', new Date(NOW));
+    const second = writeAgentNote(agent, home, 'cursor', 'Rye plan', 'Try 78% hydration.', new Date(NOW));
+    seam.hook = () => {
+      undoRun(agent.db, second.runId!, home, later);
+      return true;
+    };
+    readNotes(other, home);
+    expect(readFileSync(first.path, 'utf8')).toContain('80%');
+    expect(versions(agent, first.entryId)).toEqual([
+      ['agent:cursor', first.runId],
+      ['agent:cursor', second.runId],
+      ['you', null],
+    ]);
+  });
+
+  it("never brings back a note the undo removed, from a read made before it", () => {
+    const made = writeAgentNote(agent, home, 'cursor', 'Rye plan', 'Try 80% hydration.', new Date(NOW));
+    seam.hook = () => {
+      undoRun(agent.db, made.runId!, home, later);
+      return true;
+    };
+    readNotes(other, home);
+    expect(existsSync(made.path)).toBe(false);
+    expect(agent.db.prepare(`SELECT COUNT(*) AS n FROM entries WHERE external_id = 'rye-plan.md'`).get()).toEqual({ n: 0 });
+  });
+});
+
+describe('accepting a review update while another process reads the notes folder', () => {
+  const later = () => '2026-11-26T10:00:00.000Z';
+  const PROPOSED = '# Bread\n\nRye only from now on.\n';
+
+  /** A finished review run proposing `proposed` for the note. */
+  function reviewItem(entryId: number, proposed: string): { runId: number; itemId: number } {
+    const runId = startRun(agent.db, { task: 'review', engine: 'none', model: null, scope: 'all', mark: currentMark(agent.db), now: NOW });
+    const itemId = Number(
+      agent.db.prepare("INSERT INTO review_items (note_entry, reasons, proposed, run_id) VALUES (?, '[]', ?, ?)").run(entryId, proposed, runId).lastInsertRowid,
+    );
+    finishRun(agent.db, runId, { counts: {}, tokensIn: 0, tokensOut: 0, now: NOW });
+    return { runId, itemId };
+  }
+
+  it('holds the reader off until the update is saved under the review run, so undoing the run puts the note back', () => {
+    const made = newNote(agent, home, 'Bread', new Date(NOW));
+    const { runId, itemId } = reviewItem(made.entryId, PROPOSED);
+    let reader: 'done' | 'busy' | null = null;
+    const resolver = new Store(onFileChange(agent.db, made.path, () => (reader = attempt(() => readNotes(other, home)))), () => NOW);
+    expect(resolveReview(resolver, home, itemId, 'update', true)).toMatchObject({ saved: true, file: made.path });
+    expect(reader).toBe('busy');
+    readNotes(other, home);
+    expect(versions(agent, made.entryId)).toEqual([
+      ['you', null],
+      ['you', runId],
+    ]);
+
+    expect(undoRun(agent.db, runId, home, later).restored).toEqual([made.entryId]);
+    expect(readFileSync(made.path, 'utf8')).not.toContain('Rye only');
+    expect(agent.getEntry(made.entryId)!.body).toBe('# Bread');
+  });
+
+  it("refuses an update over an edit the record hasn't read yet, and keeps that edit filed", () => {
+    const made = newNote(agent, home, 'Bread', new Date(NOW));
+    const { itemId } = reviewItem(made.entryId, PROPOSED);
+    rewriteNoteFile(made.path, '# Bread\n\nSpelt this week.');
+    expect(() => resolveReview(agent, home, itemId, 'update', true)).toThrow(/changed after review run \d+, so its proposal is out of date/);
+    expect(readFileSync(made.path, 'utf8')).toContain('Spelt this week.');
+    expect(agent.getEntry(made.entryId)!.body).toContain('Spelt this week.');
   });
 });

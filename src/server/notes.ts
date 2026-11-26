@@ -8,7 +8,7 @@ import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathInside, readImportsInWorker } from '../importers/detect.ts';
 import { parseFrontMatter } from '../importers/notes.ts';
-import { underFrontMatter, wordNoteFile } from '../notes.ts';
+import { fileNotes, notesMark, underFrontMatter, wordNoteFile } from '../notes.ts';
 import { hashText, type Store, type Version } from '../store/store.ts';
 import { folderInside, readPlain, UnsafeFile, writeNew, writeOver } from './files.ts';
 
@@ -61,10 +61,15 @@ function oneAtATime<T>(home: string, work: () => T | Promise<T>): Promise<T> {
   return run;
 }
 
-/** Imports the notes folder and returns the entry id of one file in it. */
+/**
+ * Imports the notes folder and returns the entry id of one file in it. The folder is read in the worker before the
+ * record's write lock is taken; when an agent's save or an undo came in between, it is read again under the lock
+ * (fileNotes), so the text read before them is never filed as yours.
+ */
 async function importNote(home: string, store: Store, file: string): Promise<number> {
   const dir = notesDir(home);
-  for (const batch of await readImportsInWorker(dir)) store.ingest(batch, { editor: 'you', ownFiles: true });
+  const mark = notesMark(store);
+  fileNotes(store, dir, await readImportsInWorker(dir), mark);
   const externalId = pathInside(dir, file);
   const row = store.db
     .prepare(`SELECT e.id FROM entries e JOIN sources s ON s.id = e.source_id WHERE s.kind = 'notes' AND s.location = ? AND e.external_id = ?`)
