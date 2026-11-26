@@ -32,6 +32,7 @@
     "e2e": "pnpm build && playwright test -c e2e/playwright.config.ts"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.1",
     "@playwright/test": "1.65.0",
     "@types/node": "^26.6.6",
     "@types/three": "0.187.0",
