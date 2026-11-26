@@ -258,7 +258,8 @@ export const MIGRATIONS: readonly string[] = [
     ));
   `,
 
-  // The assistant: tasks and reminders, what you said about open loops, a model's reading of them, and the briefs
-  // (src/pa/schema.ts).
+  // 6. The assistant: tasks and reminders, what you said about open loops, a model's reading of them, and the briefs
+  // (src/pa/schema.ts). It follows t-intake's 4 and 5 once v1/intake is merged; until then it runs fourth here, so
+  // open no real record with this branch.
   PA_MIGRATION,
 ];
