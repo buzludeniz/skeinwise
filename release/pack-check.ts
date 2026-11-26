@@ -13,7 +13,7 @@ export interface PackFile {
 /** No file in the package may reach 1 MB: the web bundle is the largest by far, and weights are gigabytes. */
 export const MAX_FILE_BYTES = 1_000_000;
 
-const SHIPS = /^(dist\/(src|web)\/|package\.json$|README\.md$|LICENSE$)/;
+const SHIPS = /^(dist\/(src|web)\/|package\.json$|README\.md$|LICENSE$|CHANGELOG\.md$|SECURITY\.md$)/;
 const WEIGHTS = /\.(gguf|ggml|safetensors|onnx|pt|pth|ckpt|bin|h5|tflite|mlmodel|npy|npz)$/i;
 const SECRETS = /(^|\/)(\.env(\..*)?|\.npmrc|[^/]*\.(pem|key|p12|pfx)|id_(rsa|ed25519|ecdsa)(\.pub)?|token|credentials[^/]*)$/i;
 const RECORDS = /\.(db|db-wal|db-shm|sqlite3?|jsonl)$/i;
@@ -22,7 +22,7 @@ const RECORDS = /\.(db|db-wal|db-shm|sqlite3?|jsonl)$/i;
 export function packProblems(files: readonly PackFile[], bin: string, platform: string = process.platform): string[] {
   const problems: string[] = [];
   const paths = new Set(files.map((f) => f.path));
-  for (const need of [bin, 'dist/web/index.html', 'package.json', 'README.md', 'LICENSE']) {
+  for (const need of [bin, 'dist/web/index.html', 'package.json', 'README.md', 'LICENSE', 'CHANGELOG.md', 'SECURITY.md']) {
     if (!paths.has(need)) problems.push(`${need} is missing`);
   }
   for (const f of files) {
