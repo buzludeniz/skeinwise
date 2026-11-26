@@ -10,7 +10,7 @@ import { type Existing, type Group, groupName, groupUnits, namingRequest } from 
 import { invalid, isRecord, list, type ModelRequest, noRequest, type Plan, type Product, round, type TaskContext } from './plan.ts';
 import { linkTargets, type RecordView } from './record.ts';
 import { replacedRuns } from './runs.ts';
-import { cosine, tokenize } from './text.ts';
+import { cosine, stem, tokenize } from './text.ts';
 import { definedTags, liveTags, type Schema } from './views.ts';
 
 interface Tagging {
@@ -162,26 +162,26 @@ function planProjects(ctx: TaskContext, schema: Schema): Plan {
   const tags: NewTag[] = [];
   const taggings: Tagging[] = [];
   const seen = new Set<string>();
-  const named: { note: Entry; from: Set<number>; name: string; stems: string[] }[] = [];
+  const named: { note: Entry; from: Set<number>; name: string }[] = [];
   for (const { note, from } of projects) {
     const name = projectName(note);
     if (seen.has(name.toLowerCase())) continue;
     seen.add(name.toLowerCase());
-    named.push({ note, from, name, stems: [...new Set(tokenize(name))] });
+    named.push({ note, from, name });
   }
-  // Each entry is tokenized once, and only the stems of project names are kept: tokenizing every entry again for each
-  // project took most of an hour at 50,000 entries.
-  const holding = entriesHolding(ctx.entries, new Set(named.flatMap((p) => p.stems)));
+  // Each entry is read once, for every name at a time: reading every entry again for each project took most of an hour
+  // at 50,000 entries.
   const position = new Map(ctx.entries.map((e, i) => [e.id, i]));
-  for (const { note, from, name, stems } of named) {
+  const uses = nameUses(record.entries, named.map((p) => p.name), position);
+  named.forEach(({ note, from, name }, k) => {
     tags.push({ name, description: `The note "${name}", linked from ${from.size} entries.` });
     const linked = [note.id, ...from].flatMap((id) => (position.has(id) ? [position.get(id)!] : []));
-    const matched = stems.length ? stems.map((s) => holding.get(s) ?? []).reduce(intersect) : [];
+    const matched = stands(uses[k]!, record.entries.length) ? uses[k]!.inScope : [];
     for (const i of [...new Set([...linked, ...matched])].sort((a, b) => a - b)) {
       const e = ctx.entries[i]!;
       taggings.push({ entryId: e.id, name, score: e.id === note.id || from.has(e.id) ? 1 : 0.8 });
     }
-  }
+  });
   return { requests: [], fallback: noRequest, finish: () => product(ctx, schema, tags, taggings) };
 }
 
@@ -382,30 +382,141 @@ function stemSet(e: Entry): Set<string> {
   return new Set(tokenize(`${e.title ?? ''}\n${e.body}`));
 }
 
-/** For each of these stems, the positions in entries (ascending) of the entries whose title or body holds it. */
-function entriesHolding(entries: Entry[], stems: Set<string>): Map<string, number[]> {
-  const out = new Map<string, number[]>();
-  if (!stems.size) return out;
-  entries.forEach((e, i) => {
-    for (const s of stemSet(e)) {
-      if (!stems.has(s)) continue;
-      const list = out.get(s);
-      if (list) list.push(i);
-      else out.set(s, [i]);
+/**
+ * An entry that names a project without linking to it gets its tag only when the name stands out in the record: rare
+ * (its words, side by side, in at most this share of entries) or written as a name (below).
+ */
+const RARE_SHARE = 0.005;
+/** Written as a name: capitalised as the note's title writes it in at least this share of its uses mid-sentence... */
+const NAME_SHARE = 0.8;
+/** ...and in at least this many of them. */
+const NAME_USES = 3;
+
+/** How a record uses one project's name, its words side by side and in order. */
+export interface NameUses {
+  /** The name holds a word that isn't a stop word: one that doesn't can't name anything. */
+  content: boolean;
+  /** The title capitalises at least one of its words, so a use can be capitalised as the title writes it. */
+  cased: boolean;
+  /**
+   * Entries whose title or body holds the name outside a [[link]]. A link copies the note's title as written, and the
+   * entries that link to the note get its tag anyway, so links don't count toward whether a name stands out.
+   */
+  entries: number;
+  /** Uses outside a link that open no sentence or line, where everything is capitalised. */
+  mid: number;
+  /** Of those, the uses that capitalise every word the title capitalises. */
+  asTitle: number;
+  /** Positions in scope of the entries that hold it, in a link or not, as they were met. */
+  inScope: number[];
+}
+
+/** Whether entries that only name the project, without linking to it, get its tag. */
+function stands(u: NameUses, total: number): boolean {
+  if (!u.content) return false;
+  const rare = u.entries <= RARE_SHARE * total;
+  const asName = u.cased && u.mid >= NAME_USES && u.asTitle >= NAME_SHARE * u.mid;
+  return rare || asName;
+}
+
+interface Word {
+  stem: string;
+  /** Its first letter is a capital. */
+  upper: boolean;
+  /** It opens the text, a line or a sentence. */
+  opens: boolean;
+  /** It is inside a [[link]], which copies the note's title as written. */
+  linked: boolean;
+}
+
+/**
+ * The words of a text as tokenize reads them (apostrophes dropped, one-letter words and numbers left out, stemmed),
+ * stop words kept, so a name's words can be found side by side.
+ */
+function scanWords(text: string): Word[] {
+  const t = text.replace(/['’]/g, '');
+  const links: [number, number][] = [];
+  for (const m of t.matchAll(/\[\[[^\]\n]*\]\]/g)) links.push([m.index, m.index + m[0].length]);
+  const out: Word[] = [];
+  let end = -1;
+  for (const m of t.matchAll(/[\p{L}\p{N}]+/gu)) {
+    const w = m[0];
+    let opens = end < 0;
+    for (let j = Math.max(end, 0); !opens && j < m.index; j++) {
+      const c = t.charCodeAt(j);
+      opens = c === 10 || c === 46 || c === 33 || c === 63; // \n . ! ?
     }
-  });
+    end = m.index + w.length;
+    if (w.length < 2 || /^\d+$/.test(w)) continue;
+    const first = w[0]!;
+    out.push({
+      stem: stem(w.toLowerCase()),
+      upper: first !== first.toLowerCase(),
+      opens,
+      linked: links.some(([a, b]) => m.index >= a && m.index < b),
+    });
+  }
   return out;
 }
 
-/** The numbers in both ascending lists, ascending. */
-function intersect(a: number[], b: number[]): number[] {
-  const out: number[] = [];
-  for (let i = 0, j = 0; i < a.length && j < b.length; ) {
-    if (a[i]! < b[j]!) i++;
-    else if (a[i]! > b[j]!) j++;
-    else (out.push(a[i]!), i++, j++);
-  }
-  return out;
+interface Trie {
+  next: Map<string, Trie>;
+  /** The names that end here. */
+  names: number[];
+}
+
+/**
+ * How the record uses each of these names, read in one pass over every entry's title and body. A name's uses are
+ * counted over the whole record, and the entries that hold it are kept only for positions in scope.
+ */
+export function nameUses(entries: Entry[], names: string[], position: Map<number, number>): NameUses[] {
+  const nameWords = names.map(scanWords);
+  const uses: NameUses[] = names.map((name, k) => ({
+    content: tokenize(name).length > 0,
+    cased: nameWords[k]!.some((w) => w.upper),
+    entries: 0,
+    mid: 0,
+    asTitle: 0,
+    inScope: [],
+  }));
+  const root: Trie = { next: new Map(), names: [] };
+  nameWords.forEach((words, k) => {
+    if (!uses[k]!.content) return;
+    let node = root;
+    for (const w of words) {
+      let child = node.next.get(w.stem);
+      if (!child) node.next.set(w.stem, (child = { next: new Map(), names: [] }));
+      node = child;
+    }
+    node.names.push(k);
+  });
+  const last = new Int32Array(names.length).fill(-1);
+  const counted = new Int32Array(names.length).fill(-1);
+  entries.forEach((e, r) => {
+    for (const text of [e.title ?? '', e.body]) {
+      const words = scanWords(text);
+      for (let i = 0; i < words.length; i++) {
+        let node = root.next.get(words[i]!.stem);
+        for (let n = 1; node; n++) {
+          for (const k of node.names) {
+            const u = uses[k]!;
+            if (last[k] !== r) {
+              last[k] = r;
+              const at = position.get(e.id);
+              if (at !== undefined) u.inScope.push(at);
+            }
+            if (words[i]!.linked) continue;
+            if (counted[k] !== r) (counted[k] = r), u.entries++;
+            if (words[i]!.opens) continue;
+            u.mid++;
+            if (nameWords[k]!.every((t, j) => !t.upper || words[i + j]!.upper)) u.asTitle++;
+          }
+          node = i + n < words.length ? node.next.get(words[i + n]!.stem) : undefined;
+        }
+      }
+    }
+  });
+  return uses;
 }
 
 function hasAll(set: Set<string>, words: string[]): boolean {
