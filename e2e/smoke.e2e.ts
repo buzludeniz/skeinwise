@@ -1,10 +1,11 @@
 // One pass through the app on a demo record: first run, the brain, search, the reader and the main views. Then the
-// screens from the keyboard: focus into a side panel and back, and the rows of tabs. Then the brain's motion, which
-// stops when the system asks for less.
+// screens from the keyboard: focus into a side panel and back, and the rows of tabs. Then an agent's request waiting for
+// a yes in Settings, and the brain's motion, which stops when the system asks for less.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, type Page, test } from '@playwright/test';
+import { fileRequest } from '../src/mcp/requests.ts';
 import { runFolder } from './run.ts';
 
 const token = () => readFileSync(join(runFolder(), 'home', 'token'), 'utf8').trim();
@@ -148,6 +149,34 @@ test("moves along Workbench's tabs with the arrow keys", async ({ page }) => {
   await page.keyboard.press('ArrowRight');
   await expect(tab('Table builder')).toBeFocused();
   await expect(page.getByRole('tabpanel', { name: 'Table builder' })).toBeVisible();
+});
+
+test("waits for a yes before an agent's request changes anything, and shows its words as text", async ({ page }) => {
+  const home = join(runFolder(), 'home');
+  const now = new Date().toISOString();
+  fileRequest(home, { agent: 'test-agent', tool: 'undo_run', target: 9999, what: 'Undo run 9999, made by test-agent' }, now);
+  fileRequest(home, { agent: 'test-agent', tool: 'not_mine', target: 1, what: 'Leave out thread 1, "<b>Plot</b> offers"' }, now);
+
+  await openRecord(page);
+  await page.keyboard.press('ControlOrMeta+,');
+  const card = page.locator('.settings[role="dialog"]').getByRole('region', { name: 'Waiting for your yes' });
+  await expect(card.getByRole('listitem')).toHaveCount(2);
+  // A thread title comes from the record, so it shows as the words it is.
+  await expect(card.getByText('Leave out thread 1, "<b>Plot</b> offers"', { exact: true })).toBeVisible();
+
+  // The run is gone: Confirm says so, the request is dropped either way, and focus moves to the next one.
+  await card.getByRole('button', { name: 'Confirm' }).first().click();
+  await expect(page.locator('.toast-error')).toContainText('There is no run 9999.');
+  await expect(card.getByRole('listitem')).toHaveCount(1);
+  await expect(card.getByRole('button', { name: 'Confirm' })).toBeFocused();
+
+  // Refused: nothing changes, nothing else waits, and focus goes to the card's heading.
+  await page.keyboard.press('Tab');
+  await expect(card.getByRole('button', { name: 'Refuse' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.toast').last()).toContainText('Refused: Leave out thread 1');
+  await expect(card.getByText('Nothing else waits for your yes.')).toBeVisible();
+  await expect(card.getByRole('heading', { name: 'Waiting for your yes' })).toBeFocused();
 });
 
 /** Two pictures of the brain a second apart, once it has settled. The toolbars over it are masked: their blurred
