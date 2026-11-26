@@ -265,7 +265,7 @@ test('every control the brain adds has a name', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
-test("says the brain didn't load, not that WebGL is missing, when its drawing code can't be fetched, and reloads", async ({ page }) => {
+test("says the brain didn't load, not that WebGL is missing, when its drawing code can't be fetched, and how to load it", async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   // As after a rebuild: the page asks for the scene by its old file name, and the server no longer has it.
@@ -277,8 +277,11 @@ test("says the brain didn't load, not that WebGL is missing, when its drawing co
   await expect(page.getByText("This browser can't draw the brain")).toHaveCount(0);
   await expect(page.locator('.brain-host canvas')).toHaveCount(0);
   expect(await axeFails(page, "the brain didn't load")).toEqual([]);
+  // A reload would lose the token, which the page keeps in memory only, so the way back is the address serve printed.
+  await expect(page.getByText('open the address Skeinwise printed when it started')).toBeVisible();
+  await expect(page.getByRole('button', { name: /reload/i })).toHaveCount(0);
   await page.unroute(sceneFile);
-  await page.getByRole('button', { name: 'Reload the page' }).click();
+  await page.goto(`/?seedview=brain#token=${token()}`);
   await expect(page.locator('.brain-host canvas')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("The brain didn't load")).toHaveCount(0);
   expect(errors).toEqual([]);

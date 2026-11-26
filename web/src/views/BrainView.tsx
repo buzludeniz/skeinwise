@@ -2,7 +2,7 @@
 // on a point or its label pins a card for it; double-click opens it.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { Focus, Info, Plus, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-preact';
+import { Focus, Info, Plus, Search, SlidersHorizontal, X } from 'lucide-preact';
 import { clearLight, go, light, message, openEntry, openPanel, saveConfig, setGrouping, setLayout, toast } from '../actions.ts';
 import { api, qs } from '../api.ts';
 import { PartCard } from '../brain/PartCard.tsx';
@@ -113,10 +113,11 @@ export function BrainView() {
       {loadFailed ? (
         <div class="brain-fallback">
           <Empty title="The brain didn't load">
-            <p>Its drawing code couldn't be fetched, most often because Skeinwise was updated after this page opened. Reloading fetches the new version.</p>
-            <Button icon={RefreshCw} onClick={() => location.reload()}>
-              Reload the page
-            </Button>
+            {/* No reload button: the page keeps its token in memory only (api.ts), so a reload can't open the record. */}
+            <p>
+              Its drawing code couldn't be fetched, most often because Skeinwise was updated after this page opened. To load the new version,
+              open the address Skeinwise printed when it started.
+            </p>
           </Empty>
         </div>
       ) : (
