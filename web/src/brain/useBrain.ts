@@ -1,5 +1,6 @@
 // Keeps the one brain scene in step with the app: the record, the grouping, theme, palette, settings, layout and
-// whatever is lit. The Brain view and the Timeline's strip both use it.
+// whatever is lit. The Brain view and the Timeline's strip both use it. The scene and three.js load on first use, in
+// their own chunk, so the rest of the app opens without waiting for them.
 
 import { useEffect, useState } from 'preact/hooks';
 import type { RefObject } from 'preact';
@@ -7,7 +8,7 @@ import { openEntry, openPanel } from '../actions.ts';
 import { useApp } from '../store.ts';
 import { mix, palette, theme } from '../themes.ts';
 import { type BrainModel, buildModel, litValues } from './input.ts';
-import { brainScene, type Hover, type SceneMode } from './scene.ts';
+import type { BrainScene, Hover, SceneMode } from './scene.ts';
 
 let shownData: unknown = null;
 let growNext = false;
@@ -16,6 +17,21 @@ let growNext = false;
 export function growOnNextLoad(): void {
   growNext = true;
   shownData = null;
+}
+
+let loaded: BrainScene | null = null;
+let loading: Promise<BrainScene> | null = null;
+
+/** The one scene, loading it (and three.js) the first time it is asked for. */
+export function loadScene(): Promise<BrainScene> {
+  loading ??= import('./scene.ts').then(
+    (m) => (loaded = m.brainScene()),
+    (error: unknown) => {
+      loading = null;
+      throw error;
+    },
+  );
+  return loading;
 }
 
 let cached: { key: unknown[]; model: BrainModel } | null = null;
@@ -35,7 +51,7 @@ export function useBrainModel(): BrainModel | null {
 }
 
 export function useBrainScene(host: RefObject<HTMLDivElement | null>, mode: SceneMode, spanLit: Set<number> | null = null) {
-  const scene = brainScene();
+  const [scene, setScene] = useState<BrainScene | null>(loaded);
   const model = useBrainModel();
   const brain = useApp((s) => s.brain);
   const layout = useApp((s) => s.layout);
@@ -47,49 +63,64 @@ export function useBrainScene(host: RefObject<HTMLDivElement | null>, mode: Scen
   const [hover, setHover] = useState<Hover | null>(null);
 
   useEffect(() => {
-    if (!host.current) return;
+    if (scene) return;
+    let live = true;
+    loadScene().then(
+      (s) => live && setScene(s),
+      () => live && setOk(false),
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!scene || !host.current) return;
     setOk(scene.attach(host.current, mode));
     return () => scene.detach();
-  }, [mode]);
+  }, [scene, mode]);
 
   useEffect(() => {
+    if (!scene) return;
     const t = theme(themeKey);
     scene.setTheme({ light: t.light, ground: t.ground, shell: mix(t.inkSoft, t.accent, 0.25), ink: t.ink });
-  }, [themeKey]);
+  }, [scene, themeKey]);
 
   useEffect(() => {
-    if (!model || !brain) return;
+    if (!scene || !model || !brain) return;
     if (shownData !== brain) {
       shownData = brain;
       scene.setData(model.input, growNext);
       growNext = false;
     } else scene.setColors(model.input.colors, model.input.points);
-  }, [model]);
+  }, [scene, model]);
 
   useEffect(() => {
-    if (opts) scene.setOptions({ pointSize: opts.pointSize, lineDensity: opts.lineDensity, labels: opts.labels, turning: opts.turning });
-  }, [opts]);
+    if (scene && opts) scene.setOptions({ pointSize: opts.pointSize, lineDensity: opts.lineDensity, labels: opts.labels, turning: opts.turning });
+  }, [scene, opts]);
 
   useEffect(() => {
+    if (!scene) return;
     if (mode === 'full') scene.setLayout(layout);
     else scene.setLayout('brain');
-  }, [layout, mode]);
+  }, [scene, layout, mode]);
 
   useEffect(() => {
-    if (!model) return;
+    if (!scene || !model) return;
     const ids = spanLit ?? lit?.ids ?? null;
     const group = isolate === null ? null : model.legend.findIndex((g) => g.label === isolate);
     scene.setLit(litValues(model, ids, group === null || group < 0 ? null : group));
-  }, [model, lit, isolate, spanLit]);
+  }, [scene, model, lit, isolate, spanLit]);
 
   useEffect(() => {
+    if (!scene) return;
     scene.onHover = setHover;
     scene.onOpen = (i) => {
       const id = model?.input.points[i]?.id;
       // A hub's point carries its hub id negated.
       if (id !== undefined) id < 0 ? openPanel({ kind: 'hub', id: -id }) : openEntry(id);
     };
-  }, [model]);
+  }, [scene, model]);
 
   return { scene, model, ok, hover };
 }

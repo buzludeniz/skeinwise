@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { main } from '../../src/cli.ts';
 import { loadConfig, saveConfig } from '../../src/config.ts';
 import { type Running, startServer } from '../../src/server/serve.ts';
+import { fileRequest } from '../../src/mcp/requests.ts';
 
 let dir: string;
 let home: string;
@@ -55,6 +56,44 @@ beforeAll(async () => {
 afterAll(async () => {
   await app?.close();
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe("the app's confirm step for agent requests (src/mcp/requests.ts)", () => {
+  const now = () => new Date().toISOString();
+
+  it('lists the waiting requests, confirms one as the person and refuses another', async () => {
+    expect((await api('threads/1')).body.thread.notMine).toBe(false);
+    expect((await api('threads/2')).body.thread.notMine).toBe(false);
+    const leave = fileRequest(home, { agent: 'claude-code', tool: 'not_mine', target: 1, what: 'Leave out thread 1' }, now());
+    const other = fileRequest(home, { agent: 'cursor', tool: 'not_mine', target: 2, what: 'Leave out thread 2' }, now());
+    expect((await api('requests')).body).toEqual([
+      expect.objectContaining({ id: leave.id, agent: 'claude-code', tool: 'not_mine', target: 1, what: 'Leave out thread 1' }),
+      expect.objectContaining({ id: other.id, agent: 'cursor', target: 2 }),
+    ]);
+
+    const confirmed = await api(`requests/${leave.id}/confirm`, { body: {} });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.body).toEqual({ request: expect.objectContaining({ id: leave.id }), result: { thread_id: 1, not_mine: true } });
+    expect((await api('threads/1')).body.thread.notMine).toBe(true);
+
+    const refused = await api(`requests/${other.id}/refuse`, { body: {} });
+    expect(refused.body).toEqual({ refused: expect.objectContaining({ id: other.id }) });
+    expect((await api('threads/2')).body.thread.notMine).toBe(false);
+    expect((await api('requests')).body).toEqual([]);
+
+    // Back as it was, for the tests after this one.
+    await api('threads/1/not-mine', { body: { notMine: false } });
+  });
+
+  it('gives 404 for a request that is not waiting, and 409 with the reason for one that can no longer be made', async () => {
+    expect((await api('requests/999/confirm', { body: {} })).status).toBe(404);
+    expect((await api('requests/999/refuse', { body: {} })).body).toEqual({ error: 'No agent request 999 is waiting' });
+    const undo = fileRequest(home, { agent: 'claude-code', tool: 'undo_run', target: 9999, what: 'Undo run 9999' }, now());
+    const res = await api(`requests/${undo.id}/confirm`, { body: {} });
+    expect(res).toEqual({ status: 409, body: { error: 'There is no run 9999.' } });
+    // Dropped either way, as with `skeinwise mcp confirm`.
+    expect((await api('requests')).body).toEqual([]);
+  });
 });
 
 describe('the API guards', () => {

@@ -5,17 +5,17 @@ import type { ColourGrouping } from './groups.ts';
 import type { Layout } from './layout.ts';
 import type { BrainData, Config, OrganiseJob, OrganiserState, Status } from './types.ts';
 
-export type View = 'brain' | 'navigator' | 'numbers' | 'timeline' | 'you' | 'lab';
+export type View = 'brain' | 'threads' | 'stats' | 'timeline' | 'profile' | 'workbench';
 /** What the rail and keys 1 to 8 open: a view, or a panel over the current one. */
-export type Target = View | 'learn' | 'add';
-/** The Navigator's first column. */
+export type Target = View | 'guide' | 'add';
+/** The Threads view's first column. */
 export type NavSection = { kind: 'inbox' | 'review' | 'runs' | 'hubs' | 'folders' } | { kind: 'folder' | 'source'; key: string };
 
 /** What the right-hand panel shows. */
 export type Panel =
   | { kind: 'entry'; id: number }
   | { kind: 'thread'; id: number; focus?: number }
-  | { kind: 'learn' }
+  | { kind: 'guide' }
   | { kind: 'add'; guide?: 'chatgpt' | 'claude' | 'gemini' }
   | { kind: 'hub'; id: number }
   | null;
@@ -49,8 +49,8 @@ export interface AppState {
   view: View;
   panel: Panel;
   nav: NavSection;
-  /** Lab's tab. */
-  labTab: 'table' | 'tides';
+  /** The Workbench's tab. */
+  workbenchTab: 'table' | 'activity';
   /** The notes editor, over everything but the rail. */
   editor: { id: number | null; title: string } | null;
   command: { open: boolean; text: string };
@@ -82,7 +82,7 @@ export const initialState: AppState = {
   view: 'brain',
   panel: null,
   nav: { kind: 'inbox' },
-  labTab: 'table',
+  workbenchTab: 'table',
   editor: null,
   command: { open: false, text: '' },
   menuOpen: false,
