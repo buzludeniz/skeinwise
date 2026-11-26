@@ -582,10 +582,11 @@ export class Store {
   /**
    * A note whose text is its newest version's but whose front matter changed. A version's hash covers only the text, so
    * this edit used to be lost: the note kept its old properties. It becomes a new version with the same text and the
-   * new properties (and title), so history keeps it and a run over new versions sees it. Not when the newest version
-   * has no properties at all: a record from before notes kept their front matter holds null in every version, and a
-   * new version for each note would come at its next capture, so those are filled in place. Text that an older
-   * version holds is an older export and changes nothing. Returns true when it wrote a version.
+   * new properties (and title), so history keeps it and a run over new versions sees it. Not when no version has
+   * properties at all: a record from before notes kept their front matter holds null in every version, and a new
+   * version for each note would come at its next capture, so the newest is filled in place. A null after properties is
+   * front matter taken away, a version of its own, and filling it in place would take the removal out of history. Text
+   * that an older version holds is an older export and changes nothing. Returns true when it wrote a version.
    */
   private frontMatterEdit(entryId: number, body: string, hash: string, input: EntryInput, context: WriteContext, observed: string): boolean {
     const latest = this
@@ -597,7 +598,7 @@ export class Store {
     if (!latest || latest.hash !== hash) return false;
     const properties = input.properties ? JSON.stringify(input.properties) : null;
     if (properties === latest.properties) return false;
-    if (latest.properties === null) {
+    if (latest.properties === null && !this.stmt('SELECT 1 FROM versions WHERE entry_id = ? AND properties IS NOT NULL').get(entryId)) {
       this.stmt('UPDATE versions SET properties = ? WHERE id = ?').run(properties, latest.id);
       return false;
     }
@@ -610,12 +611,24 @@ export class Store {
     return true;
   }
 
-  /** Saves an edit as a new version. The original stays in history. */
+  /**
+   * Saves an edit as a new version. The original stays in history. An edit changes the text only, so the note's
+   * properties carry over: its file keeps its front matter when the text is written (rewriteNoteFile).
+   */
   editEntry(entryId: number, body: string, options: string | EditOptions = {}): Version {
     const opts = typeof options === 'string' ? { editor: options } : options;
-    return inTransaction(this.db, () =>
-      this.writeVersion(entryId, normalizeText(body), { editor: opts.editor ?? 'you', runId: opts.runId ?? null, origin: null, account: null }),
-    );
+    return inTransaction(this.db, () => {
+      const current = this
+        .stmt('SELECT v.properties FROM entries e JOIN versions v ON v.entry_id = e.id AND v.version = e.version WHERE e.id = ?')
+        .get(entryId) as { properties: string | null } | undefined;
+      const properties = current?.properties ? (JSON.parse(current.properties) as Record<string, unknown>) : null;
+      return this.writeVersion(
+        entryId,
+        normalizeText(body),
+        { editor: opts.editor ?? 'you', runId: opts.runId ?? null, origin: null, account: null },
+        { properties },
+      );
+    });
   }
 
   /**
