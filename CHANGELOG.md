@@ -16,7 +16,8 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
   other MCP clients:
   - seven read tools, plus five write tools for an agent you give write scope;
   - each agent has its own token and starts with read scope;
-  - `skeinwise mcp lock` stops every agent at once;
+  - `skeinwise mcp lock`, or Lock in the app, stops every agent at once and covers the app's window (one lock for
+    both, kept across restarts);
   - `skeinwise mcp log` shows every call;
   - the tools that change what is yours (`not_mine`, `undo_run`) wait for your yes.
 - **`skeinwise connect`, `setup` and `doctor`.** Connect an agent with one command, find the histories on this
