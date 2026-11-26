@@ -77,7 +77,12 @@ export function isBusy(error: unknown): boolean {
  */
 export function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
   const open = opened.get(db);
-  if (open && db.isTransaction) return joinTransaction(open, fn);
+  if (open) {
+    // SQLite ended the transaction itself (disk full, an I/O error) under a statement the outer fn caught and went on
+    // from. A new transaction here would commit on its own and then drop the outer one's tracking.
+    if (!db.isTransaction) throw new Error('The record\'s write transaction was rolled back by an earlier error, so nothing more is written.');
+    return joinTransaction(db, open, fn);
+  }
   try {
     return runTransaction(db, fn);
   } catch (error) {
@@ -86,9 +91,8 @@ export function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
   }
 }
 
-/** The transaction inTransaction opened on a connection: how many calls deep it is, and an inner call's failure. */
+/** The transaction inTransaction opened on a connection, and an inner call's failure. */
 interface OpenTransaction {
-  depth: number;
   failed?: unknown;
 }
 
@@ -96,7 +100,7 @@ const opened = new WeakMap<DatabaseSync, OpenTransaction>();
 
 function runTransaction<T>(db: DatabaseSync, fn: () => T): T {
   db.exec('BEGIN IMMEDIATE');
-  const open: OpenTransaction = { depth: 1 };
+  const open: OpenTransaction = {};
   opened.set(db, open);
   try {
     const result = fn();
@@ -113,14 +117,14 @@ function runTransaction<T>(db: DatabaseSync, fn: () => T): T {
   }
 }
 
-function joinTransaction<T>(open: OpenTransaction, fn: () => T): T {
-  open.depth++;
+function joinTransaction<T>(db: DatabaseSync, open: OpenTransaction, fn: () => T): T {
   try {
     return fn();
   } catch (err) {
     open.failed ??= err;
+    // SQLite rolls a transaction back itself on some errors (disk full, an I/O error). Begin another, so what the outer
+    // fn writes after catching this is held and rolled back at its end (open.failed), not committed a statement at a time.
+    if (!db.isTransaction) db.exec('BEGIN');
     throw err;
-  } finally {
-    open.depth--;
   }
 }
