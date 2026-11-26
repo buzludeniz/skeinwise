@@ -37,7 +37,7 @@ describe('the brain layout', () => {
     expect(brainOutline()).toEqual(brainOutline());
   });
 
-  it('puts notes in the lobes, clear of the gap between them, and originals on the stem and spine', () => {
+  it('puts notes in the lobes, clear of the gap between them, and originals on the stem', () => {
     const pts = record(800);
     const pos = brainLayout(pts);
     pts.forEach((p, i) => {
@@ -84,7 +84,7 @@ describe('the brain layout', () => {
   });
 });
 
-describe('year rings and clusters', () => {
+describe('the activity and clusters layouts', () => {
   it('puts later years further out', () => {
     const pts = record(300);
     const pos = ringsLayout(pts);

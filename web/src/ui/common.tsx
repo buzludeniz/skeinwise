@@ -4,30 +4,18 @@ import type { ButtonHTMLAttributes, ComponentChildren } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import type { LucideIcon } from 'lucide-preact';
 import { X } from 'lucide-preact';
+import markDark from '../../../docs/brand/logo-mark-dark.svg';
+import markLight from '../../../docs/brand/logo-mark.svg';
+import { useApp } from '../store.ts';
+import { theme } from '../themes.ts';
 
-/** Our mark: a wound skein whose loose end runs off as a thread. */
+/**
+ * The mark from docs/brand, used as it is: the light file on light themes and the dark one on dark themes, as the
+ * folder's README asks. Without a title it is decoration, and the control around it carries the name.
+ */
 export function Logo({ size = 28, title }: { size?: number; title?: string }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 32 32"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.7"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      role={title ? 'img' : undefined}
-      aria-label={title}
-      aria-hidden={title ? undefined : 'true'}
-    >
-      <circle cx="14" cy="14" r="10" />
-      <path d="M6.2 8.4c4.6 1.4 10.4 6.6 12.6 14.2" />
-      <path d="M10.4 4.8c3.4 3 7.6 9.4 8.6 17.6" opacity="0.7" />
-      <path d="M4.2 14.6c5-.6 12.4 2.2 17.4 6.8" />
-      <path d="M21.6 21.4c1.2 2.4 2.6 5.6 5.4 5.6 1.4 0 2.2-.8 2.4-2" />
-    </svg>
-  );
+  const light = useApp((s) => theme(s.config?.appearance.theme ?? 'dusk').light);
+  return <img class="logo" src={light ? markLight : markDark} width={size} height={size} alt={title ?? ''} draggable={false} />;
 }
 
 type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'icon'> & {

@@ -16,14 +16,14 @@ import { AddPanel } from './views/Add.tsx';
 import { BrainView } from './views/BrainView.tsx';
 import { Editor } from './views/Editor.tsx';
 import { FirstRun } from './views/FirstRun.tsx';
+import { GuidePanel } from './views/Guide.tsx';
 import { HubPanel } from './views/Hub.tsx';
-import { Lab } from './views/Lab.tsx';
-import { LearnPanel } from './views/Learn.tsx';
-import { Navigator } from './views/Navigator.tsx';
-import { NumbersView } from './views/Numbers.tsx';
+import { ProfileView } from './views/Profile.tsx';
 import { ReaderPanel } from './views/Reader.tsx';
+import { StatsView } from './views/Stats.tsx';
+import { Threads } from './views/Threads.tsx';
 import { TimelineView } from './views/Timeline.tsx';
-import { YouView } from './views/You.tsx';
+import { Workbench } from './views/Workbench.tsx';
 
 function useThemeVars() {
   const key = useApp((s) => s.config?.appearance.theme ?? 'dusk');
@@ -78,16 +78,16 @@ function useShortcuts() {
 function MainView() {
   const view = useApp((s) => s.view);
   switch (view) {
-    case 'navigator':
-      return <Navigator />;
-    case 'numbers':
-      return <NumbersView />;
+    case 'threads':
+      return <Threads />;
+    case 'stats':
+      return <StatsView />;
     case 'timeline':
       return <TimelineView />;
-    case 'you':
-      return <YouView />;
-    case 'lab':
-      return <Lab />;
+    case 'profile':
+      return <ProfileView />;
+    case 'workbench':
+      return <Workbench />;
     default:
       return <BrainView />;
   }
@@ -98,15 +98,15 @@ function PanelHost() {
   const view = useApp((s) => s.view);
   if (!panel) return null;
   switch (panel.kind) {
-    case 'learn':
-      return <LearnPanel />;
+    case 'guide':
+      return <GuidePanel />;
     case 'add':
       return <AddPanel guide={panel.guide} />;
     case 'hub':
       return <HubPanel id={panel.id} />;
     default:
-      // The Navigator shows the reader in its own third column.
-      return view === 'navigator' ? null : <ReaderPanel panel={panel} onClose={closePanel} />;
+      // The Threads view shows the reader in its own third column.
+      return view === 'threads' ? null : <ReaderPanel panel={panel} onClose={closePanel} />;
   }
 }
 

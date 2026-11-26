@@ -1,5 +1,6 @@
 // The API's shapes, taken straight from the server's modules so the two can't drift.
-export type { Brief, BrainData, BrainPoint, EntryDetail, Numbers, YouLine } from '../../src/server/queries.ts';
+// The server still calls the Stats figures `Numbers` and a Profile line `YouLine`; the page uses its own names.
+export type { Brief, BrainData, BrainPoint, EntryDetail, Numbers as Stats, YouLine as ProfileLine } from '../../src/server/queries.ts';
 export type { EntryLines, EntryOrganised, HubDetail, LineCounts, OrganiseJob, OrganiserState } from '../../src/server/organiser.ts';
 export type { AskHit, AskKind, AskResult } from '../../src/organiser/ask.ts';
 export type { Folder, Hub, HubItem, HubSections, Layer, LayerName, Reason, ReviewItem } from '../../src/organiser/views.ts';
@@ -17,7 +18,7 @@ export interface Status {
   entries: number;
   lastSaved: string | null;
   organiser: boolean;
-  /** Record live: whether the stream runs, and its two status lines. */
+  /** Live capture: whether the stream runs, and its two status lines. */
   live: LiveState;
 }
 

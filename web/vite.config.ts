@@ -11,7 +11,20 @@ export default defineConfig({
     outDir: fileURLToPath(new URL('../dist/web', import.meta.url)),
     emptyOutDir: true,
     target: 'es2022',
-    chunkSizeWarningLimit: 900,
+    rolldownOptions: {
+      output: {
+        // three.js comes as two files, its core and its renderer. Each gets its own chunk, so neither passes Vite's
+        // size warning; the scene imports both, and all three load together the first time the brain is drawn.
+        codeSplitting: {
+          groups: [
+            {
+              test: /node_modules[\\/]three[\\/]/,
+              name: (id) => (/three\.core\.js$/.test(id) ? 'three-core' : 'three-renderer'),
+            },
+          ],
+        },
+      },
+    },
   },
   server: {
     port: 5319,
