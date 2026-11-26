@@ -191,6 +191,28 @@ describe('openDb', () => {
     });
   }
 
+  // A source is added once and live keeps adding to it for months, so an old record's entries were seen up to the
+  // upgrade, not on the day their source was added: only a time past the upgrade itself is in the future.
+  it('keeps the date of an entry captured long after its source was added', () => {
+    const db = new DatabaseSync(':memory:');
+    for (const m of MIGRATIONS.slice(0, 4)) db.exec(m);
+    db.exec('PRAGMA user_version = 4');
+    db.exec(`
+      INSERT INTO sources (id, kind, label, location, added_at) VALUES (1, 'claude-code', 'Claude Code', '/p', '2026-05-01T00:00:00.000Z');
+      INSERT INTO entries (id, source_id, external_id, kind, speaker, created_at) VALUES
+        (1, 1, 's1', 'message', 'you', '2026-09-01T10:00:00.000Z'),
+        (2, 1, 's2', 'message', 'you', '2030-01-01T00:00:00.000Z');
+      INSERT INTO versions (entry_id, version, body, content_hash, editor, edited_at) VALUES
+        (1, 1, 'later', 'h1', 'import', '2026-09-01T10:00:00.000Z'),
+        (2, 1, 'planted', 'h2', 'import', '2030-01-01T00:00:00.000Z');
+    `);
+    migrate(db);
+    expect(db.prepare('SELECT id, created_at, claimed_at, time_flag FROM entries ORDER BY id').all()).toEqual([
+      { id: 1, created_at: '2026-09-01T10:00:00.000Z', claimed_at: '2026-09-01T10:00:00.000Z', time_flag: null },
+      { id: 2, created_at: '2026-05-01T00:00:00.000Z', claimed_at: '2030-01-01T00:00:00.000Z', time_flag: 'future' },
+    ]);
+  });
+
   it('refuses a migration that would leave a broken reference, and changes nothing', () => {
     const db = new DatabaseSync(':memory:');
     db.exec(MIGRATIONS[0]!);

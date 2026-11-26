@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync, strToU8, zipSync } from 'fflate';
@@ -186,6 +186,15 @@ describe('openZipSafe', () => {
     const zip2 = openZipSafe(short);
     expect(refused(() => zip2.read(zip2.entries[0]!)).message).toContain('unpacked to 2 bytes, not the 50');
     zip2.close();
+  });
+
+  it('stops, instead of spinning, when the zip is cut short after it was opened', () => {
+    const body = deflateSync(new Uint8Array(256 * 1024).map((_, i) => (i * 7919) % 251));
+    const path = write('cut.zip', buildZip([{ name: 'conversations.json', data: body, size: 256 * 1024 }]));
+    const zip = openZipSafe(path);
+    truncateSync(path, 40);
+    expect(refused(() => zip.read(zip.entries[0]!)).message).toContain('cut short');
+    zip.close();
   });
 
   it('reads zip64 entries whose sizes are honest', () => {
