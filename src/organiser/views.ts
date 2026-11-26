@@ -158,8 +158,9 @@ export function liveTags(db: DatabaseSync, schemaId: number): TagView[] {
        ORDER BY et.entry_id`,
     )
     .all(schemaId) as { id: number; name: string; entryId: number }[];
-  // Repeats are found in Sets kept beside the arrays: scanning the arrays made a tag of n entries cost n² (468 ms of a
-  // Topics run at 50,000 entries). The arrays keep the order rows first give them.
+  // Repeats are found in Sets kept beside the arrays, so a tag of n entries takes n checks, not n². On the 50,000-entry
+  // record the rows come in entry order and scanning the arrays was cheap, so this bounds the worst case rather than
+  // saving time there. The arrays keep the order rows first give them.
   const byName = new Map<string, { tag: TagView; ids: Set<number>; entryIds: Set<number> }>();
   for (const r of rows) {
     const key = r.name.toLowerCase();

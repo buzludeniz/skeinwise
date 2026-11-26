@@ -1,7 +1,6 @@
 // liveTags merges a schema's tag rows by name and each tag's entries, dropping repeats. It used to find a repeat by
-// scanning the arrays it was building, which is quadratic in a tag's size: 468 ms of a 1.8 s Topics run over a hundred
-// new entries at 50,000 entries. The checks now use Sets beside the arrays, and the output must not move: these pins
-// are what the build before the change (f15e013) gives.
+// scanning the arrays it was building, quadratic in a tag's size at worst; the checks now use Sets beside the arrays.
+// The output must not move: these pins are what the build before the change (f15e013) gives.
 import { createHash } from 'node:crypto';
 import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
