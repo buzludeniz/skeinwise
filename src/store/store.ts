@@ -1,5 +1,6 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
+import { UsageError } from '../errors.ts';
 import { inTransaction } from './db.ts';
 
 export type EntryKind = 'message' | 'note' | 'file';
@@ -188,6 +189,28 @@ export interface SearchOptions {
    * working folder's path, so its subfolders too; a full path matches that folder and what is under it.
    */
   project?: string;
+}
+
+export interface ProjectFilter {
+  sql: string;
+  param: string;
+}
+
+/**
+ * The condition that keeps a search to agent sessions run in one project folder. Whole folder names only, compared as
+ * text: "plot" doesn't match "plotline", and % or _ mean nothing here. \ and / both separate folders, on both sides, so
+ * a Windows folder (C:\Users\…) matches by name or in full. On Windows the match ignores case, as its folders do: A to Z
+ * only, since SQLite's lower() folds no other letters, and both sides must fold alike.
+ */
+export function projectFilter(project: string, platform: NodeJS.Platform = process.platform): ProjectFilter {
+  const fold = platform === 'win32';
+  let name = project.trim().replaceAll('\\', '/').replace(/\/+$/, '');
+  if (!name) throw new UsageError('Give a project: a folder name or a path.');
+  if (fold) name = name.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  const slashed = "replace(e.project, char(92), '/')";
+  const folder = fold ? `lower(${slashed})` : slashed;
+  if (name.startsWith('/') || /^[A-Za-z]:\//.test(name)) return { sql: `instr(${folder} || '/', ?) = 1`, param: `${name}/` };
+  return { sql: `instr('/' || ${folder} || '/', ?) > 0`, param: `/${name}/` };
 }
 
 export interface TimelineOptions {
@@ -952,22 +975,24 @@ export class Store {
   }
 
   search(query: string, options: SearchOptions = {}): SearchHit[] {
+    // A blank project is refused even when the words would find nothing.
+    const project = options.project === undefined ? null : projectFilter(options.project);
     const strict = toMatchQuery(query, 'all');
     if (!strict) return [];
     // Entries holding every word come first; entries holding some of them fill the rest of the page.
     const limit = options.limit ?? 20;
-    const hits = this.runSearch(strict, { ...options, limit });
+    const hits = this.runSearch(strict, { ...options, limit }, project);
     const loose = toMatchQuery(query, 'any');
     if (options.strict || hits.length >= limit || !loose || loose === strict) return hits;
     const seen = new Set(hits.map((h) => h.id));
-    for (const hit of this.runSearch(loose, { ...options, limit: limit + hits.length })) {
+    for (const hit of this.runSearch(loose, { ...options, limit: limit + hits.length }, project)) {
       if (hits.length >= limit) break;
       if (!seen.has(hit.id)) hits.push(hit);
     }
     return hits;
   }
 
-  private runSearch(match: string, options: SearchOptions): SearchHit[] {
+  private runSearch(match: string, options: SearchOptions, project: ProjectFilter | null): SearchHit[] {
     const where = ['entry_search MATCH ?', VISIBLE];
     const params: (string | number)[] = [match];
     if (options.speaker) {
@@ -986,19 +1011,9 @@ export class Store {
       where.push('e.created_at <= ?');
       params.push(options.to);
     }
-    if (options.project !== undefined) {
-      // Whole folder names only, compared as text: "plot" doesn't match "plotline", and % or _ mean nothing here.
-      // \ and / both separate folders, on both sides, so a Windows folder (C:\Users\…) matches by name or in full.
-      const name = options.project.trim().replaceAll('\\', '/').replace(/\/+$/, '');
-      if (!name) throw new Error('Give a project: a folder name or a path.');
-      const folder = "replace(e.project, char(92), '/')";
-      if (name.startsWith('/') || /^[A-Za-z]:\//.test(name)) {
-        where.push(`instr(${folder} || '/', ?) = 1`);
-        params.push(`${name}/`);
-      } else {
-        where.push(`instr('/' || ${folder} || '/', ?) > 0`);
-        params.push(`/${name}/`);
-      }
+    if (project) {
+      where.push(project.sql);
+      params.push(project.param);
     }
     params.push(options.limit ?? 20);
     // bm25 is negative (lower is better); scaling it up for your own words ranks them first.

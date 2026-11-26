@@ -27,6 +27,11 @@ export interface Product {
 
 export interface Plan {
   requests: ModelRequest[];
+  /**
+   * The No-AI answer to request i, in the shape its check returns (or the marker finish reads as "no answer"). The
+   * runner uses it when the model's answer is still unusable after one repair, so one bad batch doesn't fail the run.
+   */
+  fallback: (i: number) => unknown;
   /** Gets one checked answer per request, in order. */
   finish: (answers: unknown[]) => Product;
 }
@@ -47,7 +52,12 @@ export interface TaskContext {
 
 /** A plan with no model requests. */
 export function direct(product: () => Product): Plan {
-  return { requests: [], finish: () => product() };
+  return { requests: [], fallback: noRequest, finish: () => product() };
+}
+
+/** The fallback of a plan that sends nothing: there is no request to stand in for. */
+export function noRequest(i: number): never {
+  throw new Error(`This task sends the model no requests, so there is no request ${i + 1} to do without it.`);
 }
 
 export function round(x: number): number {

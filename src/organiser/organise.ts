@@ -1,15 +1,18 @@
 // The runner. A task plans everything first (the model requests it needs, if any); the runner then shows the plan
 // (--preview), checks its size and the monthly budget, checks the model server answers, makes the calls one by one,
-// and saves what the task made in one transaction with the run's "done" status. Any failure marks the run failed and
-// saves nothing.
+// and saves what the task made in one transaction with the run's "done" status. A request whose answer is still
+// unusable after one repair (a BadAnswerError) is done without the model, and the run says which; any other failure
+// marks the run failed and saves nothing.
 
 import { UsageError } from '../errors.ts';
+import { safeLine } from '../safe-text.ts';
 import { inTransaction } from '../store/db.ts';
 import type { Store } from '../store/store.ts';
 import { planFolders } from './folders.ts';
 import { planHubs } from './hubs.ts';
 import { planLayers } from './layers.ts';
 import { planLinks } from './links.ts';
+import { BadAnswerError } from './model.ts';
 import { AnswerError, type ModelClient, modelLabel, type Plan, type TaskContext } from './plan.ts';
 import type { RecordView } from './record.ts';
 import { planReview } from './review.ts';
@@ -168,6 +171,7 @@ export async function runTask(store: Store, record: RecordView, options: RunOpti
   let tokensOut = 0;
   try {
     const answers: unknown[] = [];
+    const unanswered: string[] = [];
     for (const [i, request] of plan.requests.entries()) {
       options.progress(`${label}: ${request.purpose} (${i + 1}/${plan.requests.length})`);
       const reply = await client!.send(request).catch((err: unknown) => {
@@ -175,19 +179,28 @@ export async function runTask(store: Store, record: RecordView, options: RunOpti
           tokensIn += err.tokensIn;
           tokensOut += err.tokensOut;
         }
+        // Still unusable after one repair: this request is done without the model, and the run goes on.
+        if (err instanceof BadAnswerError) return err;
         throw err;
       });
-      tokensIn += reply.tokensIn;
-      tokensOut += reply.tokensOut;
+      if (!(reply instanceof BadAnswerError)) {
+        tokensIn += reply.tokensIn;
+        tokensOut += reply.tokensOut;
+      }
       if (client!.engine === 'remote') checkBudget(store, options.budget, 0, label, tokensIn + tokensOut);
-      answers.push(request.check(reply.answer));
+      if (reply instanceof BadAnswerError) {
+        options.progress(`${label}: ${request.purpose} is done without the model, as its answer was still unusable after one repair: ${safeLine(reply.message)}`);
+        unanswered.push(request.purpose);
+        answers.push(plan.fallback(i));
+      } else answers.push(request.check(reply.answer));
     }
     const product = plan.finish(answers);
+    const message = [product.message, unansweredNote(unanswered)].filter(Boolean).join(' ');
     inTransaction(store.db, () => {
       product.save(store.db, runId);
       finishRun(store.db, runId, {
-        counts: product.counts,
-        ...(product.message ? { message: product.message } : {}),
+        counts: unanswered.length ? { ...product.counts, unanswered: unanswered.length } : product.counts,
+        ...(message ? { message } : {}),
         tokensIn,
         tokensOut,
         now: store.now(),
@@ -198,6 +211,15 @@ export async function runTask(store: Store, record: RecordView, options: RunOpti
     throw err;
   }
   return getRun(store.db, runId)!;
+}
+
+/** What a run says about the requests it did without the model, or '' when there were none. */
+function unansweredNote(purposes: string[]): string {
+  if (!purposes.length) return '';
+  const shown = purposes.length > 3 ? `${purposes.slice(0, 3).join(', ')} and ${purposes.length - 3} more` : purposes.join(', ');
+  return purposes.length === 1
+    ? `The model's answer for ${shown} was still unusable after one repair, so that part was done without the model.`
+    : `The model's answers for ${purposes.length} requests (${shown}) were still unusable after one repair, so those parts were done without the model.`;
 }
 
 /** Refuses when an outside model's tokens this month, plus what this run needs or has used, pass the budget. */

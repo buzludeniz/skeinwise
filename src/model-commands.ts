@@ -14,6 +14,7 @@ import {
   createReadStream,
   createWriteStream,
   existsSync,
+  lstatSync,
   mkdirSync,
   renameSync,
   rmSync,
@@ -349,10 +350,19 @@ export function serveCommand(model: string, localUrl: string, keyFile: string, b
 export function ensureServerKey(home: string): string {
   const file = serverKeyPath(home);
   mkdirSync(dirname(file), { recursive: true });
-  try {
-    writeFileSync(file, `${randomBytes(32).toString('base64url')}\n`, { mode: 0o600, flag: 'wx' });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  // On Windows (no O_NOFOLLOW), O_EXCL follows a dangling link and writes the key at its target, outside the record
+  // folder. There, anything at the name, a link included, counts as taken before the open (as in 1e8e9a8).
+  if (constants.O_NOFOLLOW || !lstatSync(file, { throwIfNoEntry: false })) {
+    try {
+      writeFileSync(file, `${randomBytes(32).toString('base64url')}\n`, { mode: 0o600, flag: 'wx' });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+  }
+  // A link would hand chmod and llama-server a file somewhere else, which may hold a key someone else knows.
+  const found = lstatSync(file);
+  if (!found.isFile()) {
+    throw new UsageError(`${file} is ${found.isSymbolicLink() ? 'a link' : 'not a file'}, so Skeinwise won't use it as the model server's key. Move it away and run this again.`);
   }
   chmodSync(file, 0o600);
   return file;

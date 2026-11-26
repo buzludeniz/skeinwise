@@ -112,24 +112,25 @@ describe('organising with a model', () => {
     expect(server.chats()[0]!.headers.authorization).toBeUndefined();
   });
 
-  it('fails the run and saves nothing when an answer is not JSON, or does not fit', async () => {
+  it('makes a hub without the model when its answer is not JSON, or does not fit, after one repair', async () => {
     const prose = fakeServer(() => 'Sure! The subject is rye baking.');
     const client = createModel(config(), 'local', { fetch: prose.fetch, env: {} });
-    await expect(runTask(store, new RecordView(store), options('hub', client))).rejects.toThrow(/answer for hub 1 of 2 is not JSON: Sure!/);
-    // Asked once more with what was wrong, then failed: both answers' tokens count.
-    expect(prose.chats()).toHaveLength(2);
-    let run = listRuns(store.db)[0]!;
-    expect(run).toMatchObject({ status: 'failed', tokensIn: 200, tokensOut: 40 });
-    expect(run.message).toMatch(/not JSON/);
-    expect(liveHubs(store.db)).toHaveLength(0);
+    const progress: string[] = [];
+    const run = await runTask(store, new RecordView(store), options('hub', client, { progress: (l) => progress.push(l) }));
+    // Each hub was asked once more with what was wrong, then made without the model: every answer's tokens count.
+    expect(prose.chats()).toHaveLength(4);
+    expect(run).toMatchObject({ status: 'done', tokensIn: 400, tokensOut: 80, counts: { hubs: 2, unanswered: 2 } });
+    expect(run.message).toMatch(/answers for 2 requests \(hub 1 of 2, hub 2 of 2\) were still unusable after one repair/);
+    expect(progress.join('\n')).toMatch(/answer for hub 1 of 2 is not JSON: Sure!/);
+    const made = liveHubs(store.db).map((h) => ({ name: h.name, sections: h.sections }));
+    // They are the No-AI hubs.
+    await runTask(store, new RecordView(store), options('hub', undefined));
+    expect(liveHubs(store.db).map((h) => ({ name: h.name, sections: h.sections }))).toEqual(made);
 
     const unshown = fakeServer((u) => hubAnswer(u).replace('"S2"]', '"S99"]'));
-    await expect(runTask(store, new RecordView(store), options('hub', createModel(config(), 'local', { fetch: unshown.fetch, env: {} })))).rejects.toThrow(
-      /cites "S99", which it wasn't shown/,
-    );
-    run = listRuns(store.db)[0]!;
-    expect(run.status).toBe('failed');
-    expect(liveHubs(store.db)).toHaveLength(0);
+    const cited = await runTask(store, new RecordView(store), options('hub', createModel(config(), 'local', { fetch: unshown.fetch, env: {} })));
+    expect(cited).toMatchObject({ status: 'done', counts: { unanswered: 2 } });
+    expect(liveHubs(store.db).map((h) => ({ name: h.name, sections: h.sections }))).toEqual(made);
   });
 
   it('asks once more after a bad answer, with the answer and what was wrong, and uses the second', async () => {
@@ -469,9 +470,10 @@ describe('organising with a model', () => {
           usage: { prompt_tokens: 10, completion_tokens: 5 },
         })) as typeof globalThis.fetch;
       const client = createModel(remote(), 'remote', { fetch: echo, env });
-      const err = (await runTask(store, new RecordView(store), options('hub', client)).catch((e: unknown) => e)) as Error;
-      expect(err.message).toMatch(/is not JSON/);
-      for (const text of [err.message, listRuns(store.db)[0]!.message ?? '']) {
+      const progress: string[] = [];
+      const run = await runTask(store, new RecordView(store), options('hub', client, { progress: (l) => progress.push(l) }));
+      expect(progress.join('\n')).toMatch(/is not JSON/);
+      for (const text of [...progress, run.message ?? '']) {
         expect(text).not.toContain(KEY);
         expect(text).not.toContain('ghp_');
       }
