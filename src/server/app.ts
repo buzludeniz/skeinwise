@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSyn
 import { extname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { UsageError } from '../errors.ts';
-import { readImports } from '../importers/detect.ts';
+import { readImportsInWorker } from '../importers/detect.ts';
 import { deleteHub, mergeFolders, REVIEW_ACTIONS, type ReviewAction, renameHub, resolveReview } from '../organiser/corrections.ts';
 import { isLocked, readAccess, setLocked } from '../mcp/access.ts';
 import { type ModelDeps, readServerKey } from '../organiser/model.ts';
@@ -224,7 +224,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     }],
     ['PUT', /^\/api\/entries\/(\d+)$/, async (req) => {
       const { body } = await req.json();
-      return saveEntry(home, store, id(req.params[0]), text(body, 'body'));
+      return await saveEntry(home, store, id(req.params[0]), text(body, 'body'));
     }],
 
     ['GET', /^\/api\/threads\/(\d+)$/, (req) => {
@@ -295,11 +295,11 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     ['GET', /^\/api\/notes$/, () => noteTitles(store)],
     ['POST', /^\/api\/notes$/, async (req) => {
       const { title, body } = await req.json();
-      return { id: createNote(home, store, text(title, 'title', 300), body === undefined ? '' : text(body, 'body')) };
+      return { id: await createNote(home, store, text(title, 'title', 300), body === undefined ? '' : text(body, 'body')) };
     }],
     ['POST', /^\/api\/daily$/, async (req) => {
       const { text: line } = await req.json();
-      return { id: appendDaily(home, store, text(line, 'text', 5000)) };
+      return { id: await appendDaily(home, store, text(line, 'text', 5000)) };
     }],
 
     ['GET', /^\/api\/found$/, () => {
@@ -310,14 +310,14 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       const { path } = await req.json();
       const where = scanned(text(path, 'path', 4096));
       try {
-        return preview(where);
+        return await preview(where);
       } catch (error) {
         throw new HttpError(422, error instanceof Error ? error.message : String(error));
       }
     }],
     ['POST', /^\/api\/import$/, async (req) => {
       const { path, owner } = await req.json();
-      return importPath(store, scanned(text(path, 'path', 4096)), owner);
+      return await importPath(store, scanned(text(path, 'path', 4096)), owner);
     }],
     ['POST', /^\/api\/upload$/, async (req) => {
       const batch = req.url.searchParams.get('batch') ?? '';
@@ -340,10 +340,12 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       const dir = join(uploads, batch);
       if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new HttpError(404, 'Nothing was uploaded');
       // Each zip and each folder at the top is imported on its own, so a folder keeps its name as the source's.
-      // The page puts loose files in a folder of their own.
-      return readdirSync(dir, { withFileTypes: true })
-        .filter((e) => e.isDirectory() || (e.isFile() && e.name.toLowerCase().endsWith('.zip')))
-        .flatMap((e) => importPath(store, join(dir, e.name), owner));
+      // The page puts loose files in a folder of their own. One at a time, so one worker reads at once.
+      const results: Imported[] = [];
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory() || (e.isFile() && e.name.toLowerCase().endsWith('.zip'))) results.push(...(await importPath(store, join(dir, e.name), owner)));
+      }
+      return results;
     }],
     ['GET', /^\/api\/agents$/, () => findAgents(ctx.scanRoot)],
 
@@ -571,16 +573,37 @@ export function publicMessage(message: string, home: string): string {
   });
 }
 
-function importPath(store: Store, path: string, owner: unknown): { source: string; kind: string; added: number; versioned: number; unchanged: number; threads: number }[] {
+/**
+ * What an import did, per source. `proposed` and `pendingId` come only when the batch went to pending (an export from
+ * another account than its source's): then nothing was imported, and the changes wait for a yes.
+ */
+interface Imported {
+  source: string;
+  kind: string;
+  added: number;
+  versioned: number;
+  unchanged: number;
+  threads: number;
+  proposed?: number;
+  pendingId?: number | null;
+}
+
+/**
+ * Reads a path through part A's reader in a worker thread (S4, H3's server half): a link, a FIFO or a zip bomb is
+ * refused before anything is inflated, and a large export never blocks the event loop, so the page keeps its answers.
+ */
+async function importPath(store: Store, path: string, owner: unknown): Promise<Imported[]> {
   const who = typeof owner === 'string' && owner.trim() && owner.trim().toLowerCase() !== 'you' ? owner.trim().slice(0, 100) : undefined;
   let batches;
   try {
-    batches = readImports(path, { owner: who });
+    batches = await readImportsInWorker(path, { owner: who });
   } catch (error) {
     throw new HttpError(422, error instanceof Error ? error.message : String(error));
   }
   return batches.map((batch) => {
     const r = store.ingest(batch);
-    return { source: batch.source.label, kind: batch.source.kind, added: r.added, versioned: r.versioned, unchanged: r.unchanged, threads: r.threads };
+    const done: Imported = { source: batch.source.label, kind: batch.source.kind, added: r.added, versioned: r.versioned, unchanged: r.unchanged, threads: r.threads };
+    if (r.proposed !== undefined) Object.assign(done, { proposed: r.proposed, pendingId: r.pendingId ?? null });
+    return done;
   });
 }

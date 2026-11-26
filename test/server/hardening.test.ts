@@ -6,14 +6,18 @@ import { createServer, request } from 'node:http';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 import { main } from '../../src/cli.ts';
 import { loadConfig, saveConfig } from '../../src/config.ts';
 import { publicMessage } from '../../src/server/app.ts';
 import { type Running, startServer } from '../../src/server/serve.ts';
 import { sameToken } from '../../src/server/token.ts';
 import { keyShaped } from '../samples.ts';
+import { buildZip } from '../fsafe-zip.ts';
 import { AccessError, checkAccess, isLocked, readAccess, setLocked } from '../../src/mcp/access.ts';
 import { cleanUploads } from '../../src/server/uploads.ts';
+import { createNote, saveEntry } from '../../src/server/notes.ts';
+import { openHome } from '../../src/home.ts';
 
 let dir: string;
 let home: string;
@@ -256,6 +260,124 @@ describe('L2: the upload cap', () => {
     expect(existsSync(join(imports, 'newbatch0001'))).toBe(true);
     expect(existsSync(join(imports, 'Not-A-Batch'))).toBe(true);
     expect(cleanUploads(join(dir, 'no-such-home'))).toBe(0);
+  });
+});
+
+describe("S4 / H3's server half: imports are read in a worker, through part A's reader", () => {
+  it('refuses a dropped zip bomb before inflating it, and keeps answering (web/poc/08, imports/poc/18b)', async () => {
+    // Three entries that say they unpack to 300 MiB each, as in web/poc/08, from a few kilobytes. Built by hand, so the
+    // test never inflates 900 MiB itself. Before S4 the server took 1,896 MiB and stalled /api/status for 12.9 s.
+    const kernel = deflateSync(new Uint8Array(4096));
+    const bomb = buildZip(['conversations.json', 'b.json', 'c.json'].map((name) => ({ name, data: kernel, size: 300 * MiB })), { zip64: true });
+    const put = await fetch(`http://127.0.0.1:${app.port}/api/upload?batch=pocbombzip0001&path=export.zip`, {
+      method: 'POST',
+      headers: { 'X-Skeinwise-Token': app.token, 'Content-Type': 'application/octet-stream' },
+      body: new Uint8Array(bomb),
+    });
+    expect(put.status).toBe(200);
+    const before = process.memoryUsage().rss;
+    let peak = before;
+    const sampler = setInterval(() => (peak = Math.max(peak, process.memoryUsage().rss)), 5);
+    try {
+      const finish = api('upload/finish', { body: { batch: 'pocbombzip0001' } });
+      expect((await api('status')).status).toBe(200);
+      const done = await finish;
+      expect(done.status).toBe(422);
+      expect(done.body.error).toMatch(/export\.zip: refused/);
+    } finally {
+      clearInterval(sampler);
+    }
+    expect(peak - before).toBeLessThan(300 * MiB);
+  });
+
+  it('answers /api/status while a large export is read for a preview', async () => {
+    const folder = join(scan, 'Downloads', 'claude-large');
+    mkdirSync(folder, { recursive: true });
+    const text = 'A long line about the garden, the river and the plans for spring. '.repeat(4);
+    const conversations = Array.from({ length: 2000 }, (_, c) => ({
+      uuid: `conv-${c}`,
+      name: `Conversation ${c}`,
+      created_at: '2026-03-01T10:00:00Z',
+      chat_messages: Array.from({ length: 10 }, (_, m) => ({
+        uuid: `msg-${c}-${m}`,
+        sender: m % 2 ? 'assistant' : 'human',
+        text: `${m} ${text}`,
+        created_at: '2026-03-01T10:00:00Z',
+      })),
+    }));
+    writeFileSync(join(folder, 'conversations.json'), JSON.stringify(conversations));
+    let read = false;
+    const preview = api('found/preview', { body: { path: folder } }).then((res) => {
+      read = true;
+      return res;
+    });
+    let answered = 0;
+    while (!read) {
+      expect((await api('status')).status).toBe(200);
+      if (!read) answered += 1;
+    }
+    expect((await preview).body).toMatchObject({ entries: 20_000, threads: 2_000 });
+    // Read on the main thread, as before S4, the server answered nothing until the whole export was parsed.
+    expect(answered).toBeGreaterThanOrEqual(5);
+  });
+
+  it("leaves a missing time out of a preview's first and last", async () => {
+    const folder = join(scan, 'Downloads', 'claude-undated');
+    mkdirSync(folder, { recursive: true });
+    const conversation = (uuid: string, at?: string) => ({
+      uuid,
+      name: uuid,
+      ...(at ? { created_at: at } : {}),
+      chat_messages: [{ uuid: `${uuid}-m`, sender: 'human', text: `Hello from ${uuid}`, ...(at ? { created_at: at } : {}) }],
+    });
+    const undated = [conversation('early', '2025-01-01T10:00:00Z'), conversation('undated'), conversation('late', '2026-01-01T10:00:00Z')];
+    writeFileSync(join(folder, 'conversations.json'), JSON.stringify(undated));
+    const res = await api('found/preview', { body: { path: folder } });
+    expect(res.body).toMatchObject({ entries: 3, threads: 3 });
+    expect(res.body.first).toMatch(/^2025-01-01T10:00/);
+    expect(res.body.last).toMatch(/^2026-01-01T10:00/);
+  });
+
+  it('runs note writes one at a time, so a read of notes/ from before an edit never lands after it', async () => {
+    const own = join(dir, 'notes-queue-home');
+    const store = openHome(own);
+    try {
+      const id = await createNote(own, store, 'Queue test', 'First words.');
+      const order: string[] = [];
+      const creating = createNote(own, store, 'Another note', 'More words.').then(() => order.push('create'));
+      const saving = saveEntry(own, store, id, 'Edited words.').then(() => order.push('save'));
+      await Promise.all([creating, saving]);
+      // Without the queue the edit, which reads no folder, would finish while the new note's import still reads.
+      expect(order).toEqual(['create', 'save']);
+      expect(store.getEntry(id)!.body).toBe('Edited words.');
+      expect(readFileSync(join(own, 'notes', 'queue-test.md'), 'utf8')).toContain('Edited words.');
+      // A write that fails doesn't hold up the next one.
+      await expect(createNote(own, store, '   ', '')).rejects.toThrow('A note needs a title');
+      expect((await saveEntry(own, store, id, 'Edited again.')).version.body).toBe('Edited again.');
+    } finally {
+      store.db.close();
+    }
+  });
+
+  it('says when an import from another account waits in pending, so the page never shows a silent "0 new"', async () => {
+    const folder = join(scan, 'Downloads', 'claude-account');
+    mkdirSync(folder, { recursive: true });
+    const exportOf = (account: string, text: string) =>
+      JSON.stringify([{
+        uuid: 'account-conv',
+        name: 'Plans',
+        created_at: '2026-03-01T10:00:00Z',
+        account: { uuid: account },
+        chat_messages: [{ uuid: 'account-msg', sender: 'human', text, created_at: '2026-03-01T10:00:00Z' }],
+      }]);
+    writeFileSync(join(folder, 'conversations.json'), exportOf('account-a', 'We chose the blue door.'));
+    const first = await api('import', { body: { path: folder } });
+    expect(first.status).toBe(200);
+    expect(first.body).toEqual([expect.objectContaining({ added: 1 })]);
+    expect(first.body[0]).not.toHaveProperty('pendingId');
+    writeFileSync(join(folder, 'conversations.json'), exportOf('account-b', 'We chose the red door.'));
+    const second = await api('import', { body: { path: folder } });
+    expect(second.body).toEqual([expect.objectContaining({ added: 0, versioned: 0, proposed: 1, pendingId: expect.any(Number) })]);
   });
 });
 
