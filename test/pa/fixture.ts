@@ -23,9 +23,9 @@ export const NOTES: EntryInput[] = [
   note('planted.md', '2027-06-01', 'Planted', "I'll pay Ben back."),
 ];
 
-/** A store holding the invented record, its clock stopped at NOW. */
-export function paStore(now = NOW): Store {
-  const store = new Store(openDb(':memory:'), () => now);
+/** A store holding the invented record, its clock stopped at NOW unless given one. */
+export function paStore(clock: () => string = () => NOW): Store {
+  const store = new Store(openDb(':memory:'), clock);
   store.ingest({ source: { kind: 'notes', label: 'Notes', location: '/invented/notes' }, threads: [], entries: NOTES });
   store.ingest({
     source: { kind: 'claude', label: 'Claude' },

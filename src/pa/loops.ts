@@ -81,14 +81,19 @@ function entryOfKey(key: string): number {
   return Number(m[1]);
 }
 
-/** Your sentences in an entry: code blocks and quoted lines left out, since those are rarely your own words. */
-export function saidIn(e: Entry): Said[] {
-  const body = unlink(e.body)
+/** The sentences of a body that read as your own words: code blocks and quoted lines left out. */
+export function ownSentences(body: string): string[] {
+  const text = unlink(body)
     .replace(/```[\s\S]*?```/g, '\n')
     .split(/\r?\n/)
     .filter((line) => !/^\s*>/.test(line))
     .join('\n');
-  return sentences(body).map((sentence) => ({ key: loopKey(e.id, sentence), entry: e, sentence }));
+  return sentences(text);
+}
+
+/** Your sentences in an entry, with their loop keys. */
+export function saidIn(e: Entry): Said[] {
+  return ownSentences(e.body).map((sentence) => ({ key: loopKey(e.id, sentence), entry: e, sentence }));
 }
 
 /** The entries the assistant reads for loops: yours, vouched for, not from a coding session, inside the window. */
