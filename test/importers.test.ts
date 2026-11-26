@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { strToU8, zipSync } from 'fflate';
+import { deflateSync, strToU8, zipSync } from 'fflate';
+import { buildZip } from './fsafe-zip.ts';
 import { parseChatGPT, parseClaude, parseClaudeCodeSession, parseCodexSession, parseGemini } from '../src/importers/chats.ts';
-import { readImports, sniffExport, sniffSession } from '../src/importers/detect.ts';
+import { accountFingerprint, readFilesUnder, readImports, readImportsInWorker, sniffExport, sniffSession } from '../src/importers/detect.ts';
+import { UnsafeFileError } from '../src/fsafe.ts';
 import { parseFrontMatter, parseNote } from '../src/importers/notes.ts';
 import { toIso } from '../src/importers/util.ts';
 
@@ -223,10 +227,165 @@ describe('readImports', () => {
     }
   });
 
+  it('skips links, FIFOs and unreadable files in a folder by name, and imports the rest (PoC 12, 13)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-unsafe-'));
+    const outside = mkdtempSync(join(tmpdir(), 'skeinwise-outside-'));
+    try {
+      writeFileSync(join(outside, 'secret.md'), 'FAKE-SECRET');
+      symlinkSync(join(outside, 'secret.md'), join(dir, 'planted.md'));
+      symlinkSync(outside, join(dir, 'linked-folder'));
+      execFileSync('mkfifo', [join(dir, 'conversations.json')]);
+      writeFileSync(join(dir, 'claude.json'), JSON.stringify(claude));
+      writeFileSync(join(dir, 'note.md'), '# Mine');
+      const warnings: string[] = [];
+      const started = performance.now();
+      const batches = readImports(dir, { onWarning: (m) => warnings.push(m) });
+      expect(performance.now() - started).toBeLessThan(1000);
+      expect(batches.map((b) => b.source.kind).sort()).toEqual(['claude', 'notes']);
+      expect(JSON.stringify(batches)).not.toContain('FAKE-SECRET');
+      expect(warnings).toEqual([
+        expect.stringMatching(/conversations\.json: skipped, it is not a regular file/),
+        expect.stringMatching(/planted\.md: skipped, it is a symbolic link/),
+      ]);
+      // The live path reads named files the same way: the link is refused, the FIFO doesn't block.
+      const live: string[] = [];
+      const some = readFilesUnder(dir, ['planted.md', 'conversations.json', 'linked-folder/secret.md', 'note.md'], { onWarning: (m) => live.push(m) });
+      expect(JSON.stringify(some)).not.toContain('FAKE-SECRET');
+      expect(some.flatMap((b) => b.entries ?? []).map((e) => e.externalId)).toEqual(['note.md']);
+      expect(live).toHaveLength(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a zip bomb by name before inflating it (PoC 09), in a worker too', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-bomb-'));
+    try {
+      // Two entries that say they unpack to 64 MiB each from a few bytes: far past the 200:1 limit. Built by hand, so
+      // the test doesn't spend seconds deflating 128 MiB on a loaded machine.
+      const kernel = deflateSync(new Uint8Array(4096).fill(32));
+      const bomb = join(dir, '09_bomb.zip');
+      const size = 64 * 1024 * 1024;
+      writeFileSync(bomb, buildZip([{ name: 'export/part-0.json', data: kernel, size }, { name: 'export/part-1.json', data: kernel, size }]));
+      expect(() => readImports(bomb)).toThrow(/09_bomb\.zip: refused, .*200:1 limit/);
+      const error = await readImportsInWorker(bomb).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(UnsafeFileError);
+      expect((error as UnsafeFileError).reason).toBe('zip');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads in a worker thread with the same batches and warnings', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-worker-'));
+    try {
+      writeFileSync(join(dir, 'export.zip'), zipSync({ 'conversations.json': strToU8(JSON.stringify(claude)) }));
+      expect(await readImportsInWorker(join(dir, 'export.zip'))).toEqual(readImports(join(dir, 'export.zip')));
+      symlinkSync(join(dir, 'export.zip'), join(dir, 'link.md'));
+      writeFileSync(join(dir, 'note.md'), 'mine');
+      const warnings: string[] = [];
+      const batches = await readImportsInWorker(dir, { owner: 'Mara', onWarning: (m) => warnings.push(m) });
+      expect(batches.map((b) => [b.source.kind, b.source.owner])).toEqual([['notes', 'Mara']]);
+      expect(warnings).toEqual([expect.stringContaining('link.md: skipped, it is a symbolic link')]);
+      await expect(readImportsInWorker(join(dir, 'missing'))).rejects.toThrow(/ENOENT/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('recognises export shapes', () => {
     expect(sniffExport([{ mapping: {} }])).toBe('chatgpt');
     expect(sniffExport([{ chat_messages: [] }])).toBe('claude');
     expect(sniffExport([{ time: 'x', title: 'y' }])).toBe('gemini');
     expect(sniffExport({})).toBeNull();
+  });
+});
+
+describe('origin and account on every batch (LS-02)', () => {
+  const sha = (bytes: Buffer | Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+  const claudeExport = (accountUuid?: string) =>
+    JSON.stringify([
+      {
+        uuid: 'k1',
+        name: 'Crumb',
+        created_at: '2025-02-01T08:00:00Z',
+        ...(accountUuid ? { account: { uuid: accountUuid } } : {}),
+        chat_messages: [{ uuid: 'm1', sender: 'human', text: 'Why is my crumb tight?', created_at: '2025-02-01T08:00:00Z' }],
+      },
+    ]);
+  const chatgptExport = JSON.stringify([
+    { title: 'Plans', create_time: 1735725600, conversation_id: 'c1', current_node: 'u1', mapping: { u1: chatgptNode('u1', null, 'user', 'Seeds?', 1735725601) } },
+  ]);
+  const session = (id: string) =>
+    [
+      JSON.stringify({ type: 'user', sessionId: id, uuid: `${id}-1`, timestamp: '2025-03-01T10:00:00Z', cwd: '/w', message: { role: 'user', content: 'hello' } }),
+    ].join('\n');
+
+  function within(fn: (dir: string) => void) {
+    const dir = mkdtempSync(join(tmpdir(), 'skeinwise-origin-'));
+    try {
+      fn(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('a single export file is the origin; its account is a fingerprint, never the raw id', () => {
+    within((dir) => {
+      const file = join(dir, 'conversations.json');
+      writeFileSync(file, claudeExport('acct-uuid-invented-1'));
+      const [batch] = readImports(file);
+      expect(batch!.origin).toEqual({ path: file, sha256: sha(readFileSync(file)) });
+      expect(batch!.account).toBe(accountFingerprint('claude', 'acct-uuid-invented-1'));
+      expect(batch!.account).toMatch(/^[0-9a-f]{32}$/);
+      expect(JSON.stringify(batch)).not.toContain('acct-uuid-invented-1');
+      writeFileSync(file, claudeExport());
+      expect(readImports(file)[0]!.account).toBeNull();
+    });
+  });
+
+  it('a zip is the origin of every batch in it, and user.json names the ChatGPT account', () => {
+    within((dir) => {
+      const file = join(dir, 'export.zip');
+      writeFileSync(
+        file,
+        zipSync({
+          'conversations.json': strToU8(chatgptExport),
+          'user.json': strToU8(JSON.stringify({ id: 'user-invented-7', email: 'someone@example.invalid' })),
+          'notes/a.md': strToU8('# A\nnote'),
+        }),
+      );
+      const batches = readImports(file);
+      const origin = { path: file, sha256: sha(readFileSync(file)) };
+      expect(batches.map((b) => [b.source.kind, b.origin, b.account ?? null])).toEqual([
+        ['chatgpt', origin, accountFingerprint('chatgpt', 'user-invented-7')],
+        ['notes', origin, null],
+      ]);
+      expect(batches[1]!.entries![0]!.origin).toBeUndefined();
+    });
+  });
+
+  it('in a folder, each export, session and note carries its own file; Claude’s users.json names the account', () => {
+    within((dir) => {
+      mkdirSync(join(dir, 'claude'));
+      mkdirSync(join(dir, 'projects'));
+      writeFileSync(join(dir, 'claude', 'conversations.json'), claudeExport());
+      writeFileSync(join(dir, 'claude', 'users.json'), JSON.stringify([{ uuid: 'acct-uuid-invented-2', full_name: 'X' }]));
+      writeFileSync(join(dir, 'projects', 's1.jsonl'), session('s1'));
+      writeFileSync(join(dir, 'idea.md'), '# Idea\nkeep it');
+      const batches = readImports(dir);
+      const own = (p: string) => ({ path: join(dir, p), sha256: sha(readFileSync(join(dir, p))) });
+      const byKind = Object.fromEntries(batches.map((b) => [b.source.kind, b]));
+      expect(byKind.claude!.origin).toEqual(own('claude/conversations.json'));
+      expect(byKind.claude!.account).toBe(accountFingerprint('claude', 'acct-uuid-invented-2'));
+      expect(byKind['claude-code']!.origin).toBeNull();
+      expect(byKind['claude-code']!.threads[0]!.origin).toEqual(own('projects/s1.jsonl'));
+      expect(byKind.notes!.origin).toBeNull();
+      expect(byKind.notes!.entries![0]!.origin).toEqual(own('idea.md'));
+      // readFilesUnder (live) gives the same per-file origins.
+      const [notes] = readFilesUnder(dir, ['idea.md']);
+      expect(notes!.entries![0]!.origin).toEqual(own('idea.md'));
+    });
   });
 });
