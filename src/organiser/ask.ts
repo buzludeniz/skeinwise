@@ -3,11 +3,18 @@
 // thinking on …" the first mention followed by every decision and change of course, all oldest first. Any other
 // question is a ranked search, your own words first. With a model, a short answer is added that cites the entries
 // it rests on; the No-AI engine shows the entries alone.
+//
+// Asked with `live` (src/server/ask-stream.ts), the entries are handed over as soon as they are found, the answer's
+// text as the model writes it, and the caller can stop the model. The text shown while it streams is the "answer"
+// field read out of the JSON as it arrives, cleaned as it goes (src/safe-stream.ts); the result at the end is the
+// checked answer, as without `live`.
 
 import { UsageError } from '../errors.ts';
+import { safeStream } from '../safe-stream.ts';
 import { safeBlock } from '../safe-text.ts';
 import type { Entry, SearchHit, Store } from '../store/store.ts';
 import { CHANGE_CUES, DECISION_CUES } from './cues.ts';
+import type { StreamingClient } from './model.ts';
 import { checkBudget } from './organise.ts';
 import { AnswerError, cited, day, invalid, isRecord, type ModelClient, type ModelRequest } from './plan.ts';
 import { type RecordView, unlink } from './record.ts';
@@ -50,6 +57,20 @@ export interface AskOptions {
   client?: ModelClient;
   budget: number;
   limit: number;
+}
+
+/** What an ask reports while it runs, and how its caller stops the model. */
+export interface AskLive {
+  /** The entries found, before any model is asked: the result as the No-AI engine gives it. */
+  onHits?: (result: AskResult) => void;
+  /** What the model is doing, in a few words. */
+  onStatus?: (line: string) => void;
+  /** The answer's text as the model writes it, cleaned for display: join the pieces. Only the local engine streams. */
+  onText?: (piece: string) => void;
+  /** The answer couldn't be used and is asked for once more: the text shown so far is void. */
+  onRestart?: (why: string) => void;
+  /** Stops the model: ask then throws a ModelCancelledError, and the run records what was used. */
+  signal?: AbortSignal;
 }
 
 /** A model sees at most this many entries, and this much of each. */
@@ -148,11 +169,12 @@ export function similarEntries(record: RecordView, entryId: number, limit: numbe
     .map(({ e, score }) => ({ ...hit(e, clip(prose(e)[0] ?? e.body.trim()), null), score: Math.round(score * 1000) / 1000 }));
 }
 
-export async function ask(store: Store, record: RecordView, question: string, options: AskOptions): Promise<AskResult> {
+export async function ask(store: Store, record: RecordView, question: string, options: AskOptions, live: AskLive = {}): Promise<AskResult> {
   const { kind, topic } = parseQuestion(question);
   const hits = findAnswers(store, record, kind, topic, options.limit);
   const base: AskResult = { question, kind, topic, hits, answer: null, cites: [], engine: options.engine, model: null, runId: null, message: null };
   if (!hits.length) return { ...base, message: `Nothing in your record matches "${topic}".` };
+  live.onHits?.({ ...base, engine: 'none' });
   if (options.engine === 'none') return base;
   const client = options.client;
   if (!client) throw new Error(`The ${options.engine} engine needs a model client.`);
@@ -162,12 +184,36 @@ export async function ask(store: Store, record: RecordView, question: string, op
     const sent = client.prepare(request);
     checkBudget(store, options.budget, Math.ceil((sent.system.length + sent.user.length) / 4) + request.maxTokens, 'ask');
   }
+  live.onStatus?.('Looking for the model');
   await client.probe();
   const runId = startRun(store.db, { task: 'ask', engine: client.engine, model: client.model, scope: 'all', mark: currentMark(store.db), now: store.now() });
   let tokensIn = 0;
   let tokensOut = 0;
   try {
-    const reply = await client.send(request).catch((err: unknown) => {
+    const n = Math.min(hits.length, MODEL_HITS);
+    live.onStatus?.(`${client.model || 'The model'} is reading ${n} ${n === 1 ? 'entry' : 'entries'}`);
+    const streaming = isStreaming(client) && (live.onText || live.onRestart || live.signal);
+    const shown = answerText((piece) => live.onText?.(piece));
+    let writing = false;
+    const sending = streaming
+      ? client.stream(request, {
+          onText: (piece) => {
+            if (!writing) {
+              writing = true;
+              live.onStatus?.('Writing the answer');
+            }
+            shown.push(piece);
+          },
+          onRestart: (why) => {
+            shown.restart();
+            writing = false;
+            live.onRestart?.(why);
+            live.onStatus?.("Asking again: that answer couldn't be used");
+          },
+          ...(live.signal ? { signal: live.signal } : {}),
+        })
+      : client.send(request);
+    const reply = await sending.catch((err: unknown) => {
       if (err instanceof AnswerError) {
         tokensIn = err.tokensIn;
         tokensOut = err.tokensOut;
@@ -197,6 +243,83 @@ export async function ask(store: Store, record: RecordView, question: string, op
     failRun(store.db, runId, (err as Error).message, tokensIn, tokensOut, store.now());
     throw err;
   }
+}
+
+function isStreaming(client: ModelClient): client is StreamingClient {
+  return typeof (client as Partial<StreamingClient>).stream === 'function';
+}
+
+/**
+ * Shows the "answer" text of a JSON answer while it arrives: decodes what is certain, holds back half of a surrogate
+ * pair, and cleans it on the way out. Leading space is dropped, as the checked answer trims it.
+ */
+function answerText(onText: (piece: string) => void) {
+  let raw = '';
+  let shown = 0;
+  let ended = false;
+  let clean = safeStream('block');
+  return {
+    push(piece: string) {
+      if (ended) return;
+      raw += piece;
+      const so = answerSoFar(raw);
+      const text = so.text.replace(/^\s+/, '');
+      let upto = text.length;
+      if (!so.ended && upto > 0 && isHighSurrogate(text.charCodeAt(upto - 1))) upto--;
+      let out = upto > shown ? clean.push(text.slice(shown, upto)) : '';
+      shown = Math.max(shown, upto);
+      if (so.ended) {
+        ended = true;
+        out += clean.end();
+      }
+      if (out) onText(out);
+    },
+    restart() {
+      raw = '';
+      shown = 0;
+      ended = false;
+      clean = safeStream('block');
+    },
+  };
+}
+
+const isHighSurrogate = (c: number) => c >= 0xd800 && c <= 0xdbff;
+const ANSWER_STARTS = /"answer"\s*:\s*"/;
+const ESCAPES: Record<string, string> = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
+
+/**
+ * The text of the "answer" field in a JSON answer that is still arriving, decoded as far as it is certain, and
+ * whether its closing quote has come. A malformed escape ends it: the checked answer decides what that was.
+ */
+export function answerSoFar(raw: string): { text: string; ended: boolean } {
+  const start = ANSWER_STARTS.exec(raw);
+  if (!start) return { text: '', ended: false };
+  let text = '';
+  let i = start.index + start[0].length;
+  while (i < raw.length) {
+    const c = raw[i]!;
+    if (c === '"') return { text, ended: true };
+    if (c !== '\\') {
+      text += c;
+      i += 1;
+      continue;
+    }
+    const e = raw[i + 1];
+    if (e === undefined) break;
+    if (e === 'u') {
+      const hex = raw.slice(i + 2, i + 6);
+      if (hex.length < 4 && /^[0-9a-fA-F]*$/.test(hex)) break;
+      if (!/^[0-9a-fA-F]{4}$/.test(hex)) return { text, ended: true };
+      text += String.fromCharCode(parseInt(hex, 16));
+      i += 6;
+      continue;
+    }
+    const plain = ESCAPES[e];
+    if (plain === undefined) return { text, ended: true };
+    text += plain;
+    i += 2;
+  }
+  return { text, ended: false };
 }
 
 function answerRequest(store: Store, question: string, hits: AskHit[]): ModelRequest {
