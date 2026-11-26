@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -132,11 +132,8 @@ describe('the views routes', () => {
   });
 });
 
-// The real server's guards. These run once app.ts adds viewRoutes to its routes (the lead wires it at merge); until
-// then they are skipped, and after it the run must show none skipped here.
-const wired = readFileSync(new URL('../../src/server/app.ts', import.meta.url), 'utf8').includes('viewRoutes(');
-
-describe.runIf(wired)('the views routes behind the real server', () => {
+// The real server's guards, through app.ts's routes.
+describe('the views routes behind the real server', () => {
   let dir: string;
   let home: string;
   let app: Running;

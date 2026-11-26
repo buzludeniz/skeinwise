@@ -44,6 +44,7 @@ import {
 } from './queries.ts';
 import { sameToken } from './token.ts';
 import { BATCH_ID, CutOff, saveUpload, TooLarge, UPLOAD_LIMIT } from './uploads.ts';
+import { viewRoutes } from './viewspec.ts';
 
 export interface AppContext {
   home: string;
@@ -445,6 +446,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     }],
     ['GET', /^\/api\/links$/, () => lineCounts(store)],
     ['GET', /^\/api\/links\/(\d+)$/, (req) => entryLines(store, id(req.params[0]))],
+    ...viewRoutes({ home, store, deps }),
   ];
 
   const allowedHosts = () => {

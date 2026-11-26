@@ -45,7 +45,7 @@ async function applySeed(): Promise<void> {
   const s = getState();
   if (!s.ready || s.locked || s.fatal) return;
   if (seed && seed !== 'firstrun') setState({ firstRun: false });
-  const views: Record<string, View> = { brain: 'brain', threads: 'threads', stats: 'stats', timeline: 'timeline', profile: 'profile', workbench: 'workbench' };
+  const views: Record<string, View> = { brain: 'brain', threads: 'threads', stats: 'stats', timeline: 'timeline', profile: 'profile', workbench: 'workbench', views: 'views' };
   if (seed && views[seed]) setState({ view: views[seed] });
   switch (seed) {
     case 'rings':

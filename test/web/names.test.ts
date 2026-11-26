@@ -72,6 +72,6 @@ describe('screen names', () => {
   it('puts the new names on the rail, in order', () => {
     const rail = readFileSync(join(ROOT, 'web/src/ui/Rail.tsx'), 'utf8');
     const labels = [...rail.matchAll(/\{ target: '\w+', label: '([^']+)'/g)].map((m) => m[1]);
-    expect(labels).toEqual(['Brain', 'Threads', 'Stats', 'Timeline', 'Profile', 'Workbench', 'Assistant', 'Guide', 'Add']);
+    expect(labels).toEqual(['Brain', 'Threads', 'Stats', 'Timeline', 'Profile', 'Workbench', 'Views', 'Assistant', 'Guide', 'Add']);
   });
 });

@@ -1,7 +1,8 @@
-// The rail: the mark (opening the app menu), the views with keys 1 to 9, and the "Woven from N entries" footer.
+// The rail: the mark (opening the app menu), the views with keys 1 to 9 on the first nine, and the "Woven from N
+// entries" footer.
 
 import type { LucideIcon } from 'lucide-preact';
-import { Brain, CalendarRange, Compass, FlaskConical, GraduationCap, Hash, ListTodo, Plus, Search, UserRound } from 'lucide-preact';
+import { Brain, CalendarRange, Compass, FlaskConical, GraduationCap, Hash, LayoutDashboard, ListTodo, Plus, Search, UserRound } from 'lucide-preact';
 import { go, openCommand } from '../actions.ts';
 import { fmtNum } from '../format.ts';
 import { setState, type Target, useApp } from '../store.ts';
@@ -14,6 +15,7 @@ export const RAIL: { target: Target; label: string; icon: LucideIcon; hint: stri
   { target: 'timeline', label: 'Timeline', icon: CalendarRange, hint: 'Activity over time' },
   { target: 'profile', label: 'Profile', icon: UserRound, hint: 'What the record says about you' },
   { target: 'workbench', label: 'Workbench', icon: FlaskConical, hint: 'The table builder and Activity' },
+  { target: 'views', label: 'Views', icon: LayoutDashboard, hint: 'Charts and lists you pick or describe' },
   { target: 'assistant', label: 'Assistant', icon: ListTodo, hint: 'Your brief, open loops and tasks' },
   { target: 'guide', label: 'Guide', icon: GraduationCap, hint: 'How to read the brain' },
   { target: 'add', label: 'Add', icon: Plus, hint: 'Add files, a note or a source' },
@@ -52,20 +54,24 @@ export function Rail() {
       <div class="rail-sep" />
       {RAIL.map(({ target, label, icon: Icon, hint }, i) => {
         const on = isActive(target, view, panel);
+        // Keys 1 to 9 open the first nine entries (App.tsx); the ones after them have no key.
+        const key = i < 9 ? String(i + 1) : null;
         return (
           <button
             key={target}
             type="button"
             class={`rail-item${on ? ' on' : ''}${target === 'add' ? ' rail-add' : ''}`}
             aria-current={on ? 'page' : undefined}
-            title={`${hint} (${i + 1})`}
+            title={key ? `${hint} (${key})` : hint}
             onClick={() => go(target)}
           >
             <Icon size={20} aria-hidden="true" />
             <span>{target === 'add' ? '+ Add' : label}</span>
-            <span class="rail-key" aria-hidden="true">
-              {i + 1}
-            </span>
+            {key && (
+              <span class="rail-key" aria-hidden="true">
+                {key}
+              </span>
+            )}
             {target === 'threads' && review > 0 && (
               <span class="badge" aria-label={`${review} notes to review`}>
                 {review}

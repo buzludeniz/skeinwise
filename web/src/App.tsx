@@ -25,6 +25,7 @@ import { StatsView } from './views/Stats.tsx';
 import { Threads } from './views/Threads.tsx';
 import { TimelineView } from './views/Timeline.tsx';
 import { Workbench } from './views/Workbench.tsx';
+import { ViewsPage } from './viewspec/ViewsPage.tsx';
 
 function useThemeVars() {
   const key = useApp((s) => s.config?.appearance.theme ?? 'dusk');
@@ -89,6 +90,8 @@ function MainView() {
       return <ProfileView />;
     case 'workbench':
       return <Workbench />;
+    case 'views':
+      return <ViewsPage />;
     case 'assistant':
       return <AssistantView />;
     default:

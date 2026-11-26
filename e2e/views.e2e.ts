@@ -1,11 +1,12 @@
 // Views, end to end: describe a view, the local model draws its spec, the page renders it with the Workbench's chart
 // and list, and it is saved; then, under No-AI, the saved view still shows and drawing says it needs the local model.
 // The local model is a fake on a 127.0.0.1 port of this test's own, never a model server running on this computer.
-// The test is skipped until App.tsx mounts the page (the lead wires it at merge); after that it must run.
+// The engine is a terminal-only setting, so No-AI is switched on with skeinwise config engine none, as a person would.
 //
 // smoke.e2e.ts may run beside this file on the same record and expects the first-run dialog, so this test never
 // finishes the first run: `?seedview=stats` opens the app on Stats with the dialog shut, and nothing is saved.
 
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -13,7 +14,6 @@ import { join } from 'node:path';
 import { expect, type APIRequestContext, type Page, test } from '@playwright/test';
 import { runFolder } from './run.ts';
 
-const mounted = readFileSync(join(import.meta.dirname, '..', 'web', 'src', 'App.tsx'), 'utf8').includes('ViewsPage');
 const token = () => readFileSync(join(runFolder(), 'home', 'token'), 'utf8').trim();
 
 const DRAWN = { v: 1, title: 'Notes by month', show: 'chart', form: 'bars', x: 'time', where: [{ prop: 'kind', is: 'note' }] };
@@ -48,6 +48,12 @@ async function settings(request: APIRequestContext, patch: Record<string, unknow
   expect(res.ok(), await res.text()).toBe(true);
 }
 
+/** Sets the engine from the terminal, on the record the e2e server serves. */
+function setEngine(engine: 'local' | 'none') {
+  const cli = join(import.meta.dirname, '..', 'src', 'cli.ts');
+  execFileSync(process.execPath, [cli, 'config', 'engine', engine], { env: { ...process.env, SKEINWISE_HOME: join(runFolder(), 'home') } });
+}
+
 async function openViews(page: Page) {
   await expect(page.getByRole('heading', { name: 'Stats', level: 1 })).toBeVisible();
   await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Views' }).click();
@@ -56,7 +62,6 @@ async function openViews(page: Page) {
 }
 
 test('describes, draws, renders and saves a view; under No-AI the saved view still shows', async ({ page, request }) => {
-  test.skip(!mounted, 'App.tsx does not mount ViewsPage yet.');
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   // The local engine, pointed at the fake model.
@@ -82,7 +87,8 @@ test('describes, draws, renders and saves a view; under No-AI the saved view sti
   await expect(drawn).toContainText('A saved view');
 
   // No-AI: the saved view still renders, and drawing says it needs the local model.
-  await settings(request, { ai: { engine: 'none' } });
+  // The page can't change the engine (the server answers 403), so the terminal does.
+  setEngine('none');
   await page.reload();
   views = await openViews(page);
   await expect(views.getByRole('note')).toContainText('Drawing a new view needs the local model');
