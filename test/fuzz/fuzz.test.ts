@@ -12,7 +12,7 @@ import { TARGETS, targetNamed } from './targets.ts';
 
 const SEED = 20261125;
 /** Inputs per target: about half a second each on a loaded machine. */
-const COUNT: Record<string, number> = { text: 400, lines: 300, xml: 800, docx: 200, import: 200, frontmatter: 400, zip: 300, 'safe-text': 100 };
+const COUNT: Record<string, number> = { text: 400, lines: 300, xml: 800, docx: 200, import: 200, frontmatter: 400, zip: 300, 'safe-text': 100, 'view-spec': 2000, 'view-routes': 300 };
 const TIMEOUT = 120_000;
 
 let scratch: string;

@@ -1,15 +1,16 @@
-// Every fuzz target by name: the import parsers this track owns, the shared code they use, and the planted targets the
-// harness's own tests run to show it catches a crash, a hang (a loop, or a promise that never settles), a heap that
-// runs out, and a write outside the folder or outside where a target may write.
+// Every fuzz target by name: the import parsers this track owns, the shared code they use, the views' spec checker and
+// routes, and the planted targets the harness's own tests run to show it catches a crash, a hang (a loop, or a promise
+// that never settles), a heap that runs out, and a write outside the folder or outside where a target may write.
 
 import { mkdirSync, openSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Target } from './engine.ts';
 import { IMPORTER_TARGETS } from './importers.ts';
 import { SHARED_TARGETS } from './shared.ts';
+import { VIEW_TARGETS } from './views.ts';
 
 /** The targets a fuzz run covers. */
-export const TARGETS: Target[] = [...IMPORTER_TARGETS, ...SHARED_TARGETS];
+export const TARGETS: Target[] = [...IMPORTER_TARGETS, ...SHARED_TARGETS, ...VIEW_TARGETS];
 
 const planted = (name: string, run: Target['run'], extra: Partial<Target> = {}): Target => ({
   name: `planted-${name}`,
