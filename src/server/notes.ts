@@ -7,6 +7,7 @@
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathInside, readImportsInWorker } from '../importers/detect.ts';
+import { wordNoteFile } from '../notes.ts';
 import type { Store, Version } from '../store/store.ts';
 import { folderInside, readPlain, UnsafeFile, writeNew, writeOver } from './files.ts';
 
@@ -111,19 +112,30 @@ async function writeDaily(home: string, store: Store, line: string, now: Date): 
   return await importNote(home, store, file);
 }
 
+/** A saved edit: the new version, whether the note's file was rewritten, and the file's path when it is a Word document. */
+export interface SavedEntry {
+  version: Version;
+  wroteFile: boolean;
+  word?: string;
+}
+
 /**
  * Saves an edit as a new version. A note that lives in the home folder's notes/ also gets its file rewritten
- * (front matter kept); notes from anywhere else keep their original file untouched.
+ * (front matter kept); notes from anywhere else keep their original file untouched, and so does a Word document
+ * (wordNoteFile), which Markdown written over would ruin: its path comes back as `word`.
  */
-export function saveEntry(home: string, store: Store, id: number, body: string): Promise<{ version: Version; wroteFile: boolean }> {
+export function saveEntry(home: string, store: Store, id: number, body: string): Promise<SavedEntry> {
   return oneAtATime(home, () => writeEntry(home, store, id, body));
 }
 
-function writeEntry(home: string, store: Store, id: number, body: string): { version: Version; wroteFile: boolean } {
+function writeEntry(home: string, store: Store, id: number, body: string): SavedEntry {
   const entry = store.getEntry(id);
   if (!entry) throw new NoteError(`No entry ${id}`);
   if (!body.trim()) throw new NoteError('An entry cannot be saved empty');
-  const file = ownFile(home, store, id);
+  const own = ownFile(home, store, id);
+  const word = own ? wordNoteFile(home, own) : null;
+  if (word) return { version: store.editEntry(id, body, 'you'), wroteFile: false, word };
+  const file = own;
   // The file is read before the version is saved, so a link there refuses the whole save.
   const old = file ? (safely(home, () => readPlain(file)) ?? '') : '';
   const version = store.editEntry(id, body, 'you');

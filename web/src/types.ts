@@ -1,6 +1,7 @@
 // The API's shapes, taken straight from the server's modules so the two can't drift.
 // The server still calls the Stats figures `Numbers` and a Profile line `YouLine`; the page uses its own names.
 export type { Brief, BrainData, BrainPoint, EntryDetail, Numbers as Stats, YouLine as ProfileLine } from '../../src/server/queries.ts';
+export type { SavedEntry } from '../../src/server/notes.ts';
 export type { EntryLines, EntryOrganised, HubDetail, LineCounts, OrganiseJob, OrganiserState } from '../../src/server/organiser.ts';
 export type { AskHit, AskKind, AskResult } from '../../src/organiser/ask.ts';
 export type { AskStreamEvent } from '../../src/server/ask-stream.ts';
