@@ -10,12 +10,15 @@
 // --dir, which must be new or empty. Nothing in it is a real history.
 //
 // Each request goes through the same client code the app uses (src/organiser/model.ts), with a fetch that notes when
-// each answer's first token and last byte arrive. For ask, the whole question is timed too, from the question to the
-// first entry shown and to the finished answer. For the organiser tasks, a few of a run's requests are sent (the
+// each answer's first token and last byte arrive. For ask, the whole question is timed too, as the page sees it: the
+// streamed ask (src/server/ask-stream.ts) on a server of the bench's own (127.0.0.1, a free port), from the question
+// to the entries, to the answer's first word and to the checked answer. For the organiser tasks, a few of a run's requests are sent (the
 // first, the middle and the last by default) and the run's total is projected from them: a full run on a 4B model at
 // 10k entries takes hours, which says nothing a sample doesn't.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { cpus, loadavg, totalmem } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -26,7 +29,8 @@ import { createModel, type ModelDeps } from '../src/organiser/model.ts';
 import { previewRun } from '../src/organiser/organise.ts';
 import { RecordView } from '../src/organiser/record.ts';
 import { parseScope, type Task } from '../src/organiser/runs.ts';
-import { askQuestion } from '../src/server/organiser.ts';
+import { type AskStreamEvent, streamAsk } from '../src/server/ask-stream.ts';
+import type { Store } from '../src/store/store.ts';
 import { writeCorpus } from './corpus.ts';
 import { prepare, QUESTIONS } from './run.ts';
 
@@ -207,6 +211,51 @@ export interface ModelBenchOptions {
   log?: (line: string) => void;
 }
 
+/** One question through the streamed ask, read the way the page reads it, on a server that lives for this question. */
+async function timeAsk(store: Store, home: string, question: string, deps: ModelDeps): Promise<AskTiming> {
+  const server = createServer((_req, res) => {
+    streamAsk(res, { store, home, question, engine: 'local', deps }).catch((e: Error) => res.writeHead(500).end(e.message));
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const start = performance.now();
+    const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    if (!res.ok || !res.body) throw new Error(`the streamed ask answered ${res.status}: ${await res.text()}`);
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let hitsMs: number | null = null;
+    let firstTokenMs: number | null = null;
+    let done: Extract<AskStreamEvent, { type: 'done' }> | null = null;
+    let error: string | null = null;
+    for await (const chunk of res.body) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let cut: number;
+      while ((cut = buffer.indexOf('\n\n')) >= 0) {
+        const event = JSON.parse(buffer.slice(0, cut).replace(/^data: /, '')) as AskStreamEvent;
+        buffer = buffer.slice(cut + 2);
+        const now = performance.now() - start;
+        if (event.type === 'hits') hitsMs ??= now;
+        else if (event.type === 'text') firstTokenMs ??= now;
+        else if (event.type === 'restart') firstTokenMs = null;
+        else if (event.type === 'done') done = event;
+        else if (event.type === 'error') error = event.message;
+      }
+    }
+    const totalMs = performance.now() - start;
+    const result = done?.result;
+    return {
+      question,
+      hitsMs: hitsMs ?? totalMs,
+      firstTokenMs: firstTokenMs ?? totalMs,
+      totalMs,
+      answered: !!result?.answer,
+      message: error ?? result?.message ?? null,
+    };
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
 /** Builds the record, then times every feature against the model server. */
 export async function modelBench(opts: ModelBenchOptions): Promise<ModelBenchReport> {
   const url = checkUrl(opts.url);
@@ -240,11 +289,7 @@ export async function modelBench(opts: ModelBenchOptions): Promise<ModelBenchRep
     const askStart = timings.length;
     for (const question of QUESTIONS) {
       say(`ask: ${question}`);
-      const start = performance.now();
-      const r = await askQuestion(store, home, question, 'local', deps);
-      const total = performance.now() - start;
-      // Today's ask shows nothing until the answer is done: entries and answer arrive together.
-      report.ask.push({ question, hitsMs: total, firstTokenMs: total, totalMs: total, answered: !!r.answer, message: r.message });
+      report.ask.push(await timeAsk(store, home, question, deps));
     }
     report.features.push({ feature: 'ask', requests: 1, timings: timings.slice(askStart), projectedMs: median(timings.slice(askStart).map((t) => t.totalMs)) });
 

@@ -90,6 +90,12 @@ describe('model bench', () => {
     expect(new Set(server.urls.map((u) => new URL(u).origin))).toEqual(new Set(['http://127.0.0.1:8741']));
     expect(report.model).toBe('fake-4b');
     expect(report.ask).toHaveLength(3);
+    // Timed as the page reads the streamed ask: the entries, then the answer's first word, then the checked answer.
+    for (const a of report.ask) {
+      expect(a).toMatchObject({ answered: true, message: null });
+      expect(a.hitsMs).toBeLessThanOrEqual(a.firstTokenMs);
+      expect(a.firstTokenMs).toBeLessThanOrEqual(a.totalMs);
+    }
     const ask = report.features.find((f) => f.feature === 'ask')!;
     expect(ask.timings.length).toBeGreaterThan(0);
     expect(ask.timings[0]).toMatchObject({ outTokens: 40, outPerSec: 25, promptTokens: 400, streamed: false });
