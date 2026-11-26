@@ -7,7 +7,7 @@
 // notes/, and the file itself is opened with O_NOFOLLOW, so a link planted at a note's name, or a linked notes/daily,
 // can't send a write to a file elsewhere.
 
-import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { UsageError } from './errors.ts';
 import { readImports } from './importers/detect.ts';
@@ -25,7 +25,7 @@ export function notesDir(home: string): string {
   return resolve(home, 'notes');
 }
 
-/** O_NOFOLLOW where the system has it; on Windows, where it doesn't, the lstat check in notePath stands alone. */
+/** O_NOFOLLOW where the system has it; on Windows, where it doesn't, openNoFollow's lstat check stands in for it. */
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
 
 function outside(rel: string): boolean {
@@ -53,6 +53,7 @@ function notePath(dir: string, path: string): string {
 
 /** Opens a file without following a link at its last step; a link there is refused in plain words. */
 function openNoFollow(full: string, flags: number): number {
+  if (!NO_FOLLOW && lstatSync(full, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error(LINK(full));
   try {
     return openSync(full, flags | NO_FOLLOW, 0o600);
   } catch (err) {
@@ -70,7 +71,7 @@ function withFile<T>(full: string, flags: number, fn: (fd: number) => T): T {
   }
 }
 
-const { O_APPEND, O_CREAT, O_EXCL, O_RDONLY, O_TRUNC, O_WRONLY } = constants;
+const { O_APPEND, O_CREAT, O_EXCL, O_RDONLY, O_WRONLY } = constants;
 
 /** Writes a new note file; refuses when anything, a link included, is already at its name. */
 function createNoteFile(dir: string, path: string, text: string): void {
@@ -235,5 +236,9 @@ export function homeNoteFile(store: Store, home: string, entry: Entry): string |
 export function rewriteNoteFile(path: string, body: string): void {
   if (!present(path)) throw new Error(`The note file ${path} is gone, so it can't be updated. Nothing was saved.`);
   const front = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(readNoteFile(path))?.[0];
-  withFile(resolve(path), O_WRONLY | O_TRUNC, (fd) => writeFileSync(fd, `${front ? `${front}\n` : ''}${body.trim()}\n`));
+  // Truncated after the open, not with O_TRUNC: Windows refuses O_TRUNC without O_CREAT (EINVAL).
+  withFile(resolve(path), O_WRONLY, (fd) => {
+    ftruncateSync(fd, 0);
+    writeFileSync(fd, `${front ? `${front}\n` : ''}${body.trim()}\n`);
+  });
 }

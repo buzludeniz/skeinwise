@@ -36,11 +36,12 @@ menu closed). Its items, in order:
 1. **Open Skeinwise**: brings the window forward.
 2. **Command bar** ⌥⌘K
 3. **Add files…**: a file picker for exports, notes and folders.
-4. **Record live**: a switch. Under it, two status lines that change as things happen, for example "saved 2 minutes
+4. **Live capture**: a switch. Under it, two status lines that change as things happen, for example "saved 2 minutes
    ago" and "caught up 3 chats from Claude Code · organised 41 new entries".
 5. **Connect ▸**: each agent found on this computer, with Connect or Connected.
-6. **Get an export ▸**: ChatGPT, Claude, Gemini. Each opens our step-by-step guide for requesting that export, and
-   Skeinwise watches Downloads for the file.
+6. **Get an export ▸**: ChatGPT, Claude, Gemini. Each opens our step-by-step guide for requesting that export. With
+   Live capture on, a file that lands in Downloads is proposed to pending, and you review it in the terminal with
+   `skeinwise live pending`.
 7. **Lock**
 8. **Settings** ⌘,
 9. **Quit**: stops the local server.
@@ -83,23 +84,23 @@ A narrow column on the left, icon above label:
 |---|---|---|
 | Search ⌘K | `search` | The command bar |
 | Brain | `brain` | The 3D view of the record |
-| Navigator | `compass` | Folders, hubs, threads and notes in columns |
-| Numbers | `hash` | Plain figures about the record |
+| Threads | `compass` | Folders, hubs, threads and notes in columns |
+| Stats | `hash` | Plain figures about the record |
 | Timeline | `calendar-range` | Activity over time |
-| You | `user-round` | What the record says about you |
-| Lab | `flask-conical` | The table builder and Tides |
-| Learn | `graduation-cap` | How to read the brain |
+| Profile | `user-round` | What the record says about you |
+| Workbench | `flask-conical` | The table builder and Activity |
+| Guide | `graduation-cap` | How to read the brain |
 | + Add | `plus` | Add files, a note or a source |
 
-Keys 1 to 8 switch views. A Review badge sits on Navigator when notes wait for review. The footer reads "Woven from N
-entries" and links to Numbers.
+Keys 1 to 8 switch views. A Review badge sits on Threads when notes wait for review. The footer reads "Woven from N
+entries" and links to Stats.
 
 ## Brain
 
-The main view: a dark canvas holding a 3D point cloud in the shape of a brain, with a brainstem and a spine below it.
+The main view: a dark canvas holding a 3D point cloud in the shape of a brain, with a stem below it.
 
-- **Points.** In the two lobes, each point is a note, a concept hub or a summary. The brainstem and spine hold the
-  originals (messages and files), wound in time order from the bottom up, so the oldest words sit lowest.
+- **Points.** In the two lobes, each point is a note, a concept hub or a summary. The stem holds the originals
+  (messages and files), wound in time order from the bottom up, so the oldest words sit lowest.
 - **Colour** is the group: project, folder, source, speaker or hub, chosen in the legend.
 - **Moving.** Drag to rotate, scroll or pinch to zoom, double-click a point to open it. The cloud turns slowly on its
   own until you touch it.
@@ -108,14 +109,14 @@ The main view: a dark canvas holding a 3D point cloud in the shape of a brain, w
   and view settings (point size, line density, labels, slow turning).
 - **Legend** along the foot, with a switch for the grouping ("By project", "By folder", "By source", "By speaker").
   Each group shows its count, the list ends in "+N more", and clicking a group isolates it.
-- **Layouts:** Brain, Year rings (below), and a flat Clusters layout.
+- **Layouts:** Brain, Activity (below), and a flat Clusters layout.
 
-## Learn
+## Guide
 
 A side panel titled "Reading your brain", in short plain paragraphs:
 
 - **Hubs:** the large labelled points, one per concept the organiser found.
-- **Brainstem and spine:** the originals, oldest at the bottom.
+- **The stem:** the originals, oldest at the bottom.
 - **Clusters:** points close together share words and links.
 - **The index:** what search reads, and how it ranks your own words first.
 - **Colour and labels:** what the legend's grouping does, and when labels show.
@@ -132,7 +133,7 @@ sections follow: **In short**, **What you found** and **Open ends**. Every bulle
 words, and its link opens the entry it came from. Buttons: **Rename**, **Merge into…**, **Not useful** and
 **Refresh**.
 
-## Year rings
+## Activity layout
 
 The record seen from above as rings: time runs from the centre outward, one ring per year, months as slices. A "How
 to read this" box names the four channels: **Place** (when), **Colour** (group), **Size** (how many entries) and
@@ -143,15 +144,15 @@ to read this" box names the four channels: **Place** (when), **Colour** (group),
 Charts of entries per week, split by source or speaker. Drag across a span and the matching points light up in the
 brain, which stays visible in a strip above the chart. Presets: last month, last year, all.
 
-## Lab
+## Workbench
 
 **Table builder:** two properties on the axes (time, folder, project, hub, source, speaker, tag), a third as a
 filter, and one of six forms: table, heatmap, bars, stacked bars, lines or dots. Clicking a cell lists its entries.
 Views can be saved.
 
-**Tides:** each topic's activity over time as a line, with a linear or log scale and a smoothing slider.
+**Activity:** each topic's activity over time as a line, with a linear or log scale and a smoothing slider.
 
-## Navigator
+## Threads
 
 Three columns: folders and hubs, then threads and notes, then the reader. Sort by date or name; filter by source,
 speaker and date. **Inbox** holds entries not yet filed; **Review** holds notes that may be out of date; **Runs**
@@ -187,13 +188,13 @@ without a click, and the list marks each note Updated or Still holds once you ch
   made.
 - ⌘Z undoes the last change.
 
-## You
+## Profile
 
 What the record says about you: the topics you return to, your projects by time span, the people you mention, and the
 first and latest date for each. Every line links to the entries behind it. **Check a claim** takes a sentence, a line
 from a CV say, and shows the entries that back it up or argue with it.
 
-## Numbers
+## Stats
 
 Entries, threads, notes, hubs and sources; your words and the assistants'; the busiest months; and how far the
 organiser has got (the share of entries tagged, filed and summarised).
@@ -234,5 +235,5 @@ contrast at WCAG AA or better.
 ## Lock and updates
 
 **Lock** covers the window with an unlock screen and stops both agent servers until you unlock. Before an agent's
-first read, the window asks you to allow it; where the browser supports passkeys, Touch ID can confirm. When a new
-release is out, a thin banner says "Skeinwise X.Y is out" with **Update** and **Later**.
+first read, the window asks you to allow it. When a new release is out, a thin banner says "Skeinwise X.Y is out"
+with **Update** and **Later**.

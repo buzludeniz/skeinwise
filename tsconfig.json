@@ -19,6 +19,7 @@
   "include": [
     "src",
     "test",
-    "e2e"
+    "e2e",
+    "release"
   ]
 }

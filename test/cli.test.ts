@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../src/cli.ts';
 import { buildThreads, DEMO_NOW, writeDemo } from '../src/demo/demo.ts';
+import { expectMode } from './modes.ts';
 
 let dir: string;
 
@@ -59,7 +60,7 @@ describe('the skeinwise command', () => {
 
   it('creates an owner-only record folder', async () => {
     expect(JSON.parse((await cli('init', '--json')).out)).toEqual({ home: join(dir, 'home') });
-    expect(statSync(join(dir, 'home')).mode & 0o777).toBe(0o700);
+    expectMode(join(dir, 'home'), 0o700);
     expect(statSync(join(dir, 'home', 'record.db')).isFile()).toBe(true);
   });
 
@@ -118,7 +119,10 @@ describe('the skeinwise command', () => {
       writeFileSync(join(folder, `${id}.jsonl`), `${JSON.stringify({ ...line, message: { role: 'user', content: prompt } })}\n`);
     }
     expect((await cli('import', join(dir, 'claude-code'))).code).toBe(0);
-    expect((await cli('help')).out).toMatch(/--to <date> .*\n {6}--project <name> +Only coding sessions/);
+    const help = (await cli('help')).out;
+    expect(help).toMatch(/--to <date> .*\n {6}--project <name> +Only coding sessions/);
+    // ask takes --project too, documented under its --engine line.
+    expect(help).toMatch(/\n  ask <question>.*\n.*\n {6}--engine <name> .*\n {6}--project <name> +Only coding sessions.*\n  similar <entry>/);
 
     const all = JSON.parse((await cli('search', 'reminders', '--json')).out) as { id: number }[];
     expect(all).toHaveLength(2);

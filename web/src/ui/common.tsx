@@ -35,11 +35,24 @@ export function Button({ icon: Icon, kind = 'plain', small, children, class: cls
   );
 }
 
-export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
+export function Switch({
+  checked,
+  onChange,
+  label,
+  disabled,
+  role = 'switch',
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  disabled?: boolean;
+  /** `menuitemcheckbox` inside a menu, where a switch isn't one of the items a menu may hold. */
+  role?: 'switch' | 'menuitemcheckbox';
+}) {
   return (
     <button
       type="button"
-      role="switch"
+      role={role}
       aria-checked={checked}
       class={`switch${checked ? ' on' : ''}`}
       onClick={() => onChange(!checked)}
@@ -247,7 +260,10 @@ export function SidePanel({
         {actions}
         <Button icon={X} kind="quiet" aria-label="Close" title="Close (Esc)" onClick={onClose} />
       </header>
-      <div class="side-body">{children}</div>
+      {/* Focusable, so a keyboard can scroll a panel that holds no link or button (WCAG 2.1.1). */}
+      <div class="side-body" tabIndex={0}>
+        {children}
+      </div>
     </aside>
   );
 }

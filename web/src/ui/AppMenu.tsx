@@ -90,9 +90,10 @@ export function AppMenu({ onAddFiles }: { onAddFiles: () => void }) {
       <button type="button" role="menuitem" onClick={run(onAddFiles)}>
         Add files…
       </button>
-      <div class="menu-sep" />
-      <div class="menu-live">
+      <div class="menu-sep" role="separator" />
+      <div class="menu-live" role="group" aria-label="Live capture">
         <Switch
+          role="menuitemcheckbox"
           checked={recordLive}
           label="Live capture"
           onChange={(v) => {
@@ -109,14 +110,18 @@ export function AppMenu({ onAddFiles }: { onAddFiles: () => void }) {
           </p>
         )}
       </div>
-      <div class="menu-sep" />
+      <div class="menu-sep" role="separator" />
       <div class="menu-sub-wrap">
         <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={sub === 'connect'} onClick={() => setSub(sub === 'connect' ? null : 'connect')}>
           Connect <ChevronRight size={14} aria-hidden="true" />
         </button>
         {sub === 'connect' && (
           <div class="submenu" role="menu" aria-label="Connect">
-            {!agents && <p class="menu-status">Looking…</p>}
+            {!agents && (
+              <p class="menu-status" role="none">
+                Looking…
+              </p>
+            )}
             {agents?.map((a) => (
               <div class="submenu-row" key={a.key}>
                 <span>{a.label}</span>
@@ -148,7 +153,7 @@ export function AppMenu({ onAddFiles }: { onAddFiles: () => void }) {
           </div>
         )}
       </div>
-      <div class="menu-sep" />
+      <div class="menu-sep" role="separator" />
       <button type="button" role="menuitem" onClick={run(() => void lock().catch((e: unknown) => toast(message(e), { tone: 'error' })))}>
         Lock
       </button>

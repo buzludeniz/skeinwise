@@ -35,9 +35,11 @@ function modes(root: string, prefix = ''): [string, number][] {
 }
 
 const loose = (found: [string, number][]) => found.filter(([name, mode]) => mode !== (name.endsWith('/') ? 0o700 : 0o600));
+// Owner-only modes are POSIX: Windows reports 0o666 whatever chmod sets, and doctor checks the folder's ACL there.
+const posix = process.platform !== 'win32';
 
 describe('the record folder is owner-only (PoC 14)', () => {
-  it('makes record.db, its WAL and shm, notes and every folder owner-only under umask 022', async () => {
+  it.runIf(posix)('makes record.db, its WAL and shm, notes and every folder owner-only under umask 022', async () => {
     const home = join(dir, 'record');
     const io = { out: () => {}, err: () => {}, env: { SKEINWISE_HOME: home, HOME: dir } };
     const chats = join(dir, 'export');
@@ -71,7 +73,7 @@ describe('the record folder is owner-only (PoC 14)', () => {
     expect(statSync(home).mode & 0o777).toBe(0o700);
   });
 
-  it('closes a record folder an older version left open, and leaves links and what they point at alone', () => {
+  it.runIf(posix)('closes a record folder an older version left open, and leaves links and what they point at alone', () => {
     // What an older version left under umask 022: folders 0755, files 0644 (an empty record.db opens as a new one).
     const home = join(dir, 'old');
     mkdirSync(join(home, 'notes', 'daily'), { recursive: true });
@@ -95,7 +97,6 @@ describe('the record folder is owner-only (PoC 14)', () => {
 });
 
 // Main's own check (91be4f0): record.db is 0600 before SQLite opens it, so the -wal and -shm it makes are too.
-const posix = process.platform !== 'win32';
 const mode = (file: string) => statSync(file).mode & 0o777;
 
 describe('openHome', () => {

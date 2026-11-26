@@ -2774,7 +2774,6 @@ svg .mark:hover {
 }
 
 .workbench-table.heat td button.on-strong {
-  color: var(--on-accent);
   font-weight: 600;
 }
 

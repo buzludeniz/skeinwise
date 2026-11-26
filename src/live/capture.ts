@@ -8,6 +8,7 @@ import { basename, extname, join, relative, resolve } from 'node:path';
 import { openSafe, readRange, readSafe, UnsafeFileError } from '../fsafe.ts';
 import { parseClaudeCodeSession } from '../importers/chats.ts';
 import { readFilesUnder, readImports, sniffSession } from '../importers/detect.ts';
+import { NOTE_FILE_EXT } from '../importers/note-ext.ts';
 import { FileReport } from '../importers/util.ts';
 import type { ImportBatch, ImportResult, Store } from '../store/store.ts';
 import { type FileExtra, type FileRow, FileTable } from './files.ts';
@@ -62,7 +63,7 @@ export interface Organised {
 
 const EXPORT_KINDS = new Set(['chatgpt', 'claude', 'gemini']);
 const DOWNLOAD_EXT = new Set(['.zip', '.json']);
-const TREE_EXT = new Set(['.jsonl', '.md', '.markdown', '.txt']);
+const TREE_EXT = new Set(['.jsonl', ...NOTE_FILE_EXT]);
 
 /**
  * The places watched: Claude Code and Codex history and the chosen folders, where they exist. Downloads only when
@@ -192,10 +193,14 @@ export interface CaptureOptions {
   onWarning?: (line: string) => void;
 }
 
-/** Whether a path under a watched folder is one the importers read: no part hidden or `node_modules` (as `readFilesUnder`). */
+/**
+ * Whether a path under a watched folder is one the importers read: no part hidden or `node_modules` (as `readFilesUnder`),
+ * and not one of Word's lock files (`~$Name.docx`), which sit beside every open document and are never a zip.
+ */
 function watched(root: string, file: string, exts: Set<string>): boolean {
   const rel = relative(root, file);
   if (!rel || rel.startsWith('..') || rel.split(/[\\/]/).some((part) => part.startsWith('.') || part === 'node_modules')) return false;
+  if (basename(file).startsWith('~$')) return false;
   return exts.has(extname(file).toLowerCase());
 }
 

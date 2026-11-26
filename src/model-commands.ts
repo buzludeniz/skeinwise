@@ -378,8 +378,8 @@ function runnable(file: string): boolean {
 }
 
 /** The first executable of that name on PATH, or null. */
-export function onPath(name: string, path: string | undefined): string | null {
-  for (const dir of (path ?? '').split(delimiter)) {
+export function onPath(name: string, path: string | undefined, separator: string = delimiter): string | null {
+  for (const dir of (path ?? '').split(separator)) {
     if (!dir) continue;
     const file = join(dir, name);
     if (runnable(file)) return file;
@@ -400,8 +400,24 @@ function checkFlags(binary: string, env: Record<string, string>): void {
   }
 }
 
-function quote(arg: string): string {
+/** llama-server on PATH: llama-server.exe on Windows, where PATH is split by ";". */
+export function findLlamaServer(path: string | undefined, platform: NodeJS.Platform = process.platform): string | null {
+  return platform === 'win32' ? onPath('llama-server.exe', path, ';') : onPath('llama-server', path, ':');
+}
+
+function posixWord(arg: string): string {
   return /^[\w./:=@-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/** One argument as a Windows program reads it back: in double quotes, a quote inside escaped with a backslash, and
+ * the backslashes before a quote or at the end doubled. cmd.exe would pass single quotes on as part of the word. */
+export function windowsWord(arg: string): string {
+  return /^[\w.\\/:~+=-]+$/.test(arg) ? arg : `"${arg.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
+}
+
+/** A command line to print for the platform it will be pasted on. */
+export function commandLine(argv: string[], platform: NodeJS.Platform = process.platform): string {
+  return argv.map(platform === 'win32' ? windowsWord : posixWord).join(' ');
 }
 
 async function serve(ctx: Ctx, file: string | undefined): Promise<number> {
@@ -421,13 +437,13 @@ async function serve(ctx: Ctx, file: string | undefined): Promise<number> {
     );
   }
   // Resolved once from PATH, then kept: a program put earlier on PATH later doesn't take its place.
-  const binary = config.llamaServer || onPath('llama-server', ctx.io.env.PATH);
+  const binary = config.llamaServer || findLlamaServer(ctx.io.env.PATH);
   const argv = serveCommand(model, config.localUrl, serverKeyPath(ctx.home), binary ?? 'llama-server');
   const keyFile = ensureServerKey(ctx.home);
   if (!ctx.values.run) {
     if (ctx.values.json) ctx.json({ command: argv, model, url: config.localUrl, keyFile });
     else {
-      ctx.io.out(`${argv.map(quote).join(' ')}\n\n`);
+      ctx.io.out(`${commandLine(argv)}\n\n`);
       ctx.io.out(`It answers only requests that carry the key in ${keyFile}, which Skeinwise sends.\n`);
       ctx.io.out('Run it in its own terminal, or let Skeinwise run it: skeinwise model serve --run\n');
     }
@@ -448,7 +464,7 @@ async function serve(ctx: Ctx, file: string | undefined): Promise<number> {
     setConfigValue(ctx.home, 'llamaServer', binary);
     ctx.io.err(`Using ${binary}, found on your PATH and saved as llamaServer. Change it with: skeinwise config llamaServer <path>\n`);
   }
-  ctx.io.err(`Starting ${argv.map(quote).join(' ')}\nThe model answers at ${config.localUrl} once it has loaded. Press Ctrl+C to stop it.\n`);
+  ctx.io.err(`Starting ${commandLine(argv)}\nThe model answers at ${config.localUrl} once it has loaded. Press Ctrl+C to stop it.\n`);
   const child = spawn(binary, argv.slice(1), { stdio: 'inherit', env });
   // Ctrl+C reaches the server too; wait for it to finish rather than leave it behind.
   const ignore = () => {};
