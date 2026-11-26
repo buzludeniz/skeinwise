@@ -132,6 +132,20 @@ describe('openZipSafe', () => {
     }
   });
 
+  it("finds the end record whose comment runs to the end of the file, not an end record's bytes inside that comment", () => {
+    const zip = Buffer.from(zipSync({ 'a.json': strToU8('[]') }));
+    const fake = Buffer.alloc(22); // an end record's signature and an empty directory, as text a comment may hold
+    fake.writeUInt32LE(0x06054b50, 0);
+    const comment = Buffer.concat([Buffer.from('Exported by a tool that quotes '), fake, Buffer.from(' in its comment.')]);
+    zip.writeUInt16LE(comment.length, zip.length - 2);
+    const zip2 = openZipSafe(write('commented.zip', Buffer.concat([zip, comment])));
+    try {
+      expect(zip2.entries.map((e) => e.name)).toEqual(['a.json']);
+    } finally {
+      zip2.close();
+    }
+  });
+
   it('keeps only the entries the filter wants', () => {
     const path = write('mixed.zip', zipSync({ 'a.json': strToU8('[]'), 'b.png': strToU8('x') }));
     const zip = openZipSafe(path, { filter: (name) => name.endsWith('.json') });
