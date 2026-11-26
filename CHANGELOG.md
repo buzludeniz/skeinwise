@@ -34,6 +34,8 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
 - The work-tool connectors (Gmail, Google Calendar, Todoist and Slack) move to 1.1.
 - Encrypted sync is hidden in 1.0. Export stays.
 - `skeinwise stats` prints the busiest months as plain text.
+- At most 50 notes become Projects, the ones linked from the most entries, and a daily note never does. A record
+  that links freely used to get thousands.
 
 ### Security
 
