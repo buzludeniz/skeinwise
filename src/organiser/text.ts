@@ -222,6 +222,64 @@ export function centroid(vectors: Vec[]): Vec {
   return normalise(sum);
 }
 
+/**
+ * The vectors close to a query vector, from an inverted index, so an all-pairs comparison needn't compare every pair:
+ * only vectors sharing a term are touched. The dot products are summed term by term, not as {@link cosine} sums them,
+ * so they can differ from cosine in the last bits (far below 1e-9).
+ */
+export class Postings {
+  private readonly start: Int32Array;
+  private readonly ids: Int32Array;
+  private readonly weights: Float64Array;
+  private readonly dot: Float64Array;
+  private readonly touched: Int32Array;
+
+  constructor(vectors: Vec[]) {
+    let dims = 0;
+    let total = 0;
+    for (const v of vectors) {
+      total += v.size;
+      for (const t of v.keys()) if (t >= dims) dims = t + 1;
+    }
+    const count = new Int32Array(dims + 1);
+    for (const v of vectors) for (const t of v.keys()) count[t + 1]!++;
+    for (let t = 0; t < dims; t++) count[t + 1]! += count[t]!;
+    this.start = count.slice();
+    this.ids = new Int32Array(total);
+    this.weights = new Float64Array(total);
+    const fill = count;
+    vectors.forEach((v, i) => {
+      for (const [t, w] of v) {
+        const p = fill[t]!++;
+        this.ids[p] = i;
+        this.weights[p] = w;
+      }
+    });
+    this.dot = new Float64Array(vectors.length);
+    this.touched = new Int32Array(vectors.length);
+  }
+
+  /** The vectors whose dot product with v is at least min: their indexes, in index order, and the dot products. */
+  near(v: Vec, min: number): { i: number; dot: number }[] {
+    let n = 0;
+    for (const [t, w] of v) {
+      if (t + 1 >= this.start.length) continue;
+      for (let p = this.start[t]!; p < this.start[t + 1]!; p++) {
+        const i = this.ids[p]!;
+        if (this.dot[i] === 0) this.touched[n++] = i;
+        this.dot[i]! += w * this.weights[p]!;
+      }
+    }
+    const out: { i: number; dot: number }[] = [];
+    for (let k = 0; k < n; k++) {
+      const i = this.touched[k]!;
+      if (this.dot[i]! >= min) out.push({ i, dot: this.dot[i]! });
+      this.dot[i] = 0;
+    }
+    return out.sort((a, b) => a.i - b.i);
+  }
+}
+
 /** The number of groups for n items: about the square root of n/2, at least 1 and at most 40. */
 export function chooseK(n: number): number {
   return Math.max(1, Math.min(40, Math.round(Math.sqrt(n / 2))));

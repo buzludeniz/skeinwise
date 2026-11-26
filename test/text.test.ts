@@ -9,6 +9,7 @@ import {
   KMEANS_SAMPLE,
   kmeans,
   pickDiverse,
+  Postings,
   sentences,
   stem,
   summarize,
@@ -182,6 +183,22 @@ describe('k-means', () => {
     for (let c = 0; c < 8; c++) {
       const groups = new Set(a.assign.filter((_, i) => i % 8 === c && i !== 17));
       expect(groups.size).toBe(1);
+    }
+  });
+
+  it('Postings finds exactly the vectors at or above a dot product, with cosine’s value', () => {
+    const vectors = [...grouped(600, 5, 9), new Map(), ...index.vectors];
+    const postings = new Postings(vectors);
+    for (const q of [vectors[0]!, vectors[3]!, vectors[602]!, vectorize(index, 'allotment rent bread'), new Map()]) {
+      for (const min of [0.05, 0.35, 0.8]) {
+        const want = vectors.flatMap((v, i) => (cosine(q, v) >= min + 1e-9 ? [i] : []));
+        const got = postings.near(q, min);
+        expect(got.map((c) => c.i)).toEqual([...got.map((c) => c.i)].sort((a, b) => a - b));
+        // Nothing clearly above the line is missed, and nothing clearly below it is let in.
+        expect(want.filter((i) => !got.some((c) => c.i === i))).toEqual([]);
+        expect(got.filter((c) => cosine(q, vectors[c.i]!) < min - 1e-9)).toEqual([]);
+        for (const c of got) expect(Math.abs(c.dot - cosine(q, vectors[c.i]!))).toBeLessThan(1e-12);
+      }
     }
   });
 
