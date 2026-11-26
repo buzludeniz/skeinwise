@@ -15,12 +15,69 @@ const RING_SEGMENTS = 24;
 /** The tones: a fold's ring, and a nerve still waiting for its source's first entry. */
 export const FOLD_TONE = 0.45;
 export const WAITING_TONE = 0.3;
+/** The outline's lines: how many run along each capsule, their tone, and their step in head units. */
+const MERIDIANS = 6;
+export const OUTLINE_TONE = 0.4;
+const CONTOUR_STEP = 0.12;
+const CAP_STEPS = 6;
 
 const unit = (v: V3): V3 => {
   const l = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / l, v[1] / l, v[2] / l];
 };
 const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
+/** A capsule's axis from a to b, its length, and two directions square to the axis and to each other. */
+function frameOf(c: Capsule): { axis: V3; len: number; e1: V3; e2: V3 } {
+  const d: V3 = [c.b[0] - c.a[0], c.b[1] - c.a[1], c.b[2] - c.a[2]];
+  const len = Math.hypot(d[0], d[1], d[2]);
+  const axis: V3 = len ? [d[0] / len, d[1] / len, d[2] / len] : [0, 1, 0];
+  const e1 = unit(cross(axis, Math.abs(axis[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]));
+  return { axis, len, e1, e2: cross(axis, e1) };
+}
+
+/**
+ * The body's outline as lines, so it reads from as far off as the Body framing stands and on light themes, where the
+ * additive dust of bodyOutline doesn't show. On every capsule below the head: a few lines from end to end over its
+ * round ends, and a ring round each end of its straight part. A piece that runs inside another capsule is left out,
+ * so the joints read as one surface. World units, in pairs for line segments; decoration only.
+ */
+export function bodyContours(): { positions: Float32Array; tone: Float32Array } {
+  const pos: number[] = [];
+  CAPSULES.forEach((c, k) => {
+    if (c.part === 'head') return;
+    const others = CAPSULES.filter((_, j) => j !== k);
+    const { axis, len, e1, e2 } = frameOf(c);
+    const at = (base: V3, along: number, angle: number, out: number): V3 =>
+      [0, 1, 2].map((d) => base[d]! + axis[d]! * along + (e1[d]! * Math.cos(angle) + e2[d]! * Math.sin(angle)) * out) as V3;
+    const draw = (path: V3[]) => {
+      for (let i = 1; i < path.length; i++) {
+        const [p, q] = [path[i - 1]!, path[i]!];
+        if (outside(p, others) === 0 || outside(q, others) === 0) continue;
+        pos.push(...toWorld(p), ...toWorld(q));
+      }
+    };
+    const steps = Math.max(1, Math.ceil(len / CONTOUR_STEP));
+    for (let m = 0; m < MERIDIANS; m++) {
+      const angle = (m / MERIDIANS) * 2 * Math.PI;
+      const path: V3[] = [];
+      for (let s = 0; s <= CAP_STEPS; s++) {
+        const phi = -Math.PI / 2 + (s / CAP_STEPS) * (Math.PI / 2);
+        path.push(at(c.a, c.r * Math.sin(phi), angle, c.r * Math.cos(phi)));
+      }
+      for (let s = 1; s <= steps; s++) path.push(at(c.a, (s / steps) * len, angle, c.r));
+      for (let s = 1; s <= CAP_STEPS; s++) {
+        const phi = (s / CAP_STEPS) * (Math.PI / 2);
+        path.push(at(c.b, c.r * Math.sin(phi), angle, c.r * Math.cos(phi)));
+      }
+      draw(path);
+    }
+    for (const along of [0, len]) {
+      draw(Array.from({ length: RING_SEGMENTS + 1 }, (_, s) => at(c.a, along, (s / RING_SEGMENTS) * 2 * Math.PI, c.r)));
+    }
+  });
+  return { positions: new Float32Array(pos), tone: new Float32Array(pos.length / 3).fill(OUTLINE_TONE) };
+}
 
 /** A point spread evenly over a capsule's surface: its side or one of its two round ends, by area. */
 function onCapsule(c: Capsule, r: () => number): V3 {

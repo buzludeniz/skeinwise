@@ -19,7 +19,7 @@ import {
 } from 'three';
 import { hash01, layoutFor, ringGuides, stripLayout, type Layout, type LayoutPoint } from '../layout.ts';
 import { bodyLayout, type BodyLayout } from './body.ts';
-import { bodyOutline, cordRings, nerveLines } from './bodyGeometry.ts';
+import { bodyContours, bodyOutline, cordRings, nerveLines } from './bodyGeometry.ts';
 import { type Framing, framingBox } from './framing.ts';
 import { hexToRgb } from '../themes.ts';
 import type { SceneInput } from './input.ts';
@@ -235,6 +235,7 @@ export class BrainScene {
   private layouts = new Map<Layout | 'strip', Float32Array>();
   /** The body behind the brain layout, for its guides, and the now its cord's top month was set from. */
   private body: BodyLayout | null = null;
+  private contours: { positions: Float32Array; tone: Float32Array } | null = null;
   private now = Date.now();
   /** What the brain layout's camera fits in the full view: the whole body, the head or the cord. */
   private framing: Framing = 'body';
@@ -984,14 +985,17 @@ export class BrainScene {
    */
   private buildBodyGuides(input: SceneInput): void {
     this.body ??= bodyLayout(input.points, input.sources, this.now);
-    const nerves = nerveLines(this.body);
-    const rings = cordRings(this.body);
-    const pos = new Float32Array(nerves.positions.length + rings.positions.length);
-    pos.set(nerves.positions);
-    pos.set(rings.positions, nerves.positions.length);
+    // The outline's lines don't depend on the record, so they're built once.
+    this.contours ??= bodyContours();
+    const parts = [nerveLines(this.body), cordRings(this.body), this.contours];
+    const pos = new Float32Array(parts.reduce((n, p) => n + p.positions.length, 0));
     const tone = new Float32Array(pos.length / 3);
-    tone.set(nerves.tone);
-    tone.set(rings.tone, nerves.tone.length);
+    let at = 0;
+    for (const part of parts) {
+      pos.set(part.positions, at * 3);
+      tone.set(part.tone, at);
+      at += part.tone.length;
+    }
     const ink = rgb(this.theme.ink);
     const ground = rgb(this.theme.ground);
     const colors = new Float32Array(pos.length);

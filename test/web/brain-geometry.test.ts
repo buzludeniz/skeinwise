@@ -3,9 +3,9 @@
 // or faint and whole while their source has nothing yet.
 
 import { describe, expect, it } from 'vitest';
-import { CAPSULES, CORD, pointAlong, type V3 } from '../../web/src/brain/anatomy.ts';
+import { BODY, CAPSULES, CORD, type Capsule, pointAlong, type V3 } from '../../web/src/brain/anatomy.ts';
 import { bodyLayout, HEAD_SCALE, toHead, toWorld } from '../../web/src/brain/body.ts';
-import { bodyOutline, cordRings, FOLD_TONE, nerveLines, RING_RADIUS, WAITING_TONE } from '../../web/src/brain/bodyGeometry.ts';
+import { bodyContours, bodyOutline, cordRings, FOLD_TONE, nerveLines, OUTLINE_TONE, RING_RADIUS, WAITING_TONE } from '../../web/src/brain/bodyGeometry.ts';
 import { brainOutline, type LayoutPoint } from '../../web/src/layout.ts';
 
 const NOW = Date.parse('2026-11-25T12:00:00Z');
@@ -121,5 +121,37 @@ describe('the nerves', () => {
       if (lines.nerve[j] !== lines.nerve[j - 1]) continue;
       expect(near(triple(lines.positions, j * 2), triple(lines.positions, (j - 1) * 2 + 1))).toBe(0);
     }
+  });
+});
+
+describe("the outline's lines", () => {
+  /** How far a point lies from a capsule's surface: below 0 inside it. */
+  const fromSurface = (p: V3, { a, b, r }: Capsule) => {
+    const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0]! + (p[1] - a[1]) * ab[1]! + (p[2] - a[2]) * ab[2]!) / (ab[0]! ** 2 + ab[1]! ** 2 + ab[2]! ** 2 || 1)));
+    return Math.hypot(p[0] - a[0] - ab[0]! * t, p[1] - a[1] - ab[1]! * t, p[2] - a[2] - ab[2]! * t) - r;
+  };
+  const { positions, tone } = bodyContours();
+  const ends = Array.from({ length: positions.length / 3 }, (_, i) => toHead([positions[i * 3]!, positions[i * 3 + 1]!, positions[i * 3 + 2]!]));
+
+  it("lie on the body's surface below the head, inside no other capsule, in the outline's tone", () => {
+    expect(ends.length).toBeGreaterThan(500);
+    expect(ends.length % 2).toBe(0);
+    for (const p of ends) {
+      const gaps = CAPSULES.map((c) => fromSurface(p, c));
+      expect(Math.min(...gaps.map(Math.abs))).toBeLessThan(1e-4);
+      expect(Math.min(...gaps)).toBeGreaterThan(-1e-4);
+    }
+    // The neck's lines meet the head's round underside, above the chin's level but below the head's middle.
+    const head = CAPSULES.find((c) => c.part === 'head')!;
+    expect(Math.max(...ends.map((p) => p[1]))).toBeLessThan(Math.min(head.a[1], head.b[1]));
+    expect([...tone].every((t) => t === Math.fround(OUTLINE_TONE))).toBe(true);
+  });
+
+  it('outline both sides alike, from the neck down to the floor', () => {
+    const left = ends.filter((p) => p[0] < -1e-3).length;
+    const right = ends.filter((p) => p[0] > 1e-3).length;
+    expect(left).toBe(right);
+    expect(Math.min(...ends.map((p) => p[1]))).toBeLessThan(BODY.floor + 0.3);
   });
 });
