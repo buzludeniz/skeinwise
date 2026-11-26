@@ -55,5 +55,6 @@ export function entryBrief(e: Entry): string {
 export function engineLabel(engine: string, model: string | null): string {
   if (engine === 'none') return 'No-AI';
   if (engine === 'you') return 'by you';
+  if (engine === 'agent') return model ? `agent ${safeLine(model)}` : 'an agent';
   return model ? `${safeLine(engine)} model ${safeLine(model)}` : `${safeLine(engine)} model`;
 }
