@@ -163,6 +163,17 @@ export interface BrainData {
  */
 export const BRAIN_POINTS = 20_000;
 
+/**
+ * A point's label as /api/brain sends it. A note's or a file's title keeps up to 90 characters, since the brain draws
+ * the best-linked notes' titles on the canvas. A message's label is only a preview of its first line, shown on hover,
+ * and most points are messages, so it keeps 56: that holds a 50,000-entry record's first load under the 600 kB budget
+ * (plan section 7: 558 kB on the bench corpus, 672 kB at 90).
+ */
+export function pointLabel(title: string, kind: string): string {
+  const max = kind === 'message' ? 56 : 90;
+  return title.length > max ? `${title.slice(0, max - 1)}…` : title;
+}
+
 /** Picks `room` of the indices spread evenly over time, so the sample keeps the record's shape. */
 function spread(points: BrainPoint[], indices: number[], room: number): number[] {
   if (indices.length <= room) return indices;
@@ -215,7 +226,7 @@ export function brainData(db: DatabaseSync, cap = BRAIN_POINTS): BrainData {
       intern(folders, fo, r.folder),
       r.project === null ? -1 : intern(projects, pr, r.project),
       Date.parse(r.createdAt),
-      r.title.length > 90 ? `${r.title.slice(0, 89)}…` : r.title,
+      pointLabel(r.title, r.kind),
     ];
   });
   const sourceList = [...sources.values()];

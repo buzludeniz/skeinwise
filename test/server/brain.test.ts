@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../../src/cli.ts';
 import { openHome } from '../../src/home.ts';
-import { BRAIN_POINTS, brainData, type BrainPoint, samplePoints } from '../../src/server/queries.ts';
+import { BRAIN_POINTS, brainData, type BrainPoint, pointLabel, samplePoints } from '../../src/server/queries.ts';
 import type { Store } from '../../src/store/store.ts';
 
 let dir: string;
@@ -44,6 +44,20 @@ describe('samplePoints', () => {
     expect(keep).toContain(101);
     const times = keep.filter((i) => i < 100).map((i) => points[i]![7]).sort((a, b) => a - b);
     expect(times).toEqual([0, 10, 20, 30, 40, 50, 60, 70, 80, 90]);
+  });
+});
+
+describe('pointLabel', () => {
+  it("keeps a note's or file's title to 90 characters and a message's preview to 56", () => {
+    const long = 'word '.repeat(40);
+    expect(pointLabel(long, 'note')).toBe(`${long.slice(0, 89)}…`);
+    expect(pointLabel(long, 'file')).toHaveLength(90);
+    expect(pointLabel(long, 'message')).toBe(`${long.slice(0, 55)}…`);
+    expect(pointLabel('Short', 'message')).toBe('Short');
+  });
+
+  it('labels every point in the brain that way', () => {
+    for (const p of brainData(store.db).points) expect(p[8].length).toBeLessThanOrEqual(p[1] === 0 ? 56 : 90);
   });
 });
 
