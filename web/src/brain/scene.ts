@@ -128,7 +128,8 @@ varying float vShade;
 void main() {
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
-  gl_PointSize = clamp(0.022 * uScale / max(0.05, -mv.z), 0.0, 8.0) * uRatio * uShow;
+  // At least a pixel, so the whole body's outline still shows from as far off as the Body framing stands.
+  gl_PointSize = clamp(0.022 * uScale / max(0.05, -mv.z), 1.0, 8.0) * uRatio * uShow;
   vShade = shade;
 }`;
 
@@ -1123,6 +1124,8 @@ export class BrainScene {
       }
     }
     if (minY === Infinity) return { yaw: 0.55, pitch: 0.1, dist: 6, target: new Vector3() };
+    // The whole body is tall: room above the crown keeps the head's labels clear of the controls along the top.
+    if (layout === 'brain' && this.mode === 'full' && this.framing === 'body') maxY += (maxY - minY) * 0.12;
     const target = new Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
     for (const s of sets) {
       for (let i = 0; i < s.length; i += 3) flat = Math.max(flat, Math.hypot(s[i]! - target.x, s[i + 2]! - target.z));
