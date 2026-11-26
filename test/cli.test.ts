@@ -106,6 +106,114 @@ describe('the skeinwise command', () => {
     expect((await cli('search', 'reservoir', '--speaker', 'you')).out).toContain('Nothing found');
   });
 
+  it('filters search by the folder a coding session ran in, with --project', async () => {
+    const projects = join(dir, 'claude-code', 'projects');
+    const sessions: [string, string, string][] = [
+      ['s-plot', '/home/mara/code/plotline', 'Reminders go out twice in plotline'],
+      ['s-ledger', '/home/mara/code/ledger', 'Reminders for invoices go out twice'],
+    ];
+    for (const [id, cwd, prompt] of sessions) {
+      const folder = join(projects, cwd.replaceAll('/', '-'));
+      mkdirSync(folder, { recursive: true });
+      const line = { type: 'user', uuid: `${id}-u1`, sessionId: id, cwd, gitBranch: 'main', timestamp: '2026-04-01T09:00:00.000Z' };
+      writeFileSync(join(folder, `${id}.jsonl`), `${JSON.stringify({ ...line, message: { role: 'user', content: prompt } })}\n`);
+    }
+    expect((await cli('import', join(dir, 'claude-code'))).code).toBe(0);
+    expect((await cli('help')).out).toMatch(/--to <date> .*\n {6}--project <name> +Only coding sessions/);
+
+    const all = JSON.parse((await cli('search', 'reminders', '--json')).out) as { id: number }[];
+    expect(all).toHaveLength(2);
+    const plot = await cli('search', 'reminders', '--project', 'plotline', '--json');
+    expect(plot.code).toBe(0);
+    const hits = JSON.parse(plot.out) as { id: number }[];
+    expect(hits).toHaveLength(1);
+    expect(JSON.parse((await cli('show', String(hits[0]!.id), '--json')).out)).toMatchObject({ project: '/home/mara/code/plotline', gitBranch: 'main' });
+    expect((await cli('search', 'reminders', '--project', 'plot')).out).toContain('Nothing found');
+  });
+
+  it('restores an old version of an entry as a new one', async () => {
+    const notes = join(dir, 'vault');
+    mkdirSync(notes);
+    writeFileSync(join(notes, 'plan.md'), 'Paint the shed green.');
+    await cli('import', notes);
+    writeFileSync(join(notes, 'plan.md'), 'Paint the shed blue.');
+    expect((await cli('import', notes)).out).toContain('0 new, 1 changed');
+    expect((await cli('help')).out).toMatch(/history <entry> .*\n {2}restore <entry> <version> /);
+
+    const restored = await cli('restore', '1', '1');
+    expect(restored).toMatchObject({ code: 0, out: 'Entry 1 reads as version 1 again, saved as version 3. Every version is kept.\n' });
+    expect((await cli('show', '1')).out).toContain('Paint the shed green.');
+    expect((await cli('history', '1')).out.trim().split('\n')).toHaveLength(3);
+    expect(JSON.parse((await cli('restore', '1', '1', '--json')).out)).toEqual({ entry: 1, restored: 1, version: 3, changed: false });
+    expect(await cli('restore', '1', '9')).toMatchObject({ code: 2, err: expect.stringContaining('has no version 9') });
+    expect(await cli('restore', '1')).toMatchObject({ code: 2, err: expect.stringContaining('Give an entry and a version') });
+  });
+
+  it('says when an export from another account waits in pending instead of "0 new"', async () => {
+    const claude = (account: string, text: string) =>
+      JSON.stringify([
+        {
+          uuid: 'conv-1',
+          name: 'Choosing a database',
+          created_at: '2026-03-01T10:00:00Z',
+          account: { uuid: account },
+          chat_messages: [{ uuid: 'msg-1', sender: 'human', text, created_at: '2026-03-01T10:00:00Z' }],
+        },
+      ]);
+    const mine = join(dir, 'mine.json');
+    const theirs = join(dir, 'theirs.json');
+    writeFileSync(mine, claude('acct-invented-a', 'We decided on Postgres.'));
+    writeFileSync(theirs, claude('acct-invented-b', 'We decided on MongoDB.'));
+    expect((await cli('import', mine)).out).toContain('1 new');
+
+    const held = await cli('import', theirs);
+    expect(held.code).toBe(0);
+    expect(held.out).toBe("Claude: 1 change from another account than this source's wait for your yes as #1; nothing was imported: skeinwise live pending\n");
+    expect(JSON.parse((await cli('import', theirs, '--json')).out)).toEqual([
+      expect.objectContaining({ kind: 'claude', added: 0, versioned: 0, proposed: 1, pendingId: null }),
+    ]);
+    expect((await cli('import', theirs)).out).toBe('Claude: nothing imported; this export from another account was proposed before as #1 (pending)\n');
+    expect((await cli('show', '1')).out).toContain('We decided on Postgres.');
+
+    // live pending, accept and reject are routed to the pending commands, with --all.
+    expect((await cli('help')).out).toMatch(/--once .*\n {2}live pending .*\n.*\n {2}live accept <n> .*\n {2}live reject <n> /);
+    const waiting = await cli('live', 'pending');
+    expect(waiting.code).toBe(0);
+    expect(waiting.out).toContain('1 import waits for your yes:');
+    expect(waiting.out).toContain("#1  Claude · 1 chat, 1 entry to add or change");
+    expect(waiting.out).toContain(`from ${theirs}, `);
+    expect(await cli('live', 'reject', '1')).toMatchObject({ code: 0, out: expect.stringContaining('Left #1 out for good.') });
+    expect((await cli('live', 'pending')).out).toBe('Nothing waits for your yes.\n');
+    expect((await cli('live', 'pending', '--all')).out).toContain('1 import proposed, 0 waiting:');
+    expect(await cli('live', 'accept', '1')).toMatchObject({ code: 2, err: expect.stringContaining('#1 was already rejected') });
+    expect((await cli('show', '1')).out).toContain('We decided on Postgres.');
+    expect((await cli('import', theirs)).out).toBe('Claude: nothing imported; this export from another account was proposed before as #1 (rejected)\n');
+  });
+
+  it('takes a waiting import into the record with live accept', async () => {
+    const claude = (account: string, text: string) =>
+      JSON.stringify([
+        {
+          uuid: 'conv-1',
+          name: 'Choosing a database',
+          created_at: '2026-03-01T10:00:00Z',
+          account: { uuid: account },
+          chat_messages: [{ uuid: 'msg-1', sender: 'human', text, created_at: '2026-03-01T10:00:00Z' }],
+        },
+      ]);
+    const mine = join(dir, 'mine.json');
+    const theirs = join(dir, 'theirs.json');
+    writeFileSync(mine, claude('acct-invented-a', 'We decided on Postgres.'));
+    writeFileSync(theirs, claude('acct-invented-b', 'We decided on MongoDB.'));
+    await cli('import', mine);
+    await cli('import', theirs);
+    const accepted = await cli('live', 'accept', '1', '--json');
+    expect(accepted.code).toBe(0);
+    expect(JSON.parse(accepted.out)).toMatchObject({ id: 1, added: 0, versioned: 1 });
+    expect((await cli('show', '1')).out).toContain('We decided on MongoDB.');
+    expect((await cli('history', '1')).out.trim().split('\n')).toHaveLength(2);
+  });
+
   it('fails loudly with usage errors', async () => {
     expect(await cli('nope')).toMatchObject({ code: 2, err: expect.stringContaining('Unknown command: nope') });
     expect(await cli('show')).toMatchObject({ code: 2, err: expect.stringContaining('entry number') });
@@ -114,6 +222,10 @@ describe('the skeinwise command', () => {
     expect(await cli('search')).toMatchObject({ code: 2 });
     expect(await cli('import', join(dir, 'missing'))).toMatchObject({ code: 1, err: expect.stringContaining('ENOENT') });
     expect((await cli('search', 'x', '--bogus')).code).toBe(1);
+    // A word live doesn't know is a mistake, not a reason to start recording.
+    expect(await cli('live', 'pendng')).toMatchObject({ code: 2, err: expect.stringContaining('Unknown live command: pendng') });
+    expect(await cli('live', 'toString')).toMatchObject({ code: 2, err: expect.stringContaining('Unknown live command') });
+    expect(await cli('live', 'accept')).toMatchObject({ code: 2, err: expect.stringContaining('Give one number') });
   });
 });
 
