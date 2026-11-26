@@ -109,7 +109,7 @@ export function confirmRequest(home: string, store: Store, id: number, now: stri
     return { request, result: { thread_id: request.target, not_mine: true } };
   }
   checkUndo(store, request.agent, request.target);
-  const undone = undoRun(store.db, request.target);
+  const undone = undoRun(store.db, request.target, home);
   return { request, result: { run_id: request.target, status: undone.run.status, removed: undone.removed } };
 }
 

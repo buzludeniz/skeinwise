@@ -1,15 +1,17 @@
 // The review task: notes of yours that newer entries may have overtaken. A note is checked against your entries dated
-// after it last changed that sit in one of its hubs or name it, leaving out any that claims a date after the run
-// (`vouched`, H1: a planted export dates itself ahead to pass as your latest word). A model reads them and says whether the note is out of
-// date, why, and how it would read updated. The No-AI engine flags a note when such an entry has a change cue
-// ("changing my mind", "decided", "no longer", "instead", "switch to", "move to"), and proposes the note with those
-// sentences added under "Updates".
+// a day or more after it last changed that sit in one of its hubs or name it, leaving out any that claims a date after
+// the run (`vouched`, H1: a planted export dates itself ahead to pass as your latest word). A model reads them and says
+// whether the note is out of date, why, and how it would read updated. The No-AI engine flags a note when such an entry
+// turns from it ("changing my mind", "no longer", "instead", "switch to", "move to") near the note, or says "decided"
+// about the note by name and adds something the note doesn't say; it proposes the note with those sentences added
+// under "Updates". Either way, at most 3 notes per hub go to the queue, the clearest first (LS-14: it flagged 12 of
+// the demo's 12 notes).
 
 import { UsageError } from '../errors.ts';
 import type { Entry, Store } from '../store/store.ts';
-import { CHANGE_CUES } from './cues.ts';
+import { CHANGE_CUES, TURN_CUES } from './cues.ts';
 import { day, invalid, isRecord, list, type ModelRequest, type Plan, type TaskContext, text } from './plan.ts';
-import { isDailyNote, type RecordView, unlink, vouched } from './record.ts';
+import { entryText, isDailyNote, type RecordView, unlink, vouched } from './record.ts';
 import { cosine, sentences, tokenize, vectorize } from './text.ts';
 import { heldEntries, hubEntryIds, liveHubs, type Reason } from './views.ts';
 
@@ -19,17 +21,28 @@ const ENTRY_CHARS = 600;
 const NOTE_CHARS = 4000;
 /** How close a cue sentence must be to the note, when it doesn't name the note. */
 const MIN_RELEVANCE = 0.1;
+/** An entry written within a day of the note's last change is the same sitting, not news that overtakes it. */
+const MIN_GAP_MS = 24 * 60 * 60 * 1000;
+/** The share of a "decided" sentence's words the note must not already hold, for it to be news about the note. */
+const MIN_NEW_WORDS = 0.5;
+/** The most notes per hub that go to the queue in one run. */
+const MAX_PER_HUB = 3;
 
 interface Check {
   note: Entry;
   since: string;
   newer: Entry[];
+  /** The live hubs the note is in. */
+  hubs: number[];
 }
 
 interface Flag {
   note: Entry;
+  hubs: number[];
   reasons: Reason[];
   proposed: string;
+  /** Which flags go first when a hub has more than MAX_PER_HUB. */
+  rank: number;
 }
 
 export function planReview(ctx: TaskContext): Plan {
@@ -38,16 +51,26 @@ export function planReview(ctx: TaskContext): Plan {
   return {
     requests: asks.map((a) => a.request),
     finish: (answers) => {
-      const flags: Flag[] = ctx.model
+      const found: Flag[] = ctx.model
         ? asks.flatMap((a, i) => {
             const answer = answers[i] as ReviewAnswer;
             if (!answer.stale) return [];
             const reasons = answer.reasons.map((r) => reasonFor(ctx.record, a.check, a.shown[r.index]!, r.why));
-            return [{ note: a.check.note, reasons, proposed: answer.proposed }];
+            return [{ note: a.check.note, hubs: a.check.hubs, reasons, proposed: answer.proposed, rank: reasons.length }];
           })
         : checks.flatMap((c) => cueFlag(ctx.record, c));
+      const flags = perHub(found);
+      const capped = found.length - flags.length;
       return {
-        counts: { notes: checks.length, flagged: flags.length, reasons: flags.reduce((n, f) => n + f.reasons.length, 0) },
+        counts: {
+          notes: checks.length,
+          flagged: flags.length,
+          reasons: flags.reduce((n, f) => n + f.reasons.length, 0),
+          ...(capped ? { capped } : {}),
+        },
+        ...(capped
+          ? { message: `${capped} more note${capped > 1 ? 's' : ''} may be out of date; review keeps ${MAX_PER_HUB} per hub, the clearest first.` }
+          : {}),
         save: (db, runId) => {
           const insert = db.prepare('INSERT INTO review_items (note_entry, reasons, proposed, run_id) VALUES (?, ?, ?, ?)');
           for (const f of flags) insert.run(f.note.id, JSON.stringify(f.reasons), f.proposed, runId);
@@ -79,17 +102,39 @@ function reviewChecks(ctx: TaskContext): Check[] {
     const held = heldEntries(db, note.id);
     const own = new Set(hubsOf.get(note.id));
     const name = titleStems(note);
+    const after = Date.parse(since) + MIN_GAP_MS;
     const newer = record.entries.filter(
       (e) =>
         e.id !== note.id &&
         e.speaker === 'you' &&
-        e.createdAt > since &&
+        Date.parse(e.createdAt) >= after &&
         vouched(e, ctx.now) &&
         !held.has(e.id) &&
         ((hubsOf.get(e.id) ?? []).some((h) => own.has(h)) || (name.length > 0 && hasAll(e, name))),
     );
-    return { note, since, newer };
+    return { note, since, newer, hubs: [...own] };
   });
+}
+
+/** The flags that go to the queue: at most MAX_PER_HUB in any hub, the highest ranked first, kept in note order. */
+function perHub(flags: Flag[]): Flag[] {
+  const taken = new Map<number, number>();
+  const kept = new Set<Flag>();
+  for (const f of [...flags].sort((a, b) => b.rank - a.rank)) {
+    if (f.hubs.some((h) => (taken.get(h) ?? 0) >= MAX_PER_HUB)) continue;
+    for (const h of f.hubs) taken.set(h, (taken.get(h) ?? 0) + 1);
+    kept.add(f);
+  }
+  return flags.filter((f) => kept.has(f));
+}
+
+/** The share of a sentence's words that the note doesn't hold. */
+function newShare(words: string[], noteWords: Set<string>): number {
+  const set = new Set(words);
+  if (!set.size) return 0;
+  let fresh = 0;
+  for (const w of set) if (!noteWords.has(w)) fresh++;
+  return fresh / set.size;
 }
 
 /** When the note last changed: its newest version's date, or the date it was written if it never changed. */
@@ -107,22 +152,34 @@ function hasAll(e: Entry, stems: string[]): boolean {
   return stems.every((s) => set.has(s));
 }
 
-/** The No-AI flag: newer entries with a change cue in a sentence that names the note or is close to it. */
+/**
+ * The No-AI flag. A sentence that turns from something counts when it names the note or is close to it. A decision
+ * alone may only confirm the note ("Decided: two loaves only" under a note that says so), so it counts when it names
+ * the note and at least half of its words are new to it.
+ */
 function cueFlag(record: RecordView, check: Check): Flag[] {
   const noteVector = record.entryVector(check.note.id);
   const name = titleStems(check.note);
+  const noteWords = new Set(tokenize(entryText(check.note)));
   const reasons: Reason[] = [];
   const quoted = new Set<string>();
+  let rank = 0;
   for (const e of check.newer) {
     const hit = sentences(unlink(e.body))
       .filter((s) => CHANGE_CUES.test(s))
-      .map((s) => ({ s, sim: cosine(vectorize(record.entryIndex, s), noteVector), named: name.length > 0 && name.every((n) => tokenize(s).includes(n)) }))
-      .filter((x) => x.named || x.sim > MIN_RELEVANCE)
-      .sort((a, b) => Number(b.named) - Number(a.named) || b.sim - a.sim)[0];
+      .map((s) => {
+        const words = tokenize(s);
+        const named = name.length > 0 && name.every((n) => words.includes(n));
+        return { s, words, named, turn: TURN_CUES.test(s), sim: cosine(vectorize(record.entryIndex, s), noteVector) };
+      })
+      .filter((x) => (x.turn ? x.named || x.sim > MIN_RELEVANCE : x.named && newShare(x.words, noteWords) >= MIN_NEW_WORDS))
+      .map((x) => ({ ...x, score: (x.turn ? 2 : 0) + (x.named ? 1 : 0) + x.sim }))
+      .sort((a, b) => b.score - a.score)[0];
     // The same sentence written again (a template, a pasted line) is one reason, at its first date.
     if (!hit || quoted.has(hit.s.toLowerCase())) continue;
     quoted.add(hit.s.toLowerCase());
-    const cue = CHANGE_CUES.exec(hit.s)![0];
+    rank = Math.max(rank, hit.score);
+    const cue = (hit.turn ? TURN_CUES : CHANGE_CUES).exec(hit.s)![0];
     reasons.push({
       entryId: e.id,
       date: day(e.createdAt),
@@ -131,7 +188,7 @@ function cueFlag(record: RecordView, check: Check): Flag[] {
     });
   }
   if (!reasons.length) return [];
-  return [{ note: check.note, reasons, proposed: withUpdates(check.note.body, reasons) }];
+  return [{ note: check.note, hubs: check.hubs, reasons, proposed: withUpdates(check.note.body, reasons), rank }];
 }
 
 /** The note with dated lines under an "Updates" heading, added to the one already there if it is last. */

@@ -123,6 +123,19 @@ describe('live capture', () => {
     expect(store.history(entry.id)).toHaveLength(1);
   });
 
+  it('catches a Word document in a watched folder, and leaves Word’s lock file beside it alone', () => {
+    const store = new Store(openDb(':memory:'));
+    const w = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+    const doc = `<?xml version="1.0"?><w:document xmlns:w="${w}"><w:body><w:p><w:r><w:t>Plot 12 gets the compost bays.</w:t></w:r></w:p></w:body></w:document>`;
+    writeFileSync(join(notes, 'plan.docx'), zipSync({ 'word/document.xml': strToU8(doc) }));
+    writeFileSync(join(notes, '~$plan.docx'), 'Mara'); // what Word leaves beside a document it has open: not a zip
+    const live = capture(store, [{ kind: 'tree', path: notes }]);
+    const status = live.scan(new Date(0));
+    expect(status.errors).toEqual([]);
+    expect(statusLines(status)[1]).toBe('caught up 1 note from vault');
+    expect(store.search('compost').map((e) => e.title)).toEqual(['plan']);
+  });
+
   it('watches folders and imports a change once things go quiet', async () => {
     const store = new Store(openDb(':memory:'));
     let saved = 0;

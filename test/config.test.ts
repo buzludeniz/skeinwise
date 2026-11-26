@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { configPath, DEFAULT_CONFIG, loadConfig, setConfigValue, unsetConfigValue } from '../src/config.ts';
 import { keyShaped } from './samples.ts';
@@ -83,7 +83,8 @@ describe('config', () => {
   });
 
   it('keeps llama-server as an absolute path, and the Downloads watch off until turned on', () => {
-    expect(setConfigValue(home, 'llamaServer', '/opt/homebrew/bin/llama-server').llamaServer).toBe('/opt/homebrew/bin/llama-server');
+    // Kept resolved: on Windows, on the current drive.
+    expect(setConfigValue(home, 'llamaServer', '/opt/homebrew/bin/llama-server').llamaServer).toBe(resolve('/opt/homebrew/bin/llama-server'));
     writeFileSync(configPath(home), '{"llamaServer": "llama-server"}');
     expect(() => loadConfig(home)).toThrow(/absolute path/);
     rmSync(configPath(home));

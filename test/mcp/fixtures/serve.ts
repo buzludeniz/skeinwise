@@ -1,5 +1,5 @@
 // `skeinwise mcp` as the CLI would run it, for the stdio test: the record folder from SKEINWISE_HOME, the command
-// from MCP_COMMANDS, stdout for the protocol and stderr for everything else. `--window` serves the window tools.
+// from MCP_COMMANDS, stdout for the protocol and stderr for everything else. `--window` is passed on, and refused.
 
 import type { Ctx } from '../../../src/cli-organiser.ts';
 import { homeDir, openHome } from '../../../src/home.ts';

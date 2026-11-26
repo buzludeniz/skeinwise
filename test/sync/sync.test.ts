@@ -4,13 +4,12 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEMO_NOW } from '../../src/demo/demo.ts';
 import { UsageError } from '../../src/errors.ts';
-import { openHome } from '../../src/home.ts';
 import { newNote, notesDir, readNotes } from '../../src/notes.ts';
 import type { Store } from '../../src/store/store.ts';
 import { BUNDLE_FILE, notEmpty, readHeader } from '../../src/sync/bundle.ts';
 import { type KdfParams, KEYS_FILE } from '../../src/sync/keys.ts';
 import { joinSync, pushSync, readState, STATE_FILE, startSync, syncStatus } from '../../src/sync/sync.ts';
-import { count, demoRecord, dump } from './fixture.ts';
+import { closeRecords, count, demoRecord, dump, openRecord } from './fixture.ts';
 
 // Sync between record folders on one disk, standing in for two computers and a cloud folder. The passphrase is made
 // up for the test; scrypt runs on light settings here (the command tests use the real ones).
@@ -27,7 +26,7 @@ let n = 0;
 /** A new, empty record folder: another computer. */
 function computer(): { home: string; store: Store } {
   const home = join(dir, `computer-${++n}`);
-  return { home, store: openHome(home, () => DEMO_NOW) };
+  return { home, store: openRecord(home) };
 }
 
 /** What an empty record folder looks like, to check a refused join left it so. */
@@ -57,7 +56,10 @@ beforeAll(async () => {
   folder = join(dir, 'cloud', 'skeinwise');
   phrase = startSync(a.store, a.home, folder, PASS, LIGHT).phrase;
 });
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  closeRecords();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 describe('sync init', () => {
   it('writes a key file and a bundle to the folder, owner-only, with neither secret in them', () => {
