@@ -25,7 +25,7 @@ export function notesDir(home: string): string {
   return resolve(home, 'notes');
 }
 
-/** O_NOFOLLOW where the system has it; on Windows, where it doesn't, the lstat check in notePath stands alone. */
+/** O_NOFOLLOW where the system has it; on Windows, where it doesn't, openNoFollow's lstat check stands in for it. */
 const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
 
 function outside(rel: string): boolean {
@@ -53,6 +53,7 @@ function notePath(dir: string, path: string): string {
 
 /** Opens a file without following a link at its last step; a link there is refused in plain words. */
 function openNoFollow(full: string, flags: number): number {
+  if (!NO_FOLLOW && lstatSync(full, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error(LINK(full));
   try {
     return openSync(full, flags | NO_FOLLOW, 0o600);
   } catch (err) {
