@@ -280,6 +280,65 @@ describe('busy records (M8)', () => {
   });
 });
 
+describe('inTransaction inside inTransaction', () => {
+  const insert = (db: DatabaseSync, label: string) =>
+    db.prepare("INSERT INTO sources (kind, label, location, added_at) VALUES ('notes', ?, ?, 'x')").run(label, `/${label}`);
+  const labels = (db: DatabaseSync) => (db.prepare('SELECT label FROM sources ORDER BY id').all() as { label: string }[]).map((r) => r.label);
+
+  it('joins the transaction it opened, so the outer commit saves both writes', () => {
+    const db = openDb(':memory:');
+    inTransaction(db, () => {
+      insert(db, 'outer');
+      inTransaction(db, () => insert(db, 'inner'));
+      expect(db.isTransaction).toBe(true);
+    });
+    expect(labels(db)).toEqual(['outer', 'inner']);
+    expect(db.isTransaction).toBe(false);
+  });
+
+  it('rolls everything back when an inner call throws, even if the outer one catches it', () => {
+    const db = openDb(':memory:');
+    expect(() =>
+      inTransaction(db, () => {
+        insert(db, 'outer');
+        try {
+          inTransaction(db, () => {
+            insert(db, 'inner');
+            throw new Error('inner failed');
+          });
+        } catch {
+          // The outer call carries on as if nothing happened.
+        }
+        insert(db, 'after');
+      }),
+    ).toThrow('inner failed');
+    expect(labels(db)).toEqual([]);
+    expect(db.isTransaction).toBe(false);
+    // The connection is usable again, with nothing left over from the failed transaction.
+    inTransaction(db, () => insert(db, 'next'));
+    expect(labels(db)).toEqual(['next']);
+  });
+
+  it('rolls the inner writes back with the outer ones when the outer call fails after them', () => {
+    const db = openDb(':memory:');
+    expect(() =>
+      inTransaction(db, () => {
+        inTransaction(db, () => insert(db, 'inner'));
+        throw new Error('later');
+      }),
+    ).toThrow('later');
+    expect(labels(db)).toEqual([]);
+  });
+
+  it('refuses to join a transaction opened with a raw BEGIN', () => {
+    const db = openDb(':memory:');
+    db.exec('BEGIN');
+    expect(() => inTransaction(db, () => insert(db, 'joined'))).toThrow(/within a transaction/);
+    db.exec('ROLLBACK');
+    expect(labels(db)).toEqual([]);
+  });
+});
+
 describe('two processes opening one old record', () => {
   /** A migration-4 record on disk, as an older Skeinwise left it, with an entry from a planted future. */
   function oldRecord(file: string): void {
