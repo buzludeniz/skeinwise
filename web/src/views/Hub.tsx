@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'preact/hooks';
 import { Brain, Merge, PencilLine, RefreshCw, ThumbsDown } from 'lucide-preact';
-import { changed, closePanel, engineName, go, light, loadRecord, message, openEntry, organise, toast } from '../actions.ts';
+import { changed, closePanel, engineName, go, light, loadRecord, message, openEntry, organise, postRunUndo, toast } from '../actions.ts';
 import { api } from '../api.ts';
 import { fmtDate, plural } from '../format.ts';
 import { useApp } from '../store.ts';
@@ -28,7 +28,7 @@ function Item({ item }: { item: HubItem }) {
 
 /** A correction is a run, so taking it back is undoing that run. */
 async function undoCorrection(runId: number): Promise<void> {
-  await api.post(`runs/${runId}/undo`);
+  await postRunUndo(runId);
   await loadRecord();
 }
 
