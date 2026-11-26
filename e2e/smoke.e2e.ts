@@ -3,8 +3,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
+import { runFolder } from './run.ts';
 
-const token = () => readFileSync(join(import.meta.dirname, '.run', 'home', 'token'), 'utf8').trim();
+const token = () => readFileSync(join(runFolder(), 'home', 'token'), 'utf8').trim();
 
 test('opens the record, finds an entry and moves between views', async ({ page }) => {
   const errors: string[] = [];
