@@ -3,7 +3,8 @@
 // check, through a pass-through node:fs whose hook runs once, after the nth call of one kind on one base name.
 //
 // Every case runs twice: with the system's O_NOFOLLOW, and as on Windows, where there is none and an open follows a
-// link (fsafe.ts is loaded again with O_NOFOLLOW missing). On Windows both runs take the Windows path.
+// link (fsafe.ts is loaded again with O_NOFOLLOW missing). On Windows both runs take the Windows path. The checks that
+// compare file ids also run with ids past a double's precision, as a 64-bit Windows file id can be.
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -23,6 +24,8 @@ const swap = vi.hoisted(() => ({
   systemNoFollow: true,
   /** lstat reports file id 0, as a file system without file ids does. */
   zeroIno: false,
+  /** Every file id is 2^60 plus the real one in bigint, and 2^60 alone as a number: the low bits a number loses. */
+  highIds: false,
 }));
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -41,28 +44,43 @@ vi.mock('node:fs', async (importOriginal) => {
       }
       return result;
     };
-  const lstat = ((...args: Parameters<typeof fs.lstatSync>) => {
-    const stat = fs.lstatSync(...args);
-    if (!swap.zeroIno || !stat) return stat;
-    return Object.assign(Object.create(Object.getPrototypeOf(stat) as object) as object, stat, { ino: typeof stat.ino === 'bigint' ? 0n : 0 });
-  }) as typeof fs.lstatSync;
+  // The stats objects are new on every call, so their file id can be changed in place.
+  const ids = <S>(stat: S, zero = false): S => {
+    const s = stat as { ino: number | bigint } | undefined;
+    if (!s) return stat;
+    const big = typeof s.ino === 'bigint';
+    if (zero) s.ino = big ? 0n : 0;
+    else if (swap.highIds) s.ino = big ? (1n << 60n) + (s.ino as bigint) : 2 ** 60;
+    return stat;
+  };
+  const lstat = ((...args: Parameters<typeof fs.lstatSync>) => ids(fs.lstatSync(...args), swap.zeroIno)) as typeof fs.lstatSync;
+  const stat = ((...args: Parameters<typeof fs.statSync>) => ids(fs.statSync(...args))) as typeof fs.statSync;
+  const fstatSync = ((...args: Parameters<typeof fs.fstatSync>) => ids(fs.fstatSync(...args))) as typeof fs.fstatSync;
   const realpathSync = Object.assign(after('realpathSync', fs.realpathSync as (path: string) => string), { native: fs.realpathSync.native });
   const constants = Object.defineProperty({ ...fs.constants }, 'O_NOFOLLOW', {
     enumerable: true,
     get: () => (swap.noFollow ? fs.constants.O_NOFOLLOW : undefined),
   });
-  return { ...fs, constants, statSync: after('statSync', fs.statSync), lstatSync: after('lstatSync', lstat), realpathSync };
+  return { ...fs, constants, statSync: after('statSync', stat), lstatSync: after('lstatSync', lstat), fstatSync, realpathSync };
 });
 
-/** After the nth `call` on a path named like `path`, `path` is moved aside and a link to `to` put in its place. */
-function swapAfter(call: 'realpathSync' | 'lstatSync' | 'statSync', path: string, to: string, nth = 1): void {
+type Call = 'realpathSync' | 'lstatSync' | 'statSync';
+
+/** Runs `run` once, right after the nth `call` on a path named `on`. */
+function armAfter(call: Call, on: string, nth: number, run: () => void): void {
   swap.call = call;
-  swap.name = basename(path);
+  swap.name = on;
   swap.left = nth;
-  swap.run = () => {
+  swap.run = run;
+}
+
+/** After the nth `call` on a path named `on` (by default, like `path`), `path` is moved aside and a link to `to` put in
+ * its place. */
+function swapAfter(call: Call, path: string, to: string, nth = 1, on = basename(path)): void {
+  armAfter(call, on, nth, () => {
     renameSync(path, `${path}.moved`);
     symlinkSync(to, path);
-  };
+  });
 }
 
 const dirs: string[] = [];
@@ -75,6 +93,7 @@ function scratch(): string {
 afterEach(() => {
   swap.run = null;
   swap.zeroIno = false;
+  swap.highIds = false;
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -102,11 +121,12 @@ for (const windows of [false, true]) {
   describe(windows ? 'as on Windows, where an open follows a link' : "with the system's own open", () => {
     let readImports: typeof import('../src/importers/detect.ts').readImports;
     let UnsafeFileError: typeof import('../src/fsafe.ts').UnsafeFileError;
+    let readSafe: typeof import('../src/fsafe.ts').readSafe;
     beforeAll(async () => {
       swap.noFollow = !windows;
       vi.resetModules();
       ({ readImports } = await import('../src/importers/detect.ts'));
-      ({ UnsafeFileError } = await import('../src/fsafe.ts'));
+      ({ UnsafeFileError, readSafe } = await import('../src/fsafe.ts'));
     });
     const followsLinks = () => windows || !swap.systemNoFollow;
 
@@ -222,6 +242,48 @@ for (const windows of [false, true]) {
           expect(JSON.stringify(result)).toContain('mine');
         }
       });
+    });
+
+    // A file id compared as a number loses its low bits past 2^53, so two files can look like one: every compare is in
+    // bigint, and each case runs with ids past that too.
+    describe('a folder replaced while a file in it is read, told apart by file id', () => {
+      for (const highIds of [false, true]) {
+        const past = highIds ? ', with file ids past a double' : '';
+
+        it(`refuses a file whose folder became a link to another inside the root, right after the open${past}`, () => {
+          const vault = scratch();
+          mkdirSync(join(vault, 'sub'));
+          mkdirSync(join(vault, 'other'));
+          writeFileSync(join(vault, 'sub', 'note.md'), 'mine');
+          writeFileSync(join(vault, 'other', 'note.md'), 'other');
+          swap.highIds = highIds;
+          // openSafe resolves the opened file's real path; right after that, sub becomes a link to other.
+          swapAfter('realpathSync', join(vault, 'sub'), join(vault, 'other'), 1, 'note.md');
+          const { error } = outcome(() => readSafe(join(vault, 'sub', 'note.md'), { root: vault }));
+          expect(swap.run).toBeNull();
+          expect(error).toBeInstanceOf(UnsafeFileError);
+          expect((error as InstanceType<typeof UnsafeFileError>).reason).toBe('outside');
+          expect((error as Error).message).toMatch(/note\.md: skipped, it changed while it was being read/);
+        });
+
+        it(`reads nothing from a named folder swapped for another folder, not a link${past}`, () => {
+          const outside = secret();
+          const vault = join(scratch(), 'vault');
+          mkdirSync(vault);
+          writeFileSync(join(vault, 'mine.md'), 'mine');
+          swap.highIds = highIds;
+          armAfter('lstatSync', 'vault', 1, () => {
+            renameSync(vault, `${vault}.moved`);
+            renameSync(outside, vault);
+          });
+          const warnings: string[] = [];
+          const { error, result } = outcome(() => readImports(vault, { onWarning: (m) => warnings.push(m) }));
+          expect(swap.run).toBeNull();
+          expect(JSON.stringify(result ?? null)).not.toContain('FAKE-SECRET');
+          expect((error as Error).message).toMatch(/Nothing to import/);
+          expect(warnings).toEqual([expect.stringMatching(/secret\.md: skipped, the folder it was found in changed while it was being read/)]);
+        });
+      }
     });
   });
 }

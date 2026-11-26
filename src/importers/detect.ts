@@ -97,11 +97,12 @@ export function sniffSession(text: string): 'claude-code' | 'codex' | null {
   return null;
 }
 
-/** A folder the person named, as it was when it was checked: its real path, and which folder that was. */
+/** A folder the person named, as it was when it was checked: its real path, and which folder that was (in bigint, as
+ * fsafe compares them: a 64-bit Windows file id loses its low bits as a number). */
 interface Pinned {
   real: string;
-  dev: number;
-  ino: number;
+  dev: bigint;
+  ino: bigint;
 }
 
 /**
@@ -119,7 +120,7 @@ function fileUnder(root: string, full: string, modifiedAt: Date, pinned?: Pinned
     read: () => {
       const file = readImportFile(full, { root: pinned?.real ?? root });
       if (pinned) {
-        const now = lstatSync(pinned.real);
+        const now = lstatSync(pinned.real, { bigint: true });
         if (now.isSymbolicLink() || now.dev !== pinned.dev || now.ino !== pinned.ino) {
           throw new UnsafeFileError(full, 'outside', `${full}: skipped, the folder it was found in changed while it was being read`);
         }
@@ -203,7 +204,7 @@ export function readImports(path: string, options: ImportOptions = {}): ImportBa
   // after this is of `real` without following links, so a file swapped for a link after this check is refused, not
   // followed; a folder is pinned to the one found now (fileUnder). Nothing found inside a folder is followed.
   const real = realpathSync(abs);
-  const stat = lstatSync(real);
+  const stat = lstatSync(real, { bigint: true });
   if (stat.isSymbolicLink()) throw new UnsafeFileError(abs, 'symlink', `${abs}: skipped, it became a symbolic link while it was being read`);
   const ext = extname(abs).toLowerCase();
   let batches: ImportBatch[];

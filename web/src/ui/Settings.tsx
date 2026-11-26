@@ -10,6 +10,7 @@ import { fmtBytes, fmtNum } from '../format.ts';
 import { setState, useApp } from '../store.ts';
 import { contrast, PALETTES, pointColors, THEMES } from '../themes.ts';
 import type { Agent, Config } from '../types.ts';
+import { AgentRequests } from './AgentRequests.tsx';
 import { Button, Segmented, Switch, useFocusTrap } from './common.tsx';
 
 const GROUPS = ['AI agents', 'AI model', 'Usage cap', 'Proof of date', 'Backup', 'Exclusions', 'Appearance'] as const;
@@ -365,6 +366,7 @@ function Sheet() {
           )}
           <div class="settings-groups">
             <Group title="AI agents">
+              <AgentRequests />
               <Agents config={config} />
             </Group>
             <Group title="AI model">

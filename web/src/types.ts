@@ -9,6 +9,7 @@ export type { Run, Task } from '../../src/organiser/runs.ts';
 export type { Config, LabView } from '../../src/server/config.ts';
 export type { Timeline, Table, Series, TableProp, EntryRow } from '../../src/server/buckets.ts';
 export type { Found, Preview, Agent } from '../../src/server/found.ts';
+export type { McpRequest as AgentRequest } from '../../src/mcp/requests.ts';
 export type { Entry, Version, Source, Thread } from '../../src/store/store.ts';
 import type { LiveState } from '../../src/server/live.ts';
 export type { LiveState };
@@ -42,4 +43,10 @@ export interface ImportResult {
   versioned: number;
   unchanged: number;
   threads: number;
+  /**
+   * Only when the server held the batch back, because its export claims another account than its source's: nothing
+   * came in, and the changes wait for a yes as pending #pendingId. A null pendingId means this file was proposed before.
+   */
+  proposed?: number;
+  pendingId?: number | null;
 }

@@ -7,6 +7,7 @@ import type { LucideIcon } from 'lucide-preact';
 import { go, light, message, openEntry, toast } from '../actions.ts';
 import { api, qs } from '../api.ts';
 import { fmtDate, fmtMonth, plural, speakerName } from '../format.ts';
+import { snippetText } from '../markdown.ts';
 import { useApp } from '../store.ts';
 import type { Brief, ProfileLine } from '../types.ts';
 import { Button, Empty } from '../ui/common.tsx';
@@ -133,7 +134,7 @@ function CheckClaim() {
                     <span class="hit-meta">
                       {fmtDate(e.createdAt)} · {speakerName(e.speaker)} · {e.sourceLabel}
                     </span>
-                    {e.snippet && <span class="hit-snippet">{e.snippet}</span>}
+                    {e.snippet && <span class="hit-snippet">{snippetText(e.snippet)}</span>}
                   </button>
                 </li>
               ))}
