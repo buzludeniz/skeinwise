@@ -49,6 +49,8 @@ export interface Values {
   unset?: boolean;
   remove?: boolean;
   run?: boolean;
+  /** `--project` (STORE_FLAGS): ask keeps to coding sessions run in that folder. */
+  project?: string;
 }
 
 export interface Ctx {
@@ -242,7 +244,13 @@ const askCommand: Command = async (ctx) => {
   const { engine, client, config } = pickEngine(ctx);
   readNotes(ctx.store, ctx.home);
   const record = new RecordView(ctx.store);
-  const result = await ask(ctx.store, record, question, { engine, ...(client ? { client } : {}), budget: config.budget, limit: limit(ctx, 10) });
+  const result = await ask(ctx.store, record, question, {
+    engine,
+    ...(client ? { client } : {}),
+    budget: config.budget,
+    limit: limit(ctx, 10),
+    project: ctx.values.project,
+  });
   if (ctx.values.json) {
     ctx.json(result);
     return 0;
