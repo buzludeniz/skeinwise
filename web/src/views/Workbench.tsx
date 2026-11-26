@@ -8,7 +8,7 @@ import { api, qs } from '../api.ts';
 import { niceMax, scale, smooth, sparseLabels } from '../chart.ts';
 import { fmtDate, fmtMonth, fmtNum, plural, speakerName } from '../format.ts';
 import { setState, useApp } from '../store.ts';
-import { palette, pointColors, theme } from '../themes.ts';
+import { HEAT_FILL, palette, pointColors, theme } from '../themes.ts';
 import type { EntryRow, LabView, Series, Table, TableProp } from '../types.ts';
 import { Button, Empty, Segmented, Select } from '../ui/common.tsx';
 import { useWidth } from '../ui/useWidth.ts';
@@ -53,6 +53,12 @@ interface Cell {
   yi: number;
 }
 
+/** A heatmap cell's accent share, in percent: from the faintest fill to the fullest (HEAT_FILL). */
+function heatFill(share: number): number {
+  const [low, high] = HEAT_FILL;
+  return Math.round((low + share * (high - low)) * 100);
+}
+
 /** Grid forms: a plain table, or a heatmap with the counts shaded. */
 export function Grid({ t, heat, onCell }: { t: Table; heat: boolean; onCell: (c: Cell) => void }) {
   return (
@@ -80,7 +86,7 @@ export function Grid({ t, heat, onCell }: { t: Table; heat: boolean; onCell: (c:
                 const v = t.cells[yi]?.[xi] ?? 0;
                 const share = t.max ? v / t.max : 0;
                 return (
-                  <td key={x} style={heat && v ? { background: `color-mix(in srgb, var(--accent) ${Math.round(12 + share * 78)}%, transparent)` } : undefined}>
+                  <td key={x} style={heat && v ? { background: `color-mix(in srgb, var(--accent) ${heatFill(share)}%, transparent)` } : undefined}>
                     {v ? (
                       <button type="button" class={heat && share > 0.55 ? 'on-strong' : ''} onClick={() => onCell({ xi, yi })} aria-label={`${fmtNum(v)}: ${valueLabel(t.y, y)}, ${valueLabel(t.x, x)}`}>
                         {fmtNum(v)}

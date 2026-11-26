@@ -9,6 +9,9 @@ node bench/run.ts 150k       # on demand: much longer
 node bench/run.ts 50k --entries 3000 --keep   # a quick check of the bench itself, 50k budgets
 ```
 
+`pnpm bench` runs the same script. In CI (`.github/workflows/bench.yml`), every push runs
+`pnpm bench 50k --entries 3000`, and the full 50k and 150k benches run only when the workflow is started by hand.
+
 The corpus is invented: a heavy user's ChatGPT export (60 percent of the entries), Claude Code sessions in 20
 projects (30 percent) and an Obsidian-style vault with daily notes, links, aliases and callouts (10 percent). The same
 size and seed give the same files. Everything runs in one bench folder, `.skeinwise/bench/<size>` by default (git
@@ -32,3 +35,12 @@ unless `--keep` is given, and the bench only ever clears a folder it made.
 Times are taken inside each measure's process, from the command's start to its end, without Node's own start-up. The
 brain's frame rate needs a browser and a GPU, so the bench lists that budget without measuring it. The budgets are set
 for an M1 with 16 GB; a busy machine runs slower, and the report's first line gives the load.
+
+## Migrations
+
+`node bench/migrations.ts [50k|150k] [--from <version>]` times the schema migrations on an old record: it imports the
+same corpus, copies the record's content into a record at an older schema version (3 by default), and times each
+migration step after it, `openDb` in one fresh process, and two processes opening the record at once (whether the second
+waits out the upgrade or fails). Its folder is `.skeinwise/bench/migrations-<size>` by default. It has no budget: the
+number to watch is any step past the 5 s busy timeout, which a second process opening the record meanwhile waits out
+at most twice.

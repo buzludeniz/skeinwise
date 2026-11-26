@@ -2,7 +2,7 @@
 // Built from PoC 01 (01_malformed.mjs: a nanosecond timestamp, an impossible date in a note's name, a broken
 // numeric entity, an unreadable file) and PoC 15 (15_fallback_ids.mjs: two id-less chats with the same title).
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseClaude, parseClaudeCodeSession, parseCodexSession } from '../src/importers/chats.ts';
@@ -16,7 +16,8 @@ beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'skeinwise-malformed-'));
 });
 afterAll(() => {
-  chmodSync(join(dir, '01d_unreadable', 'locked.md'), 0o600);
+  const locked = join(dir, '01d_unreadable', 'locked.md');
+  if (existsSync(locked)) chmodSync(locked, 0o600);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -101,7 +102,8 @@ describe('PoC 01: one malformed value never stops an import', () => {
     ]);
   });
 
-  it('d) an unreadable file is named and skipped; the three beside it import', () => {
+  // chmod can't make a file unreadable on Windows (it only sets the read-only bit), so this runs on macOS and Linux.
+  it.skipIf(process.platform === 'win32')('d) an unreadable file is named and skipped; the three beside it import', () => {
     const folder = join(dir, '01d_unreadable');
     mkdirSync(folder);
     for (let i = 0; i < 3; i++) writeFileSync(join(folder, `ok-${i}.md`), `# ok ${i}`);

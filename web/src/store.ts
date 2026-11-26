@@ -125,12 +125,15 @@ export function useApp<T>(select: (s: AppState) => T): T {
   const pick = useRef(select);
   last.current = selected;
   pick.current = select;
-  useEffect(
-    () =>
-      subscribe(() => {
-        if (pick.current(state) !== last.current) redraw(0);
-      }),
-    [],
-  );
+  useEffect(() => {
+    const check = () => {
+      if (pick.current(state) !== last.current) redraw(0);
+    };
+    const stop = subscribe(check);
+    // The effect runs after paint, so a change made between this render and the subscription (boot's error, when a
+    // request fails at once) would otherwise wait for the next one, or for ever.
+    check();
+    return stop;
+  }, []);
   return selected;
 }

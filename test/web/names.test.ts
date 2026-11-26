@@ -1,12 +1,12 @@
 // The app's screens carry our own names. This fails the run when an old screen name comes back into the page's
-// source or its e2e test: as a label, a heading, a class or a comment.
+// source, its e2e test or docs/ui.md: as a label, a heading, a class or a comment.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = join(import.meta.dirname, '..', '..');
-const SCANNED = ['web/src', 'web/index.html', 'e2e'];
+const SCANNED = ['web/src', 'web/index.html', 'e2e', 'docs/ui.md'];
 const SKIPPED = new Set(['node_modules', '.run']);
 
 /** The old names, each with the one that replaced it. */
@@ -36,13 +36,14 @@ function files(path: string): string[] {
   if (!statSync(full).isDirectory()) return [path];
   return readdirSync(full)
     .filter((name) => !SKIPPED.has(name))
-    .flatMap((name) => files(join(path, name)));
+    .flatMap((name) => files(`${path}/${name}`)); // '/' on every OS, as in ALLOWED and SCANNED
 }
 
-const sources = SCANNED.flatMap(files).filter((f) => /\.(tsx?|css|html)$/.test(f));
+const sources = SCANNED.flatMap(files).filter((f) => /\.(tsx?|css|html|md)$/.test(f));
 
 describe('screen names', () => {
-  it('scans the page source and the e2e test', () => {
+  it('scans the page source, the e2e test and docs/ui.md', () => {
+    expect(sources).toContain('docs/ui.md');
     expect(sources).toContain('web/src/ui/Rail.tsx');
     expect(sources).toContain('web/src/styles.css');
     expect(sources).toContain('e2e/smoke.e2e.ts');

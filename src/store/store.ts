@@ -517,7 +517,8 @@ export class Store {
           .stmt('UPDATE entries SET project = COALESCE(project, ?), git_branch = COALESCE(git_branch, ?) WHERE id = ? AND (project IS NULL OR git_branch IS NULL)')
           .run(input.project ?? null, input.gitBranch ?? null, existing.id);
       }
-      result.unchanged++;
+      if (input.properties !== undefined && this.frontMatterEdit(existing.id, body, hash, input, context, observed)) result.versioned++;
+      else result.unchanged++;
       return;
     }
     this.writeVersion(existing.id, body, context, {
@@ -532,6 +533,37 @@ export class Store {
         .run(input.project ?? null, input.gitBranch ?? null, existing.id);
     }
     result.versioned++;
+  }
+
+  /**
+   * A note whose text is its newest version's but whose front matter changed. A version's hash covers only the text, so
+   * this edit used to be lost: the note kept its old properties. It becomes a new version with the same text and the
+   * new properties (and title), so history keeps it and a run over new versions sees it. Not when the newest version
+   * has no properties at all: a record from before notes kept their front matter holds null in every version, and a
+   * new version for each note would come at its next capture, so those are filled in place. Text that an older
+   * version holds is an older export and changes nothing. Returns true when it wrote a version.
+   */
+  private frontMatterEdit(entryId: number, body: string, hash: string, input: EntryInput, context: WriteContext, observed: string): boolean {
+    const latest = this
+      .stmt(
+        `SELECT v.id, v.content_hash AS hash, v.properties FROM entries e
+         JOIN versions v ON v.entry_id = e.id AND v.version = e.version WHERE e.id = ?`,
+      )
+      .get(entryId) as { id: number; hash: string; properties: string | null } | undefined;
+    if (!latest || latest.hash !== hash) return false;
+    const properties = input.properties ? JSON.stringify(input.properties) : null;
+    if (properties === latest.properties) return false;
+    if (latest.properties === null) {
+      this.stmt('UPDATE versions SET properties = ? WHERE id = ?').run(properties, latest.id);
+      return false;
+    }
+    this.writeVersion(entryId, body, context, {
+      observedAt: observed,
+      claimedAt: input.createdAt || null,
+      title: input.title ?? undefined,
+      properties: input.properties ?? null,
+    });
+    return true;
   }
 
   /** Saves an edit as a new version. The original stays in history. */
@@ -956,13 +988,15 @@ export class Store {
     }
     if (options.project !== undefined) {
       // Whole folder names only, compared as text: "plot" doesn't match "plotline", and % or _ mean nothing here.
-      const name = options.project.trim().replace(/\/+$/, '');
+      // \ and / both separate folders, on both sides, so a Windows folder (C:\Users\…) matches by name or in full.
+      const name = options.project.trim().replaceAll('\\', '/').replace(/\/+$/, '');
       if (!name) throw new Error('Give a project: a folder name or a path.');
-      if (name.startsWith('/')) {
-        where.push("instr(e.project || '/', ?) = 1");
+      const folder = "replace(e.project, char(92), '/')";
+      if (name.startsWith('/') || /^[A-Za-z]:\//.test(name)) {
+        where.push(`instr(${folder} || '/', ?) = 1`);
         params.push(`${name}/`);
       } else {
-        where.push("instr('/' || e.project || '/', ?) > 0");
+        where.push(`instr('/' || ${folder} || '/', ?) > 0`);
         params.push(`/${name}/`);
       }
     }

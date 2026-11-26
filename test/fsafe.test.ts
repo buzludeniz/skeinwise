@@ -70,7 +70,8 @@ describe('readSafe', () => {
     }
   });
 
-  it('skips a FIFO at once instead of waiting for a writer', () => {
+  // Windows has no FIFOs (mkfifo there makes nothing Node can see), so this runs on macOS and Linux.
+  it.skipIf(process.platform === 'win32')('skips a FIFO at once instead of waiting for a writer', () => {
     const fifo = join(dir, 'conversations.json');
     execFileSync('mkfifo', [fifo]);
     const started = performance.now();
