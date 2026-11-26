@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -9,6 +9,7 @@ import { main } from '../../src/cli.ts';
 import { EXPORT_PLAIN_TEXT, phraseGrid, type SecretIo, SYNC_COMMANDS, SYNC_EXPERIMENTAL, SYNC_FLAGS, SYNC_HELP } from '../../src/sync/commands.ts';
 import { readState } from '../../src/sync/sync.ts';
 import { closeRecords, openRecord } from './fixture.ts';
+import { expectMode } from '../modes.ts';
 
 // The export and sync commands as the CLI will call them, with a Ctx built here and a fake hidden prompt. These run
 // scrypt on its real settings. Every passphrase here is made up for the test.
@@ -140,7 +141,7 @@ describe('the sync commands', () => {
     // L18: every export says it is plain text, on stderr so --json output stays one JSON value. The zip is owner-only.
     expect(r.err).toBe(`${EXPORT_PLAIN_TEXT}\n`);
     expect(EXPORT_PLAIN_TEXT).toMatch(/plain text, not encrypted/);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expectMode(file, 0o600);
     const asJson = await a.run(['export', join(dir, 'e2.zip')], { json: true });
     expect(asJson.out).toBe('');
     expect(asJson.err).toContain('not encrypted');
