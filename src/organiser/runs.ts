@@ -4,7 +4,7 @@
 import { existsSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { UsageError } from '../errors.ts';
-import { homeNoteFile, rewriteNoteFile } from '../notes.ts';
+import { homeNoteFile, readNotes, rewriteNoteFile } from '../notes.ts';
 import { inTransaction } from '../store/db.ts';
 import { type Entry, Store } from '../store/store.ts';
 import type { RecordView } from './record.ts';
@@ -288,8 +288,9 @@ export function undoRun(db: DatabaseSync, id: number, home?: string): UndoResult
 /**
  * Puts back the text each note had before the run updated it (an accepted review update, saved with the run's id), as a
  * new version, so the update stays in history, and its file when it is kept in the record folder. Everything is
- * checked before anything changes: a note changed again since is refused, unless it already reads as before. Returns
- * the notes put back.
+ * checked before anything changes: a note changed again since is refused, unless it already reads as before. The notes
+ * folder is read first, so an edit made in a file that the record hasn't seen yet counts as a change and is never
+ * written over. Returns the notes put back.
  */
 function restoreEdits(db: DatabaseSync, run: Run, home: string | undefined): number[] {
   const edits = db
@@ -298,6 +299,7 @@ function restoreEdits(db: DatabaseSync, run: Run, home: string | undefined): num
   if (!edits.length) return [];
   if (home === undefined) throw new Error(`Run ${run.id} updated notes, so undoing it needs the record's folder to put their files back.`);
   const store = new Store(db);
+  readNotes(store, home);
   const plans = edits.map(({ entryId, first, last }) => {
     const history = store.history(entryId);
     const before = history.find((v) => v.version === first - 1);
@@ -313,11 +315,14 @@ function restoreEdits(db: DatabaseSync, run: Run, home: string | undefined): num
   });
   const restored: number[] = [];
   for (const { entryId, before, back } of plans) {
-    if (back) continue;
-    store.restoreVersion(entryId, before.version, { editor: 'you' });
-    // A file that is gone has nothing to put back.
+    // The file goes first, as in resolveReview: if it can't be written, this note is as the run left it, and running
+    // the undo again does the whole of it. A note that already reads as before in the record (`skeinwise restore`, which
+    // leaves files alone) still has its file put back: the read above found nothing in it the history lacks. A file
+    // that is gone has nothing to put back.
     const file = homeNoteFile(store, home, store.getEntry(entryId)!);
     if (file && existsSync(file)) rewriteNoteFile(file, before.body);
+    if (back) continue;
+    store.restoreVersion(entryId, before.version, { editor: 'you' });
     restored.push(entryId);
   }
   return restored;

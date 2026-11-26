@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -173,6 +173,7 @@ describe('undoing a review update to a note in the record folder', () => {
     try {
       const store = new Store(openDb(':memory:'), now);
       const note = newNote(store, home, 'Garden plan', new Date(DEMO_NOW));
+      const before = readFileSync(note.path, 'utf8');
       const run = accept(store, note.path, note.entryId, '# Garden plan\n\nRaised beds by May.');
       store.editEntry(note.entryId, '# Garden plan\n\nRaised beds by June.', 'you');
 
@@ -183,6 +184,51 @@ describe('undoing a review update to a note in the record folder', () => {
       store.restoreVersion(note.entryId, 1);
       expect(undoRun(store.db, run, home)).toMatchObject({ restored: [], run: { status: 'undone' } });
       expect(store.history(note.entryId).length).toBe(4);
+      // restore changed only the record; the undo puts the file back to match it.
+      expect(readFileSync(note.path, 'utf8')).toBe(before);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('never writes over an edit made in the file that the record has not read yet', () => {
+    const home = mkdtempSync(join(tmpdir(), 'skeinwise-undo-'));
+    try {
+      const store = new Store(openDb(':memory:'), now);
+      const note = newNote(store, home, 'Garden plan', new Date(DEMO_NOW));
+      const run = accept(store, note.path, note.entryId, '# Garden plan\n\nRaised beds by May.');
+      // Edited in an editor after the update was accepted; nothing has read the notes folder since.
+      rewriteNoteFile(note.path, '# Garden plan\n\nRaised beds by May. Beans along the fence.');
+
+      expect(() => undoRun(store.db, run, home)).toThrow(`Note #${note.entryId} changed after run ${run} updated it.`);
+      expect(readFileSync(note.path, 'utf8')).toContain('Beans along the fence.');
+      expect(store.getEntry(note.entryId)!.body).toContain('Beans along the fence.');
+      expect(getRun(store.db, run)!.status).toBe('done');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // A file opened for writing as root ignores its mode, so the failure can't be staged there.
+  it.skipIf(process.getuid?.() === 0)('a file it cannot write leaves the note as the run left it, and the undo runs again', () => {
+    const home = mkdtempSync(join(tmpdir(), 'skeinwise-undo-'));
+    try {
+      const store = new Store(openDb(':memory:'), now);
+      const note = newNote(store, home, 'Garden plan', new Date(DEMO_NOW));
+      const before = readFileSync(note.path, 'utf8');
+      const run = accept(store, note.path, note.entryId, '# Garden plan\n\nRaised beds by May.');
+      chmodSync(note.path, 0o444);
+
+      expect(() => undoRun(store.db, run, home)).toThrow();
+      expect(readFileSync(note.path, 'utf8')).toContain('Raised beds by May.');
+      expect(store.getEntry(note.entryId)!.body).toContain('Raised beds by May.');
+      expect(store.history(note.entryId).length).toBe(2);
+      expect(getRun(store.db, run)!.status).toBe('done');
+
+      chmodSync(note.path, 0o644);
+      expect(undoRun(store.db, run, home).restored).toEqual([note.entryId]);
+      expect(readFileSync(note.path, 'utf8')).toBe(before);
+      expect(store.getEntry(note.entryId)!.body).toBe('# Garden plan');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
