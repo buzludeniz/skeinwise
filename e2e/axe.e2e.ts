@@ -124,7 +124,7 @@ const WIDE: Screen[] = [
       await scan('brain, view settings');
     },
   },
-  simple('brain, clusters', 'clusters', canvas),
+  simple('brain, brain layout', 'brain-layout', canvas),
   simple('brain, rings', 'rings', canvas),
   simple('threads', 'threads', (page) => page.getByRole('navigation', { name: 'Sections' })),
   simple('review', 'review', section('Review')),

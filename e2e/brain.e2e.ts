@@ -13,7 +13,8 @@ import { runFolder } from './run.ts';
 
 const token = () => readFileSync(join(runFolder(), 'home', 'token'), 'utf8').trim();
 
-async function openBrain(page: Page, motion: 'reduce' | 'no-preference' = 'reduce'): Promise<string[]> {
+/** Opens the brain on its seed view: `brain` opens on the default layout, Clusters; `brain-layout` on the Brain layout. */
+async function openBrain(page: Page, motion: 'reduce' | 'no-preference' = 'reduce', seed: 'brain' | 'brain-layout' = 'brain'): Promise<string[]> {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   // Every request the page makes until the brain shows, so a page that never opens says where it stopped.
@@ -24,7 +25,7 @@ async function openBrain(page: Page, motion: 'reduce' | 'no-preference' = 'reduc
   page.on('requestfinished', (r) => log.push(`${Date.now() - start} ms got ${path(r.url())}`));
   page.on('requestfailed', (r) => log.push(`${Date.now() - start} ms failed ${path(r.url())}: ${r.failure()?.errorText}`));
   await page.emulateMedia({ reducedMotion: motion });
-  await page.goto(`/?seedview=brain#token=${token()}`);
+  await page.goto(`/?seedview=${seed}#token=${token()}`);
   try {
     // The wait is for the server opening the record, which takes longer while other runs load the machine.
     await expect(page.locator('.brain-host canvas')).toBeVisible({ timeout: 30_000 });
@@ -61,44 +62,51 @@ async function api<T>(page: Page, path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-test('the labels are buttons, and Tab steps through the hubs, biggest first', async ({ page }) => {
-  const errors = await openBrain(page);
-  const all = labels(page);
-  const names = await Promise.all((await all.all()).map(nameOf));
-  // The demo record has hubs; they come first, then notes.
-  const hubs = names.filter((n) => /: concept hub, [\d,]+ entr(y|ies)$/.test(n));
-  expect(hubs.length).toBeGreaterThan(1);
-  expect(names.slice(0, hubs.length)).toEqual(hubs);
-  for (const n of names.slice(hubs.length)) expect(n).toMatch(/: note$/);
-  const sizes = hubs.map((n) => Number(/([\d,]+) entr/.exec(n)![1]!.replace(/,/g, '')));
-  expect(sizes).toEqual([...sizes].sort((a, b) => b - a));
+// The brain opens on Clusters; the Brain layout has its own seed. The keyboard path is the same in both.
+for (const [layout, seed] of [
+  ['Clusters', 'brain'],
+  ['Brain', 'brain-layout'],
+] as const) {
+  test(`the labels are buttons, and Tab steps through the hubs, biggest first, in ${layout}`, async ({ page }) => {
+    const errors = await openBrain(page, 'reduce', seed);
+    await expect(page.getByRole('radiogroup', { name: 'Layout' }).getByRole('radio', { name: layout })).toHaveAttribute('aria-checked', 'true');
+    const all = labels(page);
+    const names = await Promise.all((await all.all()).map(nameOf));
+    // The demo record has hubs; they come first, then notes.
+    const hubs = names.filter((n) => /: concept hub, [\d,]+ entr(y|ies)$/.test(n));
+    expect(hubs.length).toBeGreaterThan(1);
+    expect(names.slice(0, hubs.length)).toEqual(hubs);
+    for (const n of names.slice(hubs.length)) expect(n).toMatch(/: note$/);
+    const sizes = hubs.map((n) => Number(/([\d,]+) entr/.exec(n)![1]!.replace(/,/g, '')));
+    expect(sizes).toEqual([...sizes].sort((a, b) => b - a));
 
-  // From the brain, Tab reaches each hub in turn, and a label with focus always shows.
-  await page.locator('.brain-host canvas').focus();
-  for (const hub of hubs) {
-    await page.keyboard.press('Tab');
-    const focused = page.locator('.brain-label:focus');
-    await expect(focused).toHaveAttribute('aria-label', hub);
-    await expect(focused).toHaveClass(/\bon\b/);
-    await expect(focused).toHaveCSS('opacity', '1');
-  }
+    // From the brain, Tab reaches each hub in turn, and a label with focus always shows.
+    await page.locator('.brain-host canvas').focus();
+    for (const hub of hubs) {
+      await page.keyboard.press('Tab');
+      const focused = page.locator('.brain-label:focus');
+      await expect(focused).toHaveAttribute('aria-label', hub);
+      await expect(focused).toHaveClass(/\bon\b/);
+      await expect(focused).toHaveCSS('opacity', '1');
+    }
 
-  // Enter pins the hub's card and moves focus to its title; Esc puts it away and focus back on the label.
-  const last = page.locator('.brain-label:focus');
-  await page.keyboard.press('Enter');
-  const hubName = hubs.at(-1)!.split(': concept hub')[0]!;
-  await expect(cardTitle(page)).toHaveText(hubName);
-  await expect(cardTitle(page)).toBeFocused();
-  await expect(card(page).getByRole('button', { name: 'Open', exact: true })).toBeVisible();
-  await expect(card(page).getByRole('button', { name: 'Light its entries' })).toBeEnabled();
-  await expect(card(page).getByRole('list', { name: 'Its entries' }).getByRole('listitem').first()).toBeVisible();
-  await expect(page.locator('.brain-view p.sr-only[role="status"]')).toHaveText(`Selected: ${hubName}, concept hub, ${hubs.at(-1)!.split('concept hub, ')[1]}.`);
-  await page.keyboard.press('Escape');
-  await expect(card(page)).toBeHidden();
-  await expect(last).toHaveAttribute('aria-label', hubs.at(-1)!);
-  await expect(page.locator('.brain-label:focus')).toHaveCount(1);
-  expect(errors).toEqual([]);
-});
+    // Enter pins the hub's card and moves focus to its title; Esc puts it away and focus back on the label.
+    const last = page.locator('.brain-label:focus');
+    await page.keyboard.press('Enter');
+    const hubName = hubs.at(-1)!.split(': concept hub')[0]!;
+    await expect(cardTitle(page)).toHaveText(hubName);
+    await expect(cardTitle(page)).toBeFocused();
+    await expect(card(page).getByRole('button', { name: 'Open', exact: true })).toBeVisible();
+    await expect(card(page).getByRole('button', { name: 'Light its entries' })).toBeEnabled();
+    await expect(card(page).getByRole('list', { name: 'Its entries' }).getByRole('listitem').first()).toBeVisible();
+    await expect(page.locator('.brain-view p.sr-only[role="status"]')).toHaveText(`Selected: ${hubName}, concept hub, ${hubs.at(-1)!.split('concept hub, ')[1]}.`);
+    await page.keyboard.press('Escape');
+    await expect(card(page)).toBeHidden();
+    await expect(last).toHaveAttribute('aria-label', hubs.at(-1)!);
+    await expect(page.locator('.brain-label:focus')).toHaveCount(1);
+    expect(errors).toEqual([]);
+  });
+}
 
 test("an entry's card lists its linked entries, lights its neighbours, and Esc puts things back in order", async ({ page }) => {
   const errors = await openBrain(page);
@@ -479,7 +487,8 @@ test.describe('at the cap', () => {
       (url) => url.pathname === '/api/brain',
       (route) => route.fulfill({ status: 200, contentType: 'application/json', body: record }),
     );
-    const errors = await openBrain(page, 'no-preference');
+    // The Brain layout, which turns: Clusters lies flat.
+    const errors = await openBrain(page, 'no-preference', 'brain-layout');
     await expect(page.locator('.legend-sample')).toContainText('Showing a sample: 20,000 of 25,000');
     const renderer = await page.evaluate(() => {
       const gl = document.createElement('canvas').getContext('webgl');

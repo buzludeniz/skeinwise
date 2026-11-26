@@ -200,10 +200,11 @@ test("waits for a yes before an agent's request changes anything, and shows its 
   await expect(card.getByRole('heading', { name: 'Waiting for your yes' })).toBeFocused();
 });
 
-/** Two pictures of the brain a second apart, once it has settled. The toolbars over it are masked: their blurred
- * backdrop can shift text by a shade between frames, which is not the scene moving. */
+/** Two pictures of the brain a second apart, once it has settled, in the Brain layout: Clusters lies flat and never
+ * turns. The toolbars over it are masked: their blurred backdrop can shift text by a shade between frames, which is
+ * not the scene moving. */
 async function twoPictures(page: Page, settled?: () => Promise<void>): Promise<[Buffer, Buffer]> {
-  await page.goto(`/?seedview=brain#token=${token()}`);
+  await page.goto(`/?seedview=brain-layout#token=${token()}`);
   const canvas = page.locator('.brain-host canvas');
   await expect(canvas).toBeVisible();
   const mask = [page.locator('.brain-top'), page.locator('.brain-layouts'), page.locator('.legend')];
