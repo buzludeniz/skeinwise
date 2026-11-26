@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -25,6 +25,13 @@ describe('corrections and the review queue on the demo record', () => {
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'skeinwise-fix-'));
     writeDemo(dir);
+    // The demo flags only its two Plotline notes. Two older notes of the test's own give the queue an item to skip and
+    // one to edit under the review. Later demo entries overtake each: a decision that names the note and says what it
+    // doesn't (review.ts cueFlag; a decision the note already holds only confirms it).
+    const old = (title: string, created: string, body: string) =>
+      writeFileSync(join(dir, 'notes', `${title.toLowerCase().replaceAll(' ', '-')}.md`), `---\ntitle: ${title}\ncreated: ${created}\n---\n# ${title}\n\n${body}\n`);
+    old('River cleaner', '2024-02-10', 'The river cleaner is a Python script: it reads the samples, drops the bad rows and writes the nitrate table.');
+    old('Market loaves', '2024-04-02', 'The market stall could sell spelt and a seeded loaf.');
     store = new Store(openDb(':memory:'), () => DEMO_NOW);
     for (const p of ['chatgpt', 'claude', 'claude-code', 'notes']) for (const b of readImports(join(dir, p))) store.ingest(b);
     record = new RecordView(store);
@@ -86,7 +93,7 @@ describe('corrections and the review queue on the demo record', () => {
   });
 
   it('refuses to update a note that changed after its review', () => {
-    const item = openReviewItems(store.db).find((i) => i.noteEntry !== 420)!;
+    const item = openReviewItems(store.db).find((i) => store.getEntry(i.noteEntry)!.title === 'River cleaner')!;
     const note = store.getEntry(item.noteEntry)!;
     store.editEntry(note.id, `${note.body}\n\nOne more line.`, 'you');
     expect(() => resolveReview(store, home, item.id, 'update', true)).toThrow(/changed after review run/);
@@ -94,7 +101,8 @@ describe('corrections and the review queue on the demo record', () => {
 
   it('review answers: update shows a diff and saves with yes; holds and skip set items aside', () => {
     const items = openReviewItems(store.db);
-    const plotline = items.find((i) => i.noteEntry === 420)!;
+    const plotline = items.find((i) => store.getEntry(i.noteEntry)!.title === 'Plotline')!;
+    expect(items.map((i) => store.getEntry(i.noteEntry)!.title).sort()).toEqual(['Market loaves', 'Plotline', 'Plotline waiting list rules', 'River cleaner']);
     const shown = resolveReview(store, home, plotline.id, 'update', false);
     expect(shown.saved).toBe(false);
     expect(shown.diff).toContain('+ ## Updates');
@@ -103,8 +111,8 @@ describe('corrections and the review queue on the demo record', () => {
 
     const saved = resolveReview(store, home, plotline.id, 'update', true);
     expect(saved).toMatchObject({ saved: true, version: 2, file: null });
-    expect(store.getEntry(420)!.body).toBe(plotline.proposed.trim());
-    expect(store.history(420)[0]!.body).not.toContain('## Updates');
+    expect(store.getEntry(plotline.noteEntry)!.body).toBe(plotline.proposed.trim());
+    expect(store.history(plotline.noteEntry)[0]!.body).not.toContain('## Updates');
 
     const [held, skipped] = items.filter((i) => i.id !== plotline.id);
     resolveReview(store, home, held!.id, 'holds', false);
@@ -115,16 +123,17 @@ describe('corrections and the review queue on the demo record', () => {
   });
 
   it('undoing the review run puts back the note its accepted update changed (M12)', () => {
-    const [original, update] = store.history(420);
+    const id = store.allEntries().find((e) => e.kind === 'note' && e.title === 'Plotline')!.id;
+    const [original, update] = store.history(id);
     const runId = update!.runId!;
     expect(getRun(store.db, runId)!.task).toBe('review');
     expect(update!.editor).toBe('you');
     const undone = undoRun(store.db, runId, home);
-    expect(undone.restored).toEqual([420]);
+    expect(undone.restored).toEqual([id]);
     expect(undone.removed.review_items).toBeGreaterThan(0);
-    expect(store.getEntry(420)!.body).toBe(original!.body);
+    expect(store.getEntry(id)!.body).toBe(original!.body);
     // The update stays in history; putting it back is a new version of its own, by you, in no run.
-    expect(store.history(420).map((v) => [v.version, v.runId])).toEqual([[1, null], [2, runId], [3, null]]);
+    expect(store.history(id).map((v) => [v.version, v.runId])).toEqual([[1, null], [2, runId], [3, null]]);
   });
 });
 

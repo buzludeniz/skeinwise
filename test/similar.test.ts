@@ -33,8 +33,8 @@ describe('similar from the full-text index', () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it("reads like the entry index's cosine on the demo", () => {
-    // Every third entry, since the index scores the whole record per call. On all 422 the index's best entry is in
-    // the top three for 415, and first for 408 (measured when similar moved to the full-text index).
+    // Every third entry, since the index scores the whole record per call. On all 589 of demo v2 the index's best entry
+    // is in the top three for 582, and first for 569 (408 and 415 of 422 on the first demo).
     const sample = record.entries.filter((_, i) => i % 3 === 0);
     let first = 0;
     let topThree = 0;
@@ -52,7 +52,8 @@ describe('similar from the full-text index', () => {
     const entry = record.byId.get(385)!;
     const hits = similarEntries(store, 385, 20);
     expect(hits.length).toBe(20);
-    expect(hits[0]!.entryId).toBe(345);
+    // 517 says the same words in another chat: "Plotline should keep a log of every offer".
+    expect(hits[0]!.entryId).toBe(517);
     for (const h of hits) {
       expect(h.entryId).not.toBe(385);
       expect(record.byId.get(h.entryId)!.threadId).not.toBe(entry.threadId);
