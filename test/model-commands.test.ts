@@ -415,7 +415,7 @@ describe('skeinwise model serve', () => {
       expect(existsSync(join(dir, 'planted.txt'))).toBe(false);
     });
 
-    // E1 (Deniz, Nov 25): fetch checked the file once, but anything that could write to models/ afterwards could swap it.
+    // E1: fetch checked the file once, but anything that could write to models/ afterwards could swap it.
     it('re-checks the file under the pinned name against the pin, printed or run', async () => {
       fakeServer(join(dir, 'bin'));
       const env = { SKEINWISE_HOME: home, PATH: join(dir, 'bin') };

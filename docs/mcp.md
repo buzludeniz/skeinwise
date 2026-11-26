@@ -171,7 +171,7 @@ day (`2026-11-25`), and a `to` day reaches to its end.
 | `read_thread` | read | A conversation's messages in order, a page at a time. | `thread_id`; `offset`, `limit` (20, up to 20) |
 | `timeline` | read | Entries in date order with an excerpt each. | `from`, `to`, `speaker`, `source`, `newest_first`, `offset`, `limit` (20, up to 20) |
 | `list_hubs` | read | The organiser's concept hubs with their size and short summary, a page at a time. | `offset`, `limit` (20, up to 20) |
-| `read_hub` | read | One hub: the organiser's reading of your entries, each point citing a dated entry. | `hub_id` |
+| `read_hub` | read | One hub: the organiser's reading of your entries, each point citing a dated entry, and the ids of the entries it holds, a page at a time (`entry_count` in all; `next_offset` until the last page, then null). | `hub_id`; `offset`, `limit` (1000, up to 2000) |
 | `write_note` | write | Starts a note of the agent's own, or gives new text to one it started. | `title`, `body` |
 | `append_daily_note` | write | Adds a line to today's daily note. | `text` |
 | `tag_entries` | write | Tags entries, as one run. | `entry_ids`, `tag`; `schema` |

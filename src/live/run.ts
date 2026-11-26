@@ -1,5 +1,5 @@
 // `skeinwise live`: the update stream from the command line. Capture imports what changes; after each save the
-// background organiser runs over what is new. Connectors are off in v1.0 (Deniz, Nov 25): they ship in v1.1 behind
+// background organiser runs over what is new. Connectors are off in v1.0: they ship in v1.1 behind
 // their own consent screen, so live pulls from a connected service only when its caller passes `poll`.
 
 import { join } from 'node:path';

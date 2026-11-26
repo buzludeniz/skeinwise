@@ -537,7 +537,7 @@ describe('organising with a model', () => {
       expect(again.message).not.toContain(KEY);
     });
 
-    // LS-15: negative or missing usage, and timeouts, let a run spend without counting it. E2 (Deniz, Nov 25): so did a
+    // LS-15: negative or missing usage, and timeouts, let a run spend without counting it. E2: so did a
     // report of 0. A report of 0 or less counts exactly what a missing one does: our own estimate.
     it('counts usage that is zero, negative, missing or cut off by a timeout', async () => {
       const silent = (async (_url: string | URL | Request, init?: RequestInit) => {

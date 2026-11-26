@@ -36,7 +36,7 @@ export interface NoteName {
  * Which note a [[link]] names: a note whose title, or file name without its folder and extension, is the link's text
  * (any case). The alias and heading are gone already (`linkTargets`). Where two share a name, the first in the record
  * wins. Folder links (`[[Garden/Plan]]`) and a table's escaped `[[Note\|alias]]` wait for 1.1 (LS-19's link part, cut
- * by Deniz on Nov 25; bd66d5d has it), so they match only a title written the same way.
+ * from 1.0; bd66d5d has it), so they match only a title written the same way.
  */
 export class NoteNames<T extends NoteName> {
   private readonly byName = new Map<string, T>();

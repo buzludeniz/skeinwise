@@ -34,7 +34,7 @@ export const BUDGETS: Budget[] = [
   { key: 'web.js', label: 'Web initial JS (gzip)', unit: 'kB', limit: { '50k': 250, '150k': 250 } },
   // Plan 7.2's MCP call p95 counts the lookup tools (search, timeline, list_hubs, read_hub, …), and an MCP ask is
   // measured on its own against the CLI's ask budget. With 3 asks among 17 calls, the nearest-rank p95 was an ask every
-  // time. Split for the 1.0 gate on Nov 26; Deniz may still overrule it.
+  // time. Split for the 1.0 gate.
   { key: 'mcp.p95', label: 'MCP lookup p95 (asks apart)', unit: 'ms', limit: { '50k': 200, '150k': 400 } },
   { key: 'mcp.ask', label: 'MCP ask (slowest)', unit: 'ms', limit: ASK_LIMIT },
   { key: 'mcp.size', label: 'MCP largest reply', unit: 'KB', limit: { '50k': 32, '150k': null } },

@@ -1,5 +1,5 @@
 // The release workflow's first step (release.yml). It refuses to go on unless this run is the push of a version tag
-// and the tag names package.json's version (Deniz's decision 3a), and unless CHANGELOG.md has a section for that
+// and the tag names package.json's version, and unless CHANGELOG.md has a section for that
 // version. It writes the npm dist-tag for the publish job (`next` for a prerelease such as 1.0.0-rc.1, `latest`
 // otherwise) and the version's CHANGELOG section as the GitHub release's notes.
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';

@@ -2,7 +2,7 @@
 # request, no button. It refuses before it builds unless the run is that tag push, the tag names package.json's
 # version, the tag is signed and verified by GitHub, the commit is on main, and CHANGELOG.md has the version's section.
 #
-# npm: trusted publishing over OIDC (Deniz's decision 3a). There is no NPM_TOKEN anywhere, and no --provenance flag:
+# npm: trusted publishing over OIDC. There is no NPM_TOKEN anywhere, and no --provenance flag:
 # npm adds provenance itself for a public package from a public repo. Only the publish job can ask for an OIDC token.
 # The first publish (1.0.0-rc.1) is Deniz's, by hand: trusted publishing needs the package to exist already.
 # release/DENIZ_CHECKLIST.md has the order and the npmjs.com fields, which must match this file's name, release.yml,

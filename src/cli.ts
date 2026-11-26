@@ -23,7 +23,7 @@ import { STORE_COMMANDS, STORE_FLAGS, STORE_HELP, STORE_SEARCH_HELP } from './st
 import type { ImportBatch, IngestResult, Store } from './store/store.ts';
 import { SYNC_COMMANDS } from './sync/commands.ts';
 
-// Sync is hidden in v1.0 (Deniz, Nov 25: hide it entirely, in place of an --experimental flag). Only export is
+// Sync is hidden entirely in v1.0, in place of an --experimental flag. Only export is
 // reachable; src/sync/** stays in the tree with its tests, and the sync command, its flags and its help are left out.
 const EXPORT_COMMANDS: typeof SYNC_COMMANDS = { export: SYNC_COMMANDS.export! };
 const EXPORT_HELP = `Export (a plain zip on this computer; nothing goes to any server):
@@ -447,7 +447,7 @@ async function run(argv: string[], io: Io): Promise<number> {
       const setupCommand = SETUP_COMMANDS[command];
       if (setupCommand) return setupCommand({ io, home: homeDir(io.env), values, args: positionals, json });
       // The connectors' commands (src/connectors/commands.ts) are left out: connectors are off in v1.0 and ship in v1.1
-      // behind their own consent screen (Deniz, Nov 25). Of the sync module only export is wired (see EXPORT_COMMANDS).
+      // behind their own consent screen. Of the sync module only export is wired (see EXPORT_COMMANDS).
       const organiser = ORGANISER_COMMANDS[command] ?? STORE_COMMANDS[command] ?? EXPORT_COMMANDS[command] ?? MCP_COMMANDS[command] ?? PA_COMMANDS[command];
       if (!organiser) throw new UsageError(`Unknown command: ${command}. Run "skeinwise help" for the list.`);
       const home = homeDir(io.env);

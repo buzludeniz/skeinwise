@@ -1,5 +1,5 @@
 // The release machinery's checks: the package check (release/pack-check.ts, LS-20 and the audit's L17) and the
-// release workflow's refusals (release/check-tag.ts, Deniz's decision 3a).
+// release workflow's refusals (release/check-tag.ts).
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';

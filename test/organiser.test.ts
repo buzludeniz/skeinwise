@@ -278,7 +278,7 @@ describe('a quieter review (LS-14)', () => {
   });
 });
 
-// LS-19's folder links and the escaped pipe wait for 1.1 (cut by Deniz on Nov 25). bd66d5d has them and their tests.
+// LS-19's folder links and the escaped pipe wait for 1.1 (cut from 1.0). bd66d5d has them and their tests.
 describe('[[links]] by file name or title', () => {
   let store: Store;
   let record: RecordView;
