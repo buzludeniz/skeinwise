@@ -406,6 +406,19 @@ function checkPrivate(path: string): void {
   if (mode & 0o077) throw new Error(`${path} has mode ${mode.toString(8)}, open to others`);
 }
 
+/**
+ * The fake model's answer when the body names none: the spec's JSON. Node 24's JSON.stringify recurses, so a spec
+ * nested thousands of lists deep overflows the stack (input 161 of seed 20261125); checkSpecValue refuses that spec
+ * the same way, and the model answers "null".
+ */
+function specAnswer(spec: unknown): string {
+  try {
+    return JSON.stringify(spec) ?? 'null';
+  } catch {
+    return 'null';
+  }
+}
+
 /** The body was not a JSON object (app.ts's own 400), or no route took it: counted as refused. */
 class RouteRefused extends Error {}
 
@@ -438,7 +451,7 @@ async function routesOnce(input: Uint8Array): Promise<void> {
     throw new RouteRefused();
   }
   const own = (key: string): unknown => (Object.hasOwn(body, key) ? body[key] : undefined);
-  world!.answer = typeof own('answer') === 'string' ? (own('answer') as string) : (JSON.stringify(own('spec')) ?? 'null');
+  world!.answer = typeof own('answer') === 'string' ? (own('answer') as string) : specAnswer(own('spec'));
 
   const kept = own('file');
   if (kept !== undefined) {
