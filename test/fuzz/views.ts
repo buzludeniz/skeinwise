@@ -528,7 +528,9 @@ async function routesOnce(input: Uint8Array): Promise<void> {
 const viewRoutesTarget: Target = {
   name: 'view-routes',
   owner: 'src/server/viewspec.ts',
-  memoryMiB: 256,
+  // As view-spec's: 20k inputs replayed in a fresh process sit 208 MiB above where they started, and a 900 s run
+  // (seed 45503953) peaked at 260 on 16 inputs that peak at 21 replayed together.
+  memoryMiB: 512,
   seeds: () =>
     [
       { spec: chart },
