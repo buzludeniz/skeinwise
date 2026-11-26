@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import { resolveReview } from '../src/organiser/corrections.ts';
 import { currentMark, finishRun, startRun } from '../src/organiser/runs.ts';
 import { openDb } from '../src/store/db.ts';
 import { Store } from '../src/store/store.ts';
+import { expectMode } from './modes.ts';
 
 describe('notes in the record folder', () => {
   let home: string;
@@ -26,7 +27,7 @@ describe('notes in the record folder', () => {
     expect(first).toMatchObject({ path: join(notesDir(home), 'daily', '2026-11-25.md'), created: true });
     expect(second).toMatchObject({ path: first.path, created: false, entryId: first.entryId });
     expect(readFileSync(first.path, 'utf8')).toBe('# 2026-11-25\n\n- Fed the starter at 18:00\n- Rye proof took\n  four hours\n');
-    expect(statSync(first.path).mode & 0o777).toBe(0o600);
+    expectMode(first.path, 0o600);
     const entry = store.getEntry(first.entryId)!;
     expect(entry).toMatchObject({ speaker: 'you', kind: 'note', title: '2026-11-25', createdAt: '2026-11-25T09:00:00.000Z', version: 2 });
     expect(store.history(entry.id).map((v) => v.editor)).toEqual(['you', 'you']);
@@ -111,7 +112,7 @@ describe('notes an agent writes', () => {
     const made = writeAgentNote(store, home, 'claude-code', ' Rye   notes ', 'Hydration 75%', now);
     expect(made).toMatchObject({ path: join(notesDir(home), 'rye-notes.md'), created: true });
     expect(readFileSync(made.path, 'utf8')).toBe(`---\ncreated: ${now.toISOString()}\nagent: claude-code\n---\n\n# Rye notes\n\nHydration 75%\n`);
-    expect(statSync(made.path).mode & 0o777).toBe(0o600);
+    expectMode(made.path, 0o600);
     expect(store.getEntry(made.entryId)).toMatchObject({ speaker: 'claude-code', title: 'Rye notes', version: 1 });
 
     const again = writeAgentNote(store, home, 'Claude-Code', 'Rye notes', 'Hydration 78%', now);

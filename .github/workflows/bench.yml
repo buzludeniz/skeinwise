@@ -1,0 +1,69 @@
+# The performance budgets of plan 7.2 (bench/README.md). Every push runs a smoke bench: 3,000 synthetic entries
+# against the 50k budgets, a few minutes. The full 50k and 150k benches run only when started by hand
+# (workflow_dispatch); the budgets are set for an M1 with 16 GB, and a hosted runner is slower. The bench's record runs
+# the No-AI engine: CI never starts or calls a model server. Hardened like ci.yml (M15).
+name: Bench
+on:
+  push:
+    branches: [main, "v1/**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      size:
+        description: "Corpus size (150k takes much longer)"
+        type: choice
+        options: ["50k", "150k"]
+        default: "50k"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.event_name }}-${{ github.ref }}
+  # A newer push to a track branch replaces its smoke run; main and runs started by hand keep every run.
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
+
+jobs:
+  smoke:
+    name: bench (smoke, 3,000 entries)
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
+        with:
+          install: false
+      - run: pnpm install --frozen-lockfile
+      # The web app's initial JS is one of the measures, so the page is built first.
+      - run: pnpm build
+      - run: pnpm bench 50k --entries 3000
+
+  full:
+    name: bench (${{ inputs.size }})
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    # The 150k bench stops its first `run all` at twice its budget, 24 minutes; the rest is room for a slower runner.
+    timeout-minutes: 120
+    env:
+      SIZE: ${{ inputs.size }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
+        with:
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm bench "$SIZE"
