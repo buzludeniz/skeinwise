@@ -79,16 +79,15 @@ const TAG_MAX = 60;
  */
 function frontMatterTags(db: DatabaseSync, entries: Entry[]): Tagging[] {
   if (!entries.length) return [];
-  const inScope = new Set(entries.map((e) => e.id));
+  // Only the entries in scope are read: a run over a hundred new entries used to read every note's properties.
   const rows = db
     .prepare(
       `SELECT e.id, v.properties FROM entries e JOIN versions v ON v.entry_id = e.id AND v.version = e.version
-       WHERE v.properties IS NOT NULL ORDER BY e.id`,
+       WHERE v.properties IS NOT NULL AND e.id IN (SELECT value FROM json_each(?)) ORDER BY e.id`,
     )
-    .all() as { id: number; properties: string }[];
+    .all(JSON.stringify(entries.map((e) => e.id))) as { id: number; properties: string }[];
   const out: Tagging[] = [];
   for (const r of rows) {
-    if (!inScope.has(r.id)) continue;
     for (const name of frontMatterTagNames(JSON.parse(r.properties) as Record<string, unknown>)) out.push({ entryId: r.id, name, score: 1 });
   }
   return out;
@@ -282,16 +281,22 @@ function product(ctx: TaskContext, schema: Schema, tags: NewTag[], taggings: Tag
   // string per tagging, twice over, took `run all` past its memory budget.
   const best = dedupe(taggings);
   const unique = ordered(best, taggings);
-  const live = livePairs(ctx.db, schema.id, null);
-  const replaced = livePairs(ctx.db, schema.id, replacedRuns(ctx.db, 'tag', schema.id, ctx.scope));
+  const taggedIds = [...new Set(unique.map((t) => t.entryId))];
+  // Only the entries this run tags can have an unchanged pair, so a scoped run reads just theirs. A run over the whole
+  // record reads every pair either way, without the list of ids.
+  const live = livePairs(ctx.db, schema.id, null, ctx.scope.kind === 'all' ? null : taggedIds);
+  const replaced = livePairs(ctx.db, schema.id, replacedRuns(ctx.db, 'tag', schema.id, ctx.scope), null);
   const used = new Set(best.keys());
-  const tagged = new Set(unique.map((t) => t.entryId)).size;
+  const tagged = taggedIds.length;
   let unchanged = 0;
-  if (live.size) for (const t of unique) if (live.has(pairKey(t))) unchanged++;
+  for (const [name, ids] of live) {
+    const byEntry = best.get(name);
+    if (byEntry) for (const id of ids) if (byEntry.has(id)) unchanged++;
+  }
   let removed = 0;
-  for (const p of replaced) {
-    const at = p.indexOf(':');
-    if (!best.get(p.slice(at + 1))?.has(Number(p.slice(0, at)))) removed++;
+  for (const [name, ids] of replaced) {
+    const byEntry = best.get(name);
+    for (const id of ids) if (!byEntry?.has(id)) removed++;
   }
   return {
     counts: {
@@ -368,14 +373,33 @@ function lowerCase(): (name: string) => string {
 
 const pairKey = (t: { entryId: number; name: string }) => `${t.entryId}:${t.name.toLowerCase()}`;
 
-/** Entry and tag-name pairs from live runs of a schema; with runIds, from those runs only. */
-function livePairs(db: DatabaseSync, schemaId: number, runIds: number[] | null): Set<string> {
-  if (runIds && !runIds.length) return new Set();
+/**
+ * The entry and tag-name pairs from live runs of a schema (with runIds, from those runs only; with entryIds, of those
+ * entries only), as entry ids by lowercased tag name. Rows are read one at a time and hold two numbers, and each tag's
+ * name is lowercased once: the record can hold over a million pairs (12.7 million at 150,000 entries), and a row
+ * object and a key string for each took organising new entries past node's heap.
+ */
+function livePairs(db: DatabaseSync, schemaId: number, runIds: number[] | null, entryIds: number[] | null): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  if ((runIds && !runIds.length) || (entryIds && !entryIds.length)) return out;
+  const names = new Map<number, string>();
+  for (const t of db.prepare('SELECT id, name FROM tags WHERE schema_id = ?').iterate(schemaId) as Iterable<{ id: number; name: string }>) {
+    names.set(t.id, t.name.toLowerCase());
+  }
   const runs = runIds ? `(${runIds.join(',')})` : '(SELECT id FROM live_runs)';
-  const rows = db
-    .prepare(`SELECT et.entry_id AS entryId, t.name FROM entry_tags et JOIN tags t ON t.id = et.tag_id WHERE t.schema_id = ? AND et.run_id IN ${runs}`)
-    .all(schemaId) as { entryId: number; name: string }[];
-  return new Set(rows.map(pairKey));
+  const only = entryIds ? ' AND et.entry_id IN (SELECT value FROM json_each(?))' : '';
+  const read = db.prepare(
+    `SELECT et.entry_id AS entryId, et.tag_id AS tagId FROM entry_tags et JOIN tags t ON t.id = et.tag_id
+     WHERE t.schema_id = ? AND et.run_id IN ${runs}${only}`,
+  );
+  const rows = (entryIds ? read.iterate(schemaId, JSON.stringify(entryIds)) : read.iterate(schemaId)) as Iterable<{ entryId: number; tagId: number }>;
+  for (const { entryId, tagId } of rows) {
+    const name = names.get(tagId)!;
+    let ids = out.get(name);
+    if (!ids) out.set(name, (ids = new Set()));
+    ids.add(entryId);
+  }
+  return out;
 }
 
 function stemSet(e: Entry): Set<string> {
