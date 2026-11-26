@@ -2,7 +2,9 @@ import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { main } from '../src/cli.ts';
 import { loadConfig, setConfigValue } from '../src/config.ts';
 import { DEMO_NOW, writeDemo } from '../src/demo/demo.ts';
@@ -133,6 +135,65 @@ describe('background organising', () => {
       'up to date · organising stopped: No model server answers at http://127.0.0.1:8731/v1',
     );
     expect(listRuns(store.db).every((r) => r.status === 'done')).toBe(true);
+  });
+});
+
+describe('a pass in a child process (isolate)', () => {
+  it('organises what is new there, and never reads the record into this process', async () => {
+    await runSteps(store, new RecordView(store), steps(store, 'all'), NONE);
+    const before = listRuns(store.db).length;
+    clock = LATER;
+    addNote('starter.md', 'Fed the sourdough starter twice today; the rye flour made it rise faster.');
+    // RecordView reads every entry through the store it is given: the child's own, never this one.
+    const read = vi.spyOn(store, 'allEntries');
+
+    const bg = background({ isolate: true });
+    expect(bg.isolated).toBe(true);
+    const result = await bg.pass();
+    expect(result.error).toBeUndefined();
+    expect(read).not.toHaveBeenCalled();
+    expect(result.entries).toBe(1);
+    const runs = listRuns(store.db).slice(0, result.runs.length);
+    expect(listRuns(store.db)).toHaveLength(before + result.runs.length);
+    expect(runs.every((r) => r.scope === 'new' && r.engine === 'none' && r.status === 'done')).toBe(true);
+    expect(new Set(runs.map((r) => r.task))).toEqual(new Set(['tag', 'file', 'link', 'hub', 'review']));
+    expect(statusLines(readStatus(join(home, 'live.json')))[1]).toBe('up to date · organised 1 new entry');
+  }, 60_000);
+
+  it('reports what stopped the pass there', async () => {
+    await runSteps(store, new RecordView(store), steps(store, 'all'), NONE);
+    addNote('crumb.md', 'Open crumb on the third bake.');
+    // A fake model server on a port of its own, which refuses everything.
+    const server = createServer((_req, res) => res.writeHead(503).end('{"error": "loading model"}'));
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+    try {
+      setConfigValue(home, 'engine', 'local');
+      setConfigValue(home, 'localUrl', url);
+      const result = await background({ isolate: true }).pass();
+      expect(result.error).toContain(url);
+      expect(statusLines(readStatus(join(home, 'live.json')))[1]).toMatch(/^up to date · organising stopped: .*127\.0\.0\.1/);
+    } finally {
+      server.close();
+    }
+  }, 60_000);
+
+  it('is how a watching live organises; --once and a fetch of the caller\'s own stay in this process', () => {
+    const userHome = join(dir, 'me');
+    // Busy, so no pass starts while the test looks.
+    const busy = () => 'busy in this test';
+    const lives = [
+      startLive(store, home, { userHome, env: {}, busy }),
+      startLive(store, home, { userHome, env: {}, busy, fetch }),
+      startLive(store, home, { once: true, userHome, env: {}, busy }),
+      startLive(store, home, { userHome, env: {}, busy, fetch: (async () => new Response('{}')) as typeof fetch }),
+      startLive(store, home, { userHome, env: {}, busy, isolate: false }),
+    ];
+    try {
+      expect(lives.map((l) => l.background?.isolated)).toEqual([true, true, false, false, false]);
+    } finally {
+      for (const l of lives) l.stop();
+    }
   });
 });
 

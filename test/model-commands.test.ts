@@ -265,7 +265,8 @@ describe('skeinwise model check', () => {
       const r = await sw(['model', 'check', '--engine', 'remote'], { env: env(), fetch: server('Sure! Here you go.') });
       expect(r.code).toBe(1);
       const runs = JSON.parse((await sw(['runs', '--json'])).out) as Record<string, unknown>[];
-      expect(runs).toEqual([expect.objectContaining({ status: 'failed', tokensIn: 31, tokensOut: 6 })]);
+      // Asked once more with what was wrong, as every task's answer is: both answers count.
+      expect(runs).toEqual([expect.objectContaining({ status: 'failed', tokensIn: 62, tokensOut: 12 })]);
       expect(String(runs[0]!.message)).not.toContain(key);
     });
   });
