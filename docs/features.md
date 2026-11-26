@@ -31,7 +31,7 @@ The record is one SQLite file, `~/.skeinwise/record.db`, plus Markdown notes in 
 | Gemini (Google Takeout) | `MyActivity.json`; prompts are grouped into threads by 30-minute gaps |
 | Claude Code history | `~/.claude/projects/*/*.jsonl`; text only: tool calls and their results, system reminders and compaction summaries are left out; each entry keeps its project folder and git branch |
 | Codex history | `~/.codex/sessions/**/*.jsonl`; keeps its project folder and git branch |
-| Markdown folders and Obsidian vaults | Front matter, kept as the note's properties; `[[links]]` and `#tags`; the date comes from front matter, the file name or the modified time; a folder named `Templates` is skipped. Aliases and folder links (`[[Note\|alias]]`, `[[Folder/Note]]`) are *(1.1)* |
+| Markdown folders and Obsidian vaults | Front matter, kept with the note as its properties, tags included; `[[links]]`; the date comes from front matter, the file name or the modified time; a folder named `Templates` is skipped. Aliases and folder links (`[[Note\|alias]]`, `[[Folder/Note]]`) are *(1.1)* |
 | Plain text | `.txt` files as notes: UTF-8 or UTF-16, with or without a byte order mark; up to 16 MiB a note |
 | Word | `.docx` files, read on this computer: headings, lists and tables become Markdown; the title comes from the document, its first heading or its file name. A .docx inside a zip is skipped and named |
 
