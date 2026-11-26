@@ -4,7 +4,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { panelId, tabId, tabPanel, tabStep } from '../../web/src/ui/tabs.ts';
+import { panelId, radioStep, tabId, tabPanel, tabStep } from '../../web/src/ui/tabs.ts';
 
 describe('tabStep', () => {
   it('moves right and wraps from the last tab to the first', () => {
@@ -29,6 +29,23 @@ describe('tabStep', () => {
   it('leaves every other key alone, the up and down arrows included', () => {
     for (const key of ['ArrowUp', 'ArrowDown', 'Enter', ' ', 'Tab', 'a']) expect(tabStep(key, 1, 3)).toBeNull();
     expect(tabStep('ArrowRight', 0, 0)).toBeNull();
+  });
+});
+
+describe('radioStep', () => {
+  it('moves to the next radio on right and down, and wraps', () => {
+    expect(radioStep('ArrowRight', 0, 3)).toBe(1);
+    expect(radioStep('ArrowDown', 2, 3)).toBe(0);
+  });
+
+  it('moves to the one before on left and up, and wraps', () => {
+    expect(radioStep('ArrowLeft', 1, 3)).toBe(0);
+    expect(radioStep('ArrowUp', 0, 3)).toBe(2);
+  });
+
+  it('leaves every other key alone', () => {
+    for (const key of ['Home', 'End', 'Enter', ' ', 'Tab', 'a']) expect(radioStep(key, 1, 3)).toBeNull();
+    expect(radioStep('ArrowDown', 0, 0)).toBeNull();
   });
 });
 

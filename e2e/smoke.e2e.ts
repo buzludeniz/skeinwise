@@ -136,7 +136,7 @@ test('keeps focus in the reader when its content changes, and moves along the ta
   await expect(reader).toBeHidden();
 });
 
-test("moves along Workbench's tabs with the arrow keys", async ({ page }) => {
+test("moves along Workbench's tabs and its choices with the arrow keys", async ({ page }) => {
   const rail = await openRecord(page);
   await rail.getByRole('button', { name: 'Workbench' }).click();
   const tab = (name: string) => page.getByRole('tablist', { name: 'Workbench' }).getByRole('tab', { name, exact: true });
@@ -149,6 +149,27 @@ test("moves along Workbench's tabs with the arrow keys", async ({ page }) => {
   await page.keyboard.press('ArrowRight');
   await expect(tab('Table builder')).toBeFocused();
   await expect(page.getByRole('tabpanel', { name: 'Table builder' })).toBeVisible();
+
+  // A row of choices is a radio group: only the chosen one is in the Tab order, and the arrows move and choose. The
+  // table builder opens on Heatmap.
+  const radio = (name: string) => page.getByRole('radiogroup', { name: 'Form' }).getByRole('radio', { name, exact: true });
+  await expect(radio('Heatmap')).toHaveAttribute('aria-checked', 'true');
+  await expect(radio('Heatmap')).toHaveAttribute('tabindex', '0');
+  await expect(radio('Table')).toHaveAttribute('tabindex', '-1');
+  await radio('Heatmap').focus();
+  const steps: [string, string][] = [
+    ['ArrowRight', 'Bars'],
+    ['ArrowDown', 'Stacked bars'],
+    ['ArrowUp', 'Bars'],
+    ['ArrowLeft', 'Heatmap'],
+    ['ArrowLeft', 'Table'],
+    ['ArrowLeft', 'Dots'],
+  ];
+  for (const [key, name] of steps) {
+    await page.keyboard.press(key);
+    await expect(radio(name)).toBeFocused();
+    await expect(radio(name)).toHaveAttribute('aria-checked', 'true');
+  }
 });
 
 test("waits for a yes before an agent's request changes anything, and shows its words as text", async ({ page }) => {
