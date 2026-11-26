@@ -203,7 +203,7 @@ export function resolveReview(store: Store, home: string, id: number, action: Re
   if (!yes) return { ...base, diff };
   const file = homeNoteFile(store, home, note);
   if (file) rewriteNoteFile(file, item.proposed);
-  const version = store.editEntry(note.id, item.proposed, 'you');
+  const version = store.editEntry(note.id, item.proposed, { editor: 'you', runId: item.runId });
   mark('updated');
   return { ...base, item: { ...item, status: 'updated' }, diff, saved: true, version: version.version, file };
 }

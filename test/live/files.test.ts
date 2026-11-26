@@ -18,6 +18,8 @@ import { openDb } from '../../src/store/db.ts';
 import { Store as RecordStore, type Store } from '../../src/store/store.ts';
 
 const json = (o: object) => JSON.stringify(o) + '\n';
+// chmod can't make a file unreadable on Windows (it only sets the read-only bit), so these tests are POSIX-only.
+const unreadableByMode = process.platform === 'win32';
 
 function goodSession(s: number, lines = 4, from = 0): string {
   let t = '';
@@ -85,11 +87,11 @@ describe('one bad file', () => {
     expect(first.code).toBe(0);
     expect(first.out).toContain('caught up 6 chats from Claude Code');
     expect(first.out).not.toContain('failed');
-    expect(first.err).toContain('-Users-me-proj/zz-bad.jsonl:1: 1700000000000000000 is not a time; kept the entry with no time');
+    expect(first.err).toContain(`${join('-Users-me-proj', 'zz-bad.jsonl')}:1: 1700000000000000000 is not a time; kept the entry with no time`);
     expect(withStore((s) => s.allEntries())).toHaveLength(21);
   });
 
-  it('that cannot be read fails alone: the other sessions are saved, and it is listed by its path (H2)', async () => {
+  it.skipIf(unreadableByMode)('that cannot be read fails alone: the other sessions are saved, and it is listed by its path (H2)', async () => {
     for (let s = 0; s < 5; s++) writeFileSync(join(projects, `sess-${s}.jsonl`), goodSession(s));
     const locked = join(projects, 'zz-locked.jsonl');
     writeFileSync(locked, goodSession(5));
@@ -163,7 +165,7 @@ describe('the per-file record', () => {
   });
   afterEach(() => store.db.close());
 
-  it('tries a failed file again after 1 min, 5 min, 30 min, then hourly, and at once when it changes', () => {
+  it.skipIf(unreadableByMode)('tries a failed file again after 1 min, 5 min, 30 min, then hourly, and at once when it changes', () => {
     const bad = join(projects, 'zz-locked.jsonl');
     writeFileSync(bad, goodSession(9));
     chmodSync(bad, 0o200); // unreadable, still writable
@@ -203,7 +205,7 @@ describe('the per-file record', () => {
     expect(row(bad)).toMatchObject({ attempts: 0, nextTryAt: null, lastError: null });
   });
 
-  it('while watching, tries a failed file again when it is due, though it never changed', async () => {
+  it.skipIf(unreadableByMode)('while watching, tries a failed file again when it is due, though it never changed', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const file = join(projects, 'sess-1.jsonl');
     writeFileSync(file, goodSession(1));
@@ -223,7 +225,7 @@ describe('the per-file record', () => {
     }
   });
 
-  it('forgets a file that is gone, and its error with it', () => {
+  it.skipIf(unreadableByMode)('forgets a file that is gone, and its error with it', () => {
     const bad = join(projects, 'zz-locked.jsonl');
     writeFileSync(bad, goodSession(9));
     chmodSync(bad, 0o000);
@@ -280,7 +282,7 @@ describe('the per-file record', () => {
     live.scan();
     appendFileSync(file, json({ type: 'user', sessionId: 'sess-6', uuid: 'u-6-10', timestamp: 1.7e18, message: { role: 'user', content: 'A late line.' } }));
     live.scan();
-    expect(warnings).toEqual(['-Users-me-proj/sess-6.jsonl:11: 1700000000000000000 is not a time; kept the entry with no time']);
+    expect(warnings).toEqual([`${join('-Users-me-proj', 'sess-6.jsonl')}:11: 1700000000000000000 is not a time; kept the entry with no time`]);
     expect(row(file)!.sha256).toMatch(/^[0-9a-f]{64}$/); // read whole
     expect(store.allEntries()).toHaveLength(11);
 
@@ -340,7 +342,7 @@ describe('through the safe reader', () => {
   });
   afterEach(() => store.db.close());
 
-  it('an unreadable note fails on its own: listed and tried again, never taken as an empty note', () => {
+  it.skipIf(unreadableByMode)('an unreadable note fails on its own: listed and tried again, never taken as an empty note', () => {
     const note = join(vault, 'locked.md');
     writeFileSync(note, 'The water butt needs a lid.');
     writeFileSync(join(vault, 'open.md'), 'Rhubarb by the gate.');

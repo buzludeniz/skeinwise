@@ -956,13 +956,15 @@ export class Store {
     }
     if (options.project !== undefined) {
       // Whole folder names only, compared as text: "plot" doesn't match "plotline", and % or _ mean nothing here.
-      const name = options.project.trim().replace(/\/+$/, '');
+      // \ and / both separate folders, on both sides, so a Windows folder (C:\Users\…) matches by name or in full.
+      const name = options.project.trim().replaceAll('\\', '/').replace(/\/+$/, '');
       if (!name) throw new Error('Give a project: a folder name or a path.');
-      if (name.startsWith('/')) {
-        where.push("instr(e.project || '/', ?) = 1");
+      const folder = "replace(e.project, char(92), '/')";
+      if (name.startsWith('/') || /^[A-Za-z]:\//.test(name)) {
+        where.push(`instr(${folder} || '/', ?) = 1`);
         params.push(`${name}/`);
       } else {
-        where.push("instr('/' || e.project || '/', ?) > 0");
+        where.push(`instr('/' || ${folder} || '/', ?) > 0`);
         params.push(`/${name}/`);
       }
     }

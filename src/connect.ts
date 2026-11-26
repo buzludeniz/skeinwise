@@ -223,6 +223,7 @@ function writeOwnerOnly(file: string, text: string): void {
   chmodSync(file, 0o600);
 }
 
+// Reached only through a 'claude' plan, which planWrite never makes on Windows: claude is a .cmd there.
 function runClaude(io: Io, claude: string, args: string[]): void {
   // An entry left from an earlier connect holds a token that stops working now, so it goes first.
   spawnSync(claude, ['mcp', 'remove', '--scope', 'user', SERVER_NAME], { env: io.env, encoding: 'utf8', timeout: 60_000 });
