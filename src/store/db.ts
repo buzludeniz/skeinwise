@@ -70,8 +70,14 @@ export function isBusy(error: unknown): boolean {
  * front, so a busy record fails at the start (after the busy timeout), before fn has done anything. When another
  * process still holds the lock, the whole transaction runs once more; a second busy is thrown, never swallowed.
  * fn may run twice, so it must touch nothing outside this database.
+ *
+ * Called inside a transaction that inTransaction itself opened, fn joins it, so a caller can make several writes one
+ * change. The outer commit or rollback covers both, and an inner throw rolls the whole transaction back even if the
+ * outer fn catches it. A transaction opened any other way (a raw BEGIN) is not joined: BEGIN IMMEDIATE refuses it.
  */
 export function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  const open = opened.get(db);
+  if (open && db.isTransaction) return joinTransaction(open, fn);
   try {
     return runTransaction(db, fn);
   } catch (error) {
@@ -80,15 +86,41 @@ export function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
   }
 }
 
+/** The transaction inTransaction opened on a connection: how many calls deep it is, and an inner call's failure. */
+interface OpenTransaction {
+  depth: number;
+  failed?: unknown;
+}
+
+const opened = new WeakMap<DatabaseSync, OpenTransaction>();
+
 function runTransaction<T>(db: DatabaseSync, fn: () => T): T {
   db.exec('BEGIN IMMEDIATE');
+  const open: OpenTransaction = { depth: 1 };
+  opened.set(db, open);
   try {
     const result = fn();
+    // An inner call failed and the outer fn went on: its half-done writes must not be committed.
+    if (open.failed !== undefined) throw open.failed;
     db.exec('COMMIT');
     return result;
   } catch (err) {
     // A failed COMMIT may already have ended the transaction.
     if (db.isTransaction) db.exec('ROLLBACK');
     throw err;
+  } finally {
+    opened.delete(db);
+  }
+}
+
+function joinTransaction<T>(open: OpenTransaction, fn: () => T): T {
+  open.depth++;
+  try {
+    return fn();
+  } catch (err) {
+    open.failed ??= err;
+    throw err;
+  } finally {
+    open.depth--;
   }
 }
