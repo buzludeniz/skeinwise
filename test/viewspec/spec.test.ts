@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../../src/random.ts';
 import { isBidiControl } from '../../src/safe-text.ts';
+import { checkPassed } from '../fuzz/views.ts';
 import { TABLE_FORMS, TABLE_PROPS } from '../../src/server/config.ts';
 import {
   type Checked,
@@ -139,7 +140,7 @@ function hasControl(text: string): boolean {
   return false;
 }
 
-/** Everything a passed spec must be, whatever went in. */
+/** A refusal gives clean reasons and fields it may keep; a passed spec keeps every rule the views fuzz holds it to. */
 function assertSound(r: Checked, input: string): void {
   if (!r.ok) {
     expect(r.reasons.length, input).toBeGreaterThan(0);
@@ -151,45 +152,7 @@ function assertSound(r: Checked, input: string): void {
     for (const key of Object.keys(r.salvage)) expect(SPEC_FIELDS as readonly string[], input).toContain(key);
     return;
   }
-  const s = r.spec as unknown as Record<string, unknown>;
-  expect(Object.getPrototypeOf(s), input).toBe(Object.prototype);
-  for (const key of Object.keys(s)) expect(SPEC_FIELDS as readonly string[], input).toContain(key);
-  expect(s.v, input).toBe(1);
-  expect(SHOWS as readonly unknown[], input).toContain(s.show);
-  const title = s.title as string;
-  expect(title.length > 0 && [...title].length <= SPEC_LIMITS.title && title === title.trim(), input).toBe(true);
-  const strings: string[] = [title];
-  if (s.show === 'chart') {
-    expect(TABLE_FORMS as readonly unknown[], input).toContain(s.form);
-    expect(TABLE_PROPS as readonly unknown[], input).toContain(s.x);
-    if ('y' in s) expect(TABLE_PROPS.filter((p) => p !== s.x) as unknown[], input).toContain(s.y);
-    expect('sort' in s || 'limit' in s, input).toBe(false);
-  } else {
-    expect(SORTS as readonly unknown[], input).toContain(s.sort);
-    expect(Number.isInteger(s.limit) && (s.limit as number) >= 1 && (s.limit as number) <= SPEC_LIMITS.list, input).toBe(true);
-    expect('form' in s || 'x' in s || 'y' in s, input).toBe(false);
-  }
-  if ('where' in s) {
-    const where = s.where as Record<string, unknown>[];
-    expect(Array.isArray(where) && where.length >= 1 && where.length <= SPEC_LIMITS.where, input).toBe(true);
-    expect(new Set(where.map((w) => w.prop)).size, input).toBe(where.length);
-    for (const w of where) {
-      expect(Object.keys(w).sort(), input).toEqual(['is', 'prop']);
-      expect(WHERE_PROPS as readonly unknown[], input).toContain(w.prop);
-      const is = w.is as string;
-      expect(is.length > 0 && [...is].length <= SPEC_LIMITS.value && is === is.trim(), input).toBe(true);
-      if (w.prop === 'kind') expect(KINDS as readonly string[], input).toContain(is);
-      if (w.prop === 'time') expect(is, input).toMatch(/^\d{4}-(0[1-9]|1[0-2])$/);
-      strings.push(is);
-    }
-  }
-  for (const key of ['from', 'to']) if (key in s) expect(s[key], input).toMatch(/^\d{4}-\d{2}(-\d{2})?$/);
-  for (const text of strings) {
-    expect(hasControl(text), input).toBe(false);
-    expect(/[<>]/.test(text), input).toBe(false);
-  }
-  // A passed spec survives the trip to a file and back unchanged.
-  expect(checkSpec(JSON.parse(JSON.stringify(s))), input).toEqual({ ok: true, spec: s });
+  expect(() => checkPassed(r.spec, `the spec from ${input}`)).not.toThrow();
 }
 
 function generators(seed: number) {

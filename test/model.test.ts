@@ -2,10 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type Config, DEFAULT_CONFIG } from '../src/config.ts';
 import { UsageError } from '../src/errors.ts';
-import { BadAnswerError, createModel, ModelCancelledError, ModelTimeoutError, parseAnswer, serverKeyPath } from '../src/organiser/model.ts';
+import { BadAnswerError, createModel, ModelCancelledError, ModelTimeoutError, parseAnswer, REQUEST_MS, serverKeyPath } from '../src/organiser/model.ts';
 import { text } from '../src/organiser/plan.ts';
 import { previewRun, type RunOptions, runTask } from '../src/organiser/organise.ts';
 import { keyShaped } from './samples.ts';
@@ -204,6 +204,59 @@ describe('organising with a model', () => {
     const err = await client.stream({ purpose: 'the answer', system: 's', user: 'u', maxTokens: 50, check: (a) => a }, { onText: () => stop.abort(), signal: stop.signal }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ModelCancelledError);
     expect(err).toMatchObject({ message: 'Stopped during the answer.', tokensOut: 7 });
+  });
+
+  // The views fuzz (Nov 26): AbortSignal.timeout kept every request's ten-minute timer and signal after the answer.
+  it("drops a request's deadline once it is answered, fails or is stopped, and still times out by it", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const during: number[] = [];
+      const fetchWith = (chat: (init: RequestInit) => Response | Promise<Response>, models = () => Response.json({ data: [{ id: 'm' }] })) =>
+        (async (input: string | URL | Request, init?: RequestInit) => {
+          during.push(vi.getTimerCount());
+          return String(input).endsWith('/models') ? models() : chat(init!);
+        }) as typeof globalThis.fetch;
+      const request = { purpose: 'p', system: 's', user: 'u', maxTokens: 50, check: (a: unknown) => a };
+      const answered = () => Response.json({ choices: [{ message: { content: '{"answer": "ok"}' }, finish_reason: 'stop' }] });
+      const streamed = (open: boolean, signal?: AbortSignal | null) =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: '{"answer": "ok"}' }, finish_reason: 'stop' }] })}\n\n`));
+              if (!open) c.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+              if (!open) c.close();
+              signal?.addEventListener('abort', () => c.error(signal.reason));
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        );
+      const left = async (fetch: typeof globalThis.fetch, call: (client: ReturnType<typeof createModel>) => Promise<unknown>) => {
+        const client = createModel(config(), 'local', { fetch, env: {} });
+        const outcome = await call(client).then(() => 'answered', (e: unknown) => (e as Error).constructor.name);
+        return [outcome, vi.getTimerCount()];
+      };
+
+      expect(await left(fetchWith(answered), async (c) => { await c.probe(); await c.send(request); })).toEqual(['answered', 0]);
+      expect(await left(fetchWith(() => streamed(false)), async (c) => { await c.probe(); await c.stream(request, { onText: () => {} }); })).toEqual(['answered', 0]);
+      expect(await left(fetchWith(() => new Response('busy', { status: 503 })), async (c) => { await c.probe(); await c.send(request); })).toEqual(['Error', 0]);
+      expect(await left(fetchWith(() => { throw new TypeError('fetch failed'); }), async (c) => { await c.probe(); await c.send(request); })).toEqual(['UsageError', 0]);
+      expect(await left(fetchWith(answered, () => new Response('{}', { status: 401 })), (c) => c.probe())).toEqual(['UsageError', 0]);
+      const stop = new AbortController();
+      expect(await left(fetchWith((init) => streamed(true, init.signal)), async (c) => { await c.probe(); await c.stream(request, { onText: () => stop.abort(), signal: stop.signal }); })).toEqual(['ModelCancelledError', 0]);
+      // Each request had its deadline as a timer while it was out: one at a time, the probe's gone before the chat's.
+      expect(during.length).toBe(11);
+      expect(new Set(during)).toEqual(new Set([1]));
+
+      const hanging = fetchWith((init) => new Promise<Response>((_answer, fail) => init.signal!.addEventListener('abort', () => fail(init.signal!.reason))));
+      const slow = createModel(config(), 'local', { fetch: hanging, env: {} });
+      await slow.probe();
+      const late = slow.send(request).catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(REQUEST_MS);
+      expect(await late).toMatchObject({ message: expect.stringMatching(/^The model server took longer than 10 minutes during p\./) });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not stream the remote engine: its text has placeholders until the answer is whole', async () => {
