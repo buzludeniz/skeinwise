@@ -33,13 +33,14 @@ let app: Server;
 let port: number;
 let seen: Seen[];
 let answer: { status: number; body: string };
+let agentToken: string;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'skeinwise-window-'));
   home = join(dir, 'home');
   store = demoRecord(dir, home);
   writeFileSync(join(home, 'token'), `${TOKEN}\n`);
-  allowAgent(home, 'claude-code', '2026-11-21T09:00:00.000Z');
+  agentToken = allowAgent(home, 'claude-code', '2026-11-21T09:00:00.000Z').token;
   seen = [];
   answer = { status: 200, body: '{"ok":true}' };
   app = createServer((req, res) => {
@@ -61,7 +62,7 @@ afterEach(async () => {
 });
 
 async function open(p: number = port): Promise<McpServer<WindowCtx>> {
-  const s = windowServer(context(home, store, { values: { window: true, port: String(p) } }).ctx);
+  const s = windowServer(context(home, store, { values: { window: true, port: String(p) }, token: agentToken }).ctx);
   await initialize(s);
   return s;
 }
@@ -146,10 +147,10 @@ describe('the window tools', () => {
     expect(seen).toEqual([]);
   });
 
-  it('keeps an agent that is not allowed away from the window too', async () => {
+  it('keeps an agent without a token away from the window too', async () => {
     const s = windowServer(context(home, store, { values: { window: true, port: String(port) } }).ctx);
-    await initialize(s, 'cursor');
-    expect((await call(s, 'open_entry', { entry_id: entryIds()[0] })).text).toContain('hasn\'t allowed "cursor"');
+    await initialize(s, 'claude-code');
+    expect((await call(s, 'open_entry', { entry_id: entryIds()[0] })).text).toMatch(/has no Skeinwise token/);
     expect(seen).toEqual([]);
   });
 });

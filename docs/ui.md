@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo-mark-dark.svg">
+  <img src="brand/logo-mark.svg" alt="" width="40" height="40">
+</picture>
+
 # Skeinwise: the interface
 
 The app is a local web page served by `skeinwise serve` on 127.0.0.1. Every screen works by keyboard, and every
@@ -212,7 +217,6 @@ Groups, top to bottom:
 
 | Group | Holds |
 |---|---|
-| Sync | An encrypted copy in a folder you choose, a passphrase and recovery words |
 | AI agents | Connected agents, **Copy config** for each, **Copy a sample question** |
 | AI model | **Local model** (the default: its address, the model file, a **Test** button), **Outside model** (address, model, the env var holding the key), or **No AI** |
 | Usage cap | A monthly token cap for an outside model. At the cap, runs wait for the next month |

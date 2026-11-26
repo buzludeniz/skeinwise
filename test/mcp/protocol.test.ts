@@ -82,6 +82,18 @@ describe('the legacy handshake', () => {
   });
 });
 
+describe('listing', () => {
+  it('lists what `listed` returns for the caller, and still lets a left-out tool answer for itself', async () => {
+    const s = new McpServer({ ...server().s.options, listed: (label) => TOOLS.filter((t) => t.readOnly || label === 'writer') });
+    const names = async (name: string) =>
+      ((await send(s, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: meta(MODERN_VERSION, name) }))?.result?.tools as { name: string }[]).map((t) => t.name);
+    expect(await names('reader')).toEqual(['echo']);
+    expect(await names('writer')).toEqual(['echo', 'fail']);
+    const res = await send(s, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'fail', arguments: { how: 'usage' }, ...meta(MODERN_VERSION, 'reader') } });
+    expect(res?.result).toMatchObject({ isError: true, content: [{ text: 'You asked for it.' }] });
+  });
+});
+
 describe('the newer protocol, version and name in every request', () => {
   it('serves tools with no handshake and marks results complete', async () => {
     const { s } = server();
@@ -163,5 +175,16 @@ describe('serveStdio', () => {
     expect(lines.pop()).toBe('');
     expect(lines.map((l) => (JSON.parse(l) as { id: number }).id)).toEqual([1, 2, 3]);
     expect(JSON.parse(lines[1]!).result.content[0].text).toBe('{"agent":"x","text":"é"}');
+  });
+
+  it('writes control and bidi characters escaped, so a frame is exactly what the server sent', async () => {
+    const { s } = server();
+    const input = new PassThrough();
+    let out = '';
+    const done = serveStdio(s, input, (t) => (out += t));
+    input.end(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'echo', arguments: { text: 'a\u202eb\u0085c\u007f' }, ...meta(MODERN_VERSION, 'x') } })}\n`);
+    await done;
+    expect(out).not.toMatch(/[\u007f-\u009f\u202a-\u202e\u2066-\u2069]/);
+    expect(JSON.parse(JSON.parse(out).result.content[0].text).text).toBe('a\u202eb\u0085c\u007f');
   });
 });

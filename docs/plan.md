@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo-mark-dark.svg">
+  <img src="brand/logo-mark.svg" alt="" width="40" height="40">
+</picture>
+
 # Skeinwise: plan
 
 Skeinwise is a second brain that organises itself. It takes in your AI conversations, your notes and the folders you
@@ -62,7 +67,7 @@ App menu (command bar, add files, Record live with status lines, connect, get an
 (Set up, Bring in, Watch it grow) · rail with Search ⌘K, Brain, Navigator, Numbers, Timeline, You, Lab, Learn, + Add
 · the 3D brain with brainstem and spine · Learn panel · concept hub panel · entry reader with its layers and history ·
 year rings · timeline · table builder and Tides · notes editor with `[[links]]` and a daily note · review queue ·
-compact window · settings (sync, agents, AI model, usage cap, proof of date, backup, exclusions, appearance) · six
+compact window · settings (agents, AI model, usage cap, proof of date, backup, exclusions, appearance) · six
 themes and seven palettes. Full detail: [ui.md](ui.md).
 
 ### Features
@@ -70,12 +75,12 @@ themes and seven palettes. Full detail: [ui.md](ui.md).
 The update stream (live capture plus background organising by the local model) · importers (ChatGPT, Claude,
 Gemini, Claude Code, Codex, Markdown and Obsidian folders, plain text) · dedupe and versions · full-text and similarity search · questions answered as views · tagging, filing, linking, hubs and
 summary layers · tagging schemas with sized runs and coverage · corrections (edit, merge folders, not mine, exclude
-a source, undo) · note review for staleness · redaction before any outside model, and a usage cap · memory and window MCP servers · tamper-evident ledger with date proofs · encrypted sync
-bundles. Full detail: [features.md](features.md).
+a source, undo) · note review for staleness · redaction before any outside model, and a usage cap · memory and window MCP servers · tamper-evident ledger with date proofs · export
+to a plain zip. Full detail: [features.md](features.md).
 
 ### Not in scope (yet)
 
-A browser extension, Notion and Evernote connectors, mobile apps, a hosted sync service.
+A browser extension, Notion and Evernote connectors, mobile apps, sync between computers, a hosted sync service.
 
 ## Milestones (each one a tagged release)
 
@@ -85,5 +90,5 @@ A browser extension, Notion and Evernote connectors, mobile apps, a hosted sync 
 | v0.2.0 | The organiser: the local model (default), outside model and No-AI engines; runs with provenance and undo; `--scope new`; corrections; notes; review; ask |
 | v0.3.0 | The update stream: live capture, background organising of new entries, `skeinwise model` |
 | v0.4.0 | Web UI: first run, app menu, rail, 3D brain, Learn, hubs, reader, year rings, timeline, Lab, themes, command bar, settings |
-| v0.5.0 | Memory and window MCP servers, ledger and proof of date, encrypted sync |
+| v0.5.0 | Memory and window MCP servers, ledger and proof of date, export |
 

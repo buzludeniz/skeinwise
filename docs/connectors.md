@@ -1,4 +1,12 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo-mark-dark.svg">
+  <img src="brand/logo-mark.svg" alt="" width="40" height="40">
+</picture>
+
 # Skeinwise: connectors
+
+> **Coming in 1.1.** Skeinwise 1.0 has no connectors. Their commands will be `follow`, `following` and `unfollow`.
+> In 1.0, `connect` means something else: it connects an AI agent to your record over MCP (`skeinwise connect claude-code`).
 
 Connectors read four work tools into the record: Gmail, Google Calendar, Todoist and Slack. What they read becomes
 ordinary entries, so search, ask, the organiser and the local model treat a mail or a task like any other note.
@@ -8,7 +16,7 @@ as read.
 
 ## How they work
 
-- **Consent first.** `skeinwise connect <service>` prints what the connector reads, each permission it asks for and
+- **Consent first.** `skeinwise follow <service>` prints what the connector reads, each permission it asks for and
   why, and where the token will live, before any sign-in. Then it asks; `--yes` answers for you.
 - **Your own client.** Skeinwise ships no OAuth client, client secret or key, and creates no account or app for you.
   You make your own app with each service, in a few minutes; the sections below say how.
@@ -18,7 +26,7 @@ as read.
   "skeinwise". A token is never written to a file, the config, a log or the repo.
 - **`connections.json`** in the record folder (owner-only) holds each connection's account, the channels or calendars
   you picked, and where the last pull stopped. It holds no token.
-- **macOS only, for now.** Elsewhere `connect` says it isn't supported yet: Skeinwise has no equally safe place for a
+- **macOS only, for now.** Elsewhere `follow` says it isn't supported yet: Skeinwise has no equally safe place for a
   token there.
 - **Where it lands.** Each connection is one source, labelled `gmail:<account>`, `calendar:<account>`,
   `todoist:<account>` or `slack:<workspace>`. One thread per mail thread, calendar, Todoist project or Slack channel.
@@ -26,11 +34,11 @@ as read.
   a new version.
 - **Pulls.** The first pull reaches back to `--from` (default: 90 days ago). Later pulls ask only for what changed.
   `skeinwise live` pulls every 5 minutes, or a minute after a pull that left more to read;
-  `skeinwise connections --pull` pulls now.
+  `skeinwise following --pull` pulls now.
 - **Trouble is a status line, never a crash.** When a service asks Skeinwise to slow down, what was read so far is
   kept and the next pull waits as long as it asked. When a service is down, the next pull is in 5 minutes. When the
-  access was revoked or ran out, pulls stop until you run `skeinwise connect <service>` again.
-  `skeinwise connections` shows each line.
+  access was revoked or ran out, pulls stop until you run `skeinwise follow <service>` again.
+  `skeinwise following` shows each line.
 - **Deleted at the service, kept here.** An item deleted in Gmail, Calendar or Todoist stays in the record. The status
   line counts it ("2 deleted in Gmail (kept here)").
 
@@ -38,11 +46,11 @@ as read.
 
 | Command | Does |
 |---|---|
-| `skeinwise connect <service>` | Shows the consent, signs in, saves the token to the Keychain, and pulls |
-| `skeinwise connections [--pull] [--json]` | What is connected, how the last pull went, when the next one is |
-| `skeinwise disconnect <service> [--keep \| --drop]` | Revokes the access, deletes the token, keeps or leaves out what was read |
+| `skeinwise follow <service>` | Shows the consent, signs in, saves the token to the Keychain, and pulls |
+| `skeinwise following [--pull] [--json]` | What is followed, how the last pull went, when the next one is |
+| `skeinwise unfollow <service> [--keep \| --drop]` | Revokes the access, deletes the token, keeps or leaves out what was read |
 
-`connect` takes `--client-id <id>` (Gmail, Calendar, Todoist), `--client-secret-file <file>`, `--token-file <file>`
+`follow` takes `--client-id <id>` (Gmail, Calendar, Todoist), `--client-secret-file <file>`, `--token-file <file>`
 (Slack), `--channels <names>` (Slack), `--calendars <ids>` (Calendar), `--from <date>`, `--port <port>` (Todoist) and
 `--yes`. A secret or token is never taken as a flag's value, which would sit in the shell's history: Skeinwise asks
 for it without showing what you type, or reads it from a file.
@@ -58,7 +66,7 @@ for it without showing what you type, or reads it from a file.
 - **Then:** what Gmail's history says was added since the last pull. A pull reads up to 100 messages, so a big
   backlog spreads over a few minutes.
 - **Your client:** see [Your Google client](#your-google-client). Then:
-  `skeinwise connect gmail --client-id <your client ID>`.
+  `skeinwise follow gmail --client-id <your client ID>`.
 
 ## Google Calendar
 
@@ -72,7 +80,7 @@ for it without showing what you type, or reads it from a file.
 - **Then:** what changed, using the calendar's sync token. A moved event becomes a new version. A cancelled one is
   counted and kept.
 - **Your client:** the same Google client as Gmail works. Then:
-  `skeinwise connect calendar` (it reuses Gmail's client ID), or `--client-id <your client ID>`.
+  `skeinwise follow calendar` (it reuses Gmail's client ID), or `--client-id <your client ID>`.
 
 ### Your Google client
 
@@ -89,14 +97,14 @@ nothing to register.
    - **Test users (Audience):** add your own address.
 4. Under Clients, create a client of type **Desktop app**. Copy its client ID.
 5. Google shows a client secret for a Desktop client too. For an app on your own computer it isn't really secret, but
-   give it when `connect` asks: Skeinwise keeps it in the Keychain, next to the token. `--client-secret-file` reads
+   give it when `follow` asks: Skeinwise keeps it in the Keychain, next to the token. `--client-secret-file` reads
    it from a file instead.
 
-An External app in Testing gets a sign-in that Google ends after 7 days. When `skeinwise connections` says Gmail or
-Calendar is signed out, run `skeinwise connect` again. An Internal app (Workspace) has no such limit.
+An External app in Testing gets a sign-in that Google ends after 7 days. When `skeinwise following` says Gmail or
+Calendar is signed out, run `skeinwise follow` again. An Internal app (Workspace) has no such limit.
 
-If Gmail and Calendar share one client, disconnecting one may end the other's access too: Google can revoke every
-grant a client holds at once. `disconnect` says so when it applies.
+If Gmail and Calendar share one client, unfollowing one may end the other's access too: Google can revoke every
+grant a client holds at once. `unfollow` says so when it applies.
 
 ## Todoist
 
@@ -118,9 +126,9 @@ grant a client holds at once. `disconnect` says so when it applies.
 1. Open Todoist's App Management Console (developer.todoist.com, signed in) and create an app with any name.
 2. Set its **OAuth redirect URL** to `http://127.0.0.1:8735/`.
 3. Copy the **Client ID** and the **Client secret**.
-4. Run `skeinwise connect todoist --client-id <your client ID>`. Paste the secret when asked, or pass it as
+4. Run `skeinwise follow todoist --client-id <your client ID>`. Paste the secret when asked, or pass it as
    `--client-secret-file <file>`. Skeinwise keeps it in the Keychain: it renews the access with it, and revokes the
-   access with it when you disconnect.
+   access with it when you unfollow.
 
 ## Slack
 
@@ -167,12 +175,12 @@ grant a client holds at once. `disconnect` says so when it applies.
 
 3. Choose **Install to Workspace** and allow it. Some workspaces need an admin to approve the app first.
 4. Under **OAuth & Permissions**, copy the **User OAuth Token** (it starts with `xoxp-`).
-5. Run `skeinwise connect slack --channels general,team-notes` and paste the token when asked. Or save it to a file
+5. Run `skeinwise follow slack --channels general,team-notes` and paste the token when asked. Or save it to a file
    only you can read, pass it as `--token-file <file>`, and delete the file afterwards.
 
-## Disconnecting
+## Unfollowing
 
-`skeinwise disconnect <service>`:
+`skeinwise unfollow <service>`:
 
 1. Asks whether to keep the items it read in search. `--keep` or `--drop` answers ahead of time, and is required
    when there is no terminal to ask on.
@@ -183,13 +191,13 @@ grant a client holds at once. `disconnect` says so when it applies.
    - **Slack:** uninstall your app in its settings.
 3. Deletes the token and the client secret from the Keychain, and the connection from `connections.json`.
 4. With `--drop`, leaves the items out of search and the map. `skeinwise include <source id>` brings them back, and
-   so does connecting again. They stay in `record.db`: the record can't delete a source yet.
+   so does following again. They stay in `record.db`: the record can't delete a source yet.
 
 ## Limits, for now
 
 - **Gmail:** label changes and read or unread state aren't followed. Attachments are listed by name only.
 - **Calendar:** a repeating event is one entry, with its rule. An occurrence you change on its own arrives as its own
   entry.
-- **Todoist:** comments and sections aren't read. Tasks completed before you connected aren't read.
+- **Todoist:** comments and sections aren't read. Tasks completed before you followed aren't read.
 - **Slack:** thread replies, edits, deletions and direct messages aren't read.
 - **Everywhere:** an item deleted at the service stays in the record.

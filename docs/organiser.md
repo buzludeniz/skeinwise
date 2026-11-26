@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo-mark-dark.svg">
+  <img src="brand/logo-mark.svg" alt="" width="40" height="40">
+</picture>
+
 # The organiser
 
 Release 0.2.0 adds the organiser: the part of Skeinwise that reads your record and makes tags, folders, lines between
