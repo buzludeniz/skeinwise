@@ -162,15 +162,24 @@ function planProjects(ctx: TaskContext, schema: Schema): Plan {
   const tags: NewTag[] = [];
   const taggings: Tagging[] = [];
   const seen = new Set<string>();
+  const named: { note: Entry; from: Set<number>; name: string; stems: string[] }[] = [];
   for (const { note, from } of projects) {
     const name = projectName(note);
     if (seen.has(name.toLowerCase())) continue;
     seen.add(name.toLowerCase());
-    const stems = [...new Set(tokenize(name))];
+    named.push({ note, from, name, stems: [...new Set(tokenize(name))] });
+  }
+  // Each entry is tokenized once, and only the stems of project names are kept: tokenizing every entry again for each
+  // project took most of an hour at 50,000 entries.
+  const holding = entriesHolding(ctx.entries, new Set(named.flatMap((p) => p.stems)));
+  const position = new Map(ctx.entries.map((e, i) => [e.id, i]));
+  for (const { note, from, name, stems } of named) {
     tags.push({ name, description: `The note "${name}", linked from ${from.size} entries.` });
-    for (const e of ctx.entries) {
-      if (e.id === note.id || from.has(e.id)) taggings.push({ entryId: e.id, name, score: 1 });
-      else if (stems.length && hasAll(stemSet(e), stems)) taggings.push({ entryId: e.id, name, score: 0.8 });
+    const linked = [note.id, ...from].flatMap((id) => (position.has(id) ? [position.get(id)!] : []));
+    const matched = stems.length ? stems.map((s) => holding.get(s) ?? []).reduce(intersect) : [];
+    for (const i of [...new Set([...linked, ...matched])].sort((a, b) => a - b)) {
+      const e = ctx.entries[i]!;
+      taggings.push({ entryId: e.id, name, score: e.id === note.id || from.has(e.id) ? 1 : 0.8 });
     }
   }
   return { requests: [], fallback: noRequest, finish: () => product(ctx, schema, tags, taggings) };
@@ -328,6 +337,32 @@ function livePairs(db: DatabaseSync, schemaId: number, runIds: number[] | null):
 
 function stemSet(e: Entry): Set<string> {
   return new Set(tokenize(`${e.title ?? ''}\n${e.body}`));
+}
+
+/** For each of these stems, the positions in entries (ascending) of the entries whose title or body holds it. */
+function entriesHolding(entries: Entry[], stems: Set<string>): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  if (!stems.size) return out;
+  entries.forEach((e, i) => {
+    for (const s of stemSet(e)) {
+      if (!stems.has(s)) continue;
+      const list = out.get(s);
+      if (list) list.push(i);
+      else out.set(s, [i]);
+    }
+  });
+  return out;
+}
+
+/** The numbers in both ascending lists, ascending. */
+function intersect(a: number[], b: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 0, j = 0; i < a.length && j < b.length; ) {
+    if (a[i]! < b[j]!) i++;
+    else if (a[i]! > b[j]!) j++;
+    else (out.push(a[i]!), i++, j++);
+  }
+  return out;
 }
 
 function hasAll(set: Set<string>, words: string[]): boolean {
