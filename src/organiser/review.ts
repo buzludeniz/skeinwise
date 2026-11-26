@@ -50,10 +50,13 @@ export function planReview(ctx: TaskContext): Plan {
   const asks = ctx.model ? checks.filter((c) => c.newer.length).map((c, i, all) => ({ check: c, ...reviewRequest(ctx.record, c, i + 1, all.length) })) : [];
   return {
     requests: asks.map((a) => a.request),
+    // A note without the model's answer gets the No-AI check.
+    fallback: () => null,
     finish: (answers) => {
       const found: Flag[] = ctx.model
         ? asks.flatMap((a, i) => {
-            const answer = answers[i] as ReviewAnswer;
+            const answer = answers[i] as ReviewAnswer | null;
+            if (!answer) return cueFlag(ctx.record, a.check);
             if (!answer.stale) return [];
             const reasons = answer.reasons.map((r) => reasonFor(ctx.record, a.check, a.shown[r.index]!, r.why));
             return [{ note: a.check.note, hubs: a.check.hubs, reasons, proposed: answer.proposed, rank: reasons.length }];

@@ -24,10 +24,12 @@ export function planFolders(ctx: TaskContext): Plan {
   const { groups, loose } = groupUnits(record, ctx.entries, existing);
   const fresh = groups.filter((g) => !g.existing);
   const request = ctx.model && fresh.length ? namingRequest(record, fresh, 'folder', 'one to three words', 'folder names') : undefined;
+  const noModelNames = () => fresh.map((g) => groupName(record, g, 2));
   return {
     requests: request ? [request] : [],
+    fallback: noModelNames,
     finish: (answers) => {
-      const names = request ? (answers[0] as string[]) : fresh.map((g) => groupName(record, g, 2));
+      const names = request ? (answers[0] as string[]) : noModelNames();
       const filings = file(groups, fresh, names, live, loose, inbox?.id, ctx);
       const already = new Map(live.map((f) => [f.id, new Set(f.entryIds)]));
       const rows = filings.map((f) => ({
