@@ -364,21 +364,30 @@ describe('an agent writing while another process writes to the record', () => {
     expect(store.db.prepare("SELECT COUNT(*) AS n FROM sources WHERE location = '/live-capture'").get()).toEqual({ n: 1 });
   });
 
-  it('puts the file back when another write takes the record between the file and its save, so a retry still works', async () => {
-    // Another connection takes the write lock at the moment the agent's file has been written and its save is about to
-    // begin: the one window where the file would be left behind and read later as yours.
+  it('writes nothing while another write holds the record, and puts the file back when its save fails, so a retry still works', async () => {
+    // 'busy': another connection holds the write lock when the agent's write begins. The agent takes the lock before it
+    // writes the file (asAgent), so it is refused before the file changes. 'fail': the save fails after the file is
+    // written (a stand-in for a full disk), and the file goes back before the lock goes.
     const contents = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : null);
-    let watched: { file: string; before: string | null } | undefined;
+    let watched: { file: string; before: string | null; mode: 'busy' | 'fail' } | undefined;
     let holder: DatabaseSync | undefined;
     const db = new Proxy(store.db, {
       get(target, key) {
         if (key === 'exec') {
           return (sql: string) => {
-            if (sql.startsWith('BEGIN') && watched && !holder && contents(watched.file) !== watched.before) {
+            if (sql.startsWith('BEGIN') && watched?.mode === 'busy' && !holder) {
               holder = new DatabaseSync(join(home, 'record.db'));
               holder.exec('BEGIN IMMEDIATE');
             }
             return target.exec(sql);
+          };
+        }
+        if (key === 'prepare') {
+          return (sql: string) => {
+            if (sql.includes('INSERT INTO runs') && watched?.mode === 'fail' && contents(watched.file) !== watched.before) {
+              throw new Error('disk I/O error (a stand-in)');
+            }
+            return target.prepare(sql);
           };
         }
         const value = Reflect.get(target, key, target) as unknown;
@@ -393,18 +402,24 @@ describe('an agent writing while another process writes to the record', () => {
     const runs = listRuns(store.db).length;
     store.db.exec('PRAGMA busy_timeout = 50');
 
-    for (const [tool, args, file] of [
-      ['write_note', { title: 'Rye plan', body: 'Try 80% hydration.' }, join(notesDir(home), 'rye-plan.md')],
-      ['write_note', { title: 'Bread log', body: 'Day two.' }, join(home, bread.json.file)],
-      ['append_daily_note', { text: 'Shaped the loaf.' }, daily],
-    ] as const) {
-      watched = { file, before: contents(file) };
-      expect(await call(agent, tool, args)).toMatchObject({ isError: true, text: BUSY });
-      expect(holder).toBeDefined();
-      holder!.exec('ROLLBACK');
-      holder!.close();
-      holder = undefined;
-      expect(contents(file)).toBe(watched.before);
+    for (const mode of ['busy', 'fail'] as const) {
+      for (const [tool, args, file] of [
+        ['write_note', { title: 'Rye plan', body: 'Try 80% hydration.' }, join(notesDir(home), 'rye-plan.md')],
+        ['write_note', { title: 'Bread log', body: 'Day two.' }, join(home, bread.json.file)],
+        ['append_daily_note', { text: 'Shaped the loaf.' }, daily],
+      ] as const) {
+        watched = { file, before: contents(file), mode };
+        const result = await call(agent, tool, args);
+        expect(result.isError, `${mode} ${tool}`).toBe(true);
+        if (mode === 'busy') {
+          expect(result.text).toBe(BUSY);
+          expect(holder).toBeDefined();
+          holder!.exec('ROLLBACK');
+          holder!.close();
+          holder = undefined;
+        }
+        expect(contents(file), `${mode} ${tool}`).toBe(watched.before);
+      }
     }
     watched = undefined;
     expect(listRuns(store.db)).toHaveLength(runs);
