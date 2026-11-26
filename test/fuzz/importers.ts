@@ -5,7 +5,7 @@
 
 import { deflateSync, strToU8, unzipSync, zipSync } from 'fflate';
 import { UnsafeFileError } from '../../src/fsafe.ts';
-import { readImports } from '../../src/importers/detect.ts';
+import { NothingToImportError, readImports } from '../../src/importers/detect.ts';
 import { docxNoteText, readDocx } from '../../src/importers/docx.ts';
 import { parseFrontMatter, parseNote } from '../../src/importers/notes.ts';
 import { decodeText, type TextEncoding } from '../../src/importers/text.ts';
@@ -331,7 +331,7 @@ export const IMPORTER_TARGETS: Target[] = [
       JSON.stringify(batches);
     },
     // A zip refused whole, or one with nothing in it the importer reads.
-    refused: (error) => error instanceof UnsafeFileError || (error instanceof Error && error.message.startsWith('Nothing to import in ')),
+    refused: (error) => error instanceof UnsafeFileError || error instanceof NothingToImportError,
   },
   {
     name: 'frontmatter',
