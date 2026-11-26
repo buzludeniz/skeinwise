@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { ORGANISER_COMMANDS } from './cli-organiser.ts';
-import { writeDemo } from './demo/demo.ts';
+import { importDemo } from './demo/demo.ts';
 import { needId, UsageError } from './errors.ts';
 import { day, entryHeader, indent, minute, speakerLabel } from './format.ts';
 import { homeDir, openHome } from './home.ts';
@@ -424,11 +424,8 @@ async function run(argv: string[], io: Io): Promise<number> {
             `The record in ${home} is not empty. Run the demo in its own folder, for example:\n  SKEINWISE_HOME=~/skeinwise-demo skeinwise demo\nor pass --force to add it anyway.`,
           );
         }
-        const summary = writeDemo(out);
-        const results = [];
-        for (const part of ['chatgpt', 'claude', 'claude-code', 'notes']) {
-          for (const batch of readImports(join(out, part))) results.push({ source: batch.source.label, ...store.ingest(batch) });
-        }
+        // Writes the invented exports, imports them, and defines the demo person's own tags.
+        const { summary, results } = importDemo(store, out);
         if (values.json) json({ ...summary, files: summary.files.length, results });
         else {
           io.out(`Wrote invented exports to ${out}: ${summary.threads} chats, ${summary.notes} notes.\n`);
