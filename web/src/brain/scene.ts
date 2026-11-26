@@ -18,7 +18,8 @@ import {
   WebGLRenderer,
 } from 'three';
 import { hash01, layoutFor, ringGuides, type Layout, type LayoutPoint } from '../layout.ts';
-import { bodyOutline } from './bodyGeometry.ts';
+import { bodyLayout, type BodyLayout } from './body.ts';
+import { bodyOutline, cordRings, nerveLines } from './bodyGeometry.ts';
 import { hexToRgb } from '../themes.ts';
 import type { SceneInput } from './input.ts';
 import { nearestPoint } from './pick.ts';
@@ -230,6 +231,9 @@ export class BrainScene {
 
   private input: SceneInput | null = null;
   private layouts = new Map<Layout, Float32Array>();
+  /** The body behind the brain layout, for its guides, and the now its cord's top month was set from. */
+  private body: BodyLayout | null = null;
+  private now = Date.now();
   private layout: Layout = 'brain';
   /** Where every point is drawn now, once the current move ends. */
   private current = new Float32Array(0);
@@ -468,6 +472,8 @@ export class BrainScene {
   setData(input: SceneInput, grow = false): void {
     this.input = input;
     this.layouts.clear();
+    this.body = null;
+    this.now = Date.now();
     const n = input.points.length;
     const pos = this.layoutOf(this.layout);
     this.current = pos.slice();
@@ -627,7 +633,7 @@ export class BrainScene {
   private layoutOf(layout: Layout): Float32Array {
     let pos = this.layouts.get(layout);
     if (!pos) {
-      pos = layoutFor(layout, this.input?.points ?? [], { sources: this.input?.sources ?? [], now: Date.now() });
+      pos = layoutFor(layout, this.input?.points ?? [], { sources: this.input?.sources ?? [], now: this.now });
       this.layouts.set(layout, pos);
     }
     return pos;
@@ -895,7 +901,10 @@ export class BrainScene {
     this.scene.add(this.selectLines);
   }
 
-  /** The activity layout's guides: a faint circle per year, with month spokes, only in that layout. */
+  /**
+   * The layout's guides, drawn once a move ends: in the activity layout a faint circle per year with month spokes, and
+   * in the brain layout the body's nerves and the cord's month rings.
+   */
   private buildRings(): void {
     if (this.rings) {
       this.scene.remove(this.rings);
@@ -903,7 +912,12 @@ export class BrainScene {
       this.rings = null;
     }
     for (const el of this.labelLayer.querySelectorAll('.ring-label')) el.remove();
-    if (!this.input || this.layout !== 'rings') return;
+    if (!this.input) return;
+    if (this.layout === 'brain') {
+      this.buildBodyGuides(this.input);
+      return;
+    }
+    if (this.layout !== 'rings') return;
     const guides = ringGuides(this.input.points);
     const v: number[] = [];
     const steps = 96;
@@ -925,14 +939,7 @@ export class BrainScene {
     const ink = rgb(this.theme.ink);
     const colors = new Float32Array(pos.length);
     for (let i = 0; i < colors.length; i += 3) colors.set(ink, i);
-    const g = new BufferGeometry();
-    g.setAttribute('position', new BufferAttribute(pos, 3));
-    g.setAttribute('target', new BufferAttribute(pos, 3));
-    g.setAttribute('color', new BufferAttribute(colors, 3));
-    g.setAttribute('lit', new BufferAttribute(new Float32Array(pos.length / 3).fill(1), 1));
-    this.rings = new LineSegments(g, this.ringMat);
-    this.rings.frustumCulled = false;
-    this.scene.add(this.rings);
+    this.addGuides(pos, colors);
     this.ringLabels = guides.map(([year, inner, outer]) => {
       const el = document.createElement('div');
       el.className = 'ring-label';
@@ -943,6 +950,42 @@ export class BrainScene {
   }
 
   private ringLabels: { el: HTMLDivElement; at: Vector3 }[] = [];
+
+  /**
+   * The body's guides: each nerve as far as its source's newest entry (whole and faint while it has none), and a ring
+   * round the cord at every month's edge. A tone below 1 fades the ink towards the ground, so it reads fainter in
+   * either theme.
+   */
+  private buildBodyGuides(input: SceneInput): void {
+    this.body ??= bodyLayout(input.points, input.sources, this.now);
+    const nerves = nerveLines(this.body);
+    const rings = cordRings(this.body);
+    const pos = new Float32Array(nerves.positions.length + rings.positions.length);
+    pos.set(nerves.positions);
+    pos.set(rings.positions, nerves.positions.length);
+    const tone = new Float32Array(pos.length / 3);
+    tone.set(nerves.tone);
+    tone.set(rings.tone, nerves.tone.length);
+    const ink = rgb(this.theme.ink);
+    const ground = rgb(this.theme.ground);
+    const colors = new Float32Array(pos.length);
+    for (let i = 0; i < tone.length; i++) {
+      for (let d = 0; d < 3; d++) colors[i * 3 + d] = ground[d]! + (ink[d]! - ground[d]!) * tone[i]!;
+    }
+    this.addGuides(pos, colors);
+  }
+
+  /** Puts a layout's guide lines in the scene, unlit and still. */
+  private addGuides(pos: Float32Array, colors: Float32Array): void {
+    const g = new BufferGeometry();
+    g.setAttribute('position', new BufferAttribute(pos, 3));
+    g.setAttribute('target', new BufferAttribute(pos, 3));
+    g.setAttribute('color', new BufferAttribute(colors, 3));
+    g.setAttribute('lit', new BufferAttribute(new Float32Array(pos.length / 3).fill(1), 1));
+    this.rings = new LineSegments(g, this.ringMat);
+    this.rings.frustumCulled = false;
+    this.scene.add(this.rings);
+  }
 
   // Labels.
 

@@ -3,6 +3,7 @@
 // from above), and flat clusters. Pure and seeded: the same record always gives the same picture.
 // Units: the brain is about 2.4 wide; y is up, +z is the front.
 
+// body.ts imports brainLayout back from here. The cycle is safe: neither module uses the other's exports while loading.
 import { bodyLayout } from './brain/body.ts';
 
 export interface LayoutPoint {
