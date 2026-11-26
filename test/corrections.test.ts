@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -24,6 +24,12 @@ describe('corrections and the review queue on the demo record', () => {
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'skeinwise-fix-'));
     writeDemo(dir);
+    // The demo flags only its two Plotline notes. Two older notes of the test's own give the queue an item to skip and
+    // one to edit under the review.
+    const old = (title: string, created: string, body: string) =>
+      writeFileSync(join(dir, 'notes', `${title.toLowerCase().replaceAll(' ', '-')}.md`), `---\ntitle: ${title}\ncreated: ${created}\n---\n# ${title}\n\n${body}\n`);
+    old('River scripts', '2024-02-10', 'The river cleaner is a Python script: it reads the samples, drops the bad rows and writes the nitrate table.');
+    old('Market loaves', '2024-04-02', 'The market stall could sell white sourdough, rye, spelt and a seeded loaf.');
     store = new Store(openDb(':memory:'), () => DEMO_NOW);
     for (const p of ['chatgpt', 'claude', 'claude-code', 'notes']) for (const b of readImports(join(dir, p))) store.ingest(b);
     record = new RecordView(store);
@@ -86,7 +92,8 @@ describe('corrections and the review queue on the demo record', () => {
 
   it('review answers: update shows a diff and saves with yes; holds and skip set items aside', () => {
     const items = openReviewItems(store.db);
-    const plotline = items.find((i) => i.noteEntry === 420)!;
+    const plotline = items.find((i) => store.getEntry(i.noteEntry)!.title === 'Plotline')!;
+    expect(items.map((i) => store.getEntry(i.noteEntry)!.title).sort()).toEqual(['Market loaves', 'Plotline', 'Plotline waiting list rules', 'River scripts']);
     const shown = resolveReview(store, home, plotline.id, 'update', false);
     expect(shown.saved).toBe(false);
     expect(shown.diff).toContain('+ ## Updates');
@@ -95,8 +102,8 @@ describe('corrections and the review queue on the demo record', () => {
 
     const saved = resolveReview(store, home, plotline.id, 'update', true);
     expect(saved).toMatchObject({ saved: true, version: 2, file: null });
-    expect(store.getEntry(420)!.body).toBe(plotline.proposed.trim());
-    expect(store.history(420)[0]!.body).not.toContain('## Updates');
+    expect(store.getEntry(plotline.noteEntry)!.body).toBe(plotline.proposed.trim());
+    expect(store.history(plotline.noteEntry)[0]!.body).not.toContain('## Updates');
 
     const [held, skipped] = items.filter((i) => i.id !== plotline.id);
     resolveReview(store, home, held!.id, 'holds', false);
