@@ -26,23 +26,45 @@ export interface FrontMatter {
  */
 const FRONT_MATTER = /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/;
 
+/** A note's text split at the end of its front matter, as the reader finds it. */
+export interface FrontMatterSplit {
+  /** The front matter as written: a byte order mark, both fences and what follows the closing one on its line. */
+  front: string;
+  /** The lines between the fences. */
+  yaml: string;
+  /** Everything after the front matter. */
+  body: string;
+}
+
+/**
+ * Where a note's front matter ends, or null when it has none. The one place that decides it: parseFrontMatter reads
+ * the block, and every writer keeps `front` above its new text (rewriteNoteFile, the web app's save), so a writer
+ * can't drop front matter the reader found, or keep body text the reader didn't count as front matter.
+ */
+export function splitFrontMatter(text: string): FrontMatterSplit | null {
+  const bom = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  const match = FRONT_MATTER.exec(bom ? text.slice(1) : text);
+  if (!match) return null;
+  const end = bom + match[0].length;
+  return { front: text.slice(0, end), yaml: match[1] ?? '', body: text.slice(end) };
+}
+
 /**
  * A small YAML front matter reader (no dependency): `key: value`, `key: [a, b]`, `key:` followed by `- item` lines,
  * and `key: |` or `key: >` followed by indented lines. Nested maps are skipped. Values stay strings, so nothing is
  * lost or reinterpreted (`007` stays `007`). A byte order mark before the opening `---` is ignored.
  */
 export function parseFrontMatter(text: string): FrontMatter {
-  const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   // No prototype: a key such as `__proto__` is just a key.
   const meta = Object.create(null) as Record<string, string | string[]>;
   const properties = Object.create(null) as Record<string, string | string[]>;
-  const match = FRONT_MATTER.exec(src);
-  if (!match) return { meta, properties, body: src };
+  const split = splitFrontMatter(text);
+  if (!split) return { meta, properties, body: text.charCodeAt(0) === 0xfeff ? text.slice(1) : text };
   const set = (key: string, value: string | string[]) => {
     properties[key] = value;
     meta[key.toLowerCase()] = value;
   };
-  const lines = (match[1] ?? '').split(/\r?\n/);
+  const lines = split.yaml.split(/\r?\n/);
   let listKey: string | undefined;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]!;
@@ -85,7 +107,7 @@ export function parseFrontMatter(text: string): FrontMatter {
       set(key, unquote(value));
     }
   }
-  return { meta, properties, body: src.slice(match[0].length) };
+  return { meta, properties, body: split.body };
 }
 
 /**

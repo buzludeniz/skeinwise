@@ -7,7 +7,7 @@
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathInside, readImportsInWorker } from '../importers/detect.ts';
-import { wordNoteFile } from '../notes.ts';
+import { underFrontMatter, wordNoteFile } from '../notes.ts';
 import type { Store, Version } from '../store/store.ts';
 import { folderInside, readPlain, UnsafeFile, writeNew, writeOver } from './files.ts';
 
@@ -139,10 +139,7 @@ function writeEntry(home: string, store: Store, id: number, body: string): Saved
   // The file is read before the version is saved, so a link there refuses the whole save.
   const old = file ? (safely(home, () => readPlain(file)) ?? '') : '';
   const version = store.editEntry(id, body, 'you');
-  if (file) {
-    const front = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(old)?.[0] ?? '';
-    safely(home, () => writeOver(file, `${front}${front ? '\n' : ''}${version.body}\n`));
-  }
+  if (file) safely(home, () => writeOver(file, underFrontMatter(old, version.body)));
   return { version, wroteFile: file !== null };
 }
 
