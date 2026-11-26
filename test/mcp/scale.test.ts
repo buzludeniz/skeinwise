@@ -8,7 +8,7 @@ import { MAX_CALL_BYTES } from '../../src/mcp/frame.ts';
 import type { McpServer } from '../../src/mcp/protocol.ts';
 import type { Caller } from '../../src/mcp/session.ts';
 import { finishRun, startRun } from '../../src/organiser/runs.ts';
-import { openDb } from '../../src/store/db.ts';
+import { inTransaction, openDb } from '../../src/store/db.ts';
 import { type EntryInput, Store } from '../../src/store/store.ts';
 import { call, context, demoRecord, initialize } from './helpers.ts';
 
@@ -58,7 +58,10 @@ function hub(members: number[]): number {
   const sections = { in_short: [{ text: 'Bulk notes, kept for later.', entryId: members[0]!, date: '2025-03-01' }], what_you_found: [], open_ends: [] };
   const hubId = Number(store.db.prepare('INSERT INTO hubs (name, sections, run_id) VALUES (?, ?, ?)').run('bulk', JSON.stringify(sections), run).lastInsertRowid);
   const add = store.db.prepare('INSERT INTO hub_entries (hub_id, entry_id, run_id, score) VALUES (?, ?, ?, 1)');
-  for (const id of members) add.run(hubId, id, run);
+  // One commit, not one per member: thousands of commits take a minute on Windows CI.
+  inTransaction(store.db, () => {
+    for (const id of members) add.run(hubId, id, run);
+  });
   finishRun(store.db, run, { counts: {}, tokensIn: 0, tokensOut: 0, now: LATER });
   return hubId;
 }
