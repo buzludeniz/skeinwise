@@ -4,16 +4,16 @@
 // check never reaches a model server already running here.
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
-import { runFolder } from './run.ts';
+import { freshRunFolder, runFolder } from './run.ts';
 
 const port = process.argv[2] ?? '7493';
 const run = runFolder();
 const home = join(run, 'home');
 const scan = join(run, 'scan');
-rmSync(run, { recursive: true, force: true });
+freshRunFolder(run);
 mkdirSync(home, { recursive: true });
 mkdirSync(scan, { recursive: true });
 
