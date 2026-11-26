@@ -179,6 +179,12 @@ async function findPoint(page: Page, want: 'entry' | 'hub' = 'entry'): Promise<{
   throw new Error(`No ${want} point found under the pointer`);
 }
 
+/** Brings the camera to the head, and waits for it to arrive. */
+async function headFraming(page: Page): Promise<void> {
+  await page.getByRole('radiogroup', { name: 'Framing' }).getByRole('radio', { name: 'Head' }).click();
+  await page.waitForTimeout(2500);
+}
+
 /** A spot on the canvas with no point near it and nothing over it. */
 async function findEmpty(page: Page): Promise<{ x: number; y: number }> {
   const box = (await page.locator('.brain-host canvas').boundingBox())!;
@@ -226,6 +232,8 @@ test('one click on a point pins its card, a click on empty space puts it away, a
 
 test('a hub point pins a hub card that opens the hub and lights its entries', async ({ page }) => {
   const errors = await openBrain(page);
+  // The whole body shows the head small, with its hubs a few pixels apart: the Head framing spreads them out.
+  await headFraming(page);
   const hub = await findPoint(page, 'hub');
   await page.mouse.click(hub.x, hub.y);
   await expect(cardTitle(page)).toHaveText(hub.title);
@@ -287,6 +295,29 @@ test("says the brain didn't load, not that WebGL is missing, when its drawing co
   await fresh.goto(`/?seedview=brain#token=${token()}`);
   await expect(fresh.locator('.brain-host canvas')).toBeVisible({ timeout: 30_000 });
   await expect(fresh.getByText("The brain didn't load")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("draws the Timeline's strip, and says it didn't load, not that WebGL is missing, when its drawing code can't be fetched", async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(`/?seedview=brain#token=${token()}`);
+  await expect(page.locator('.brain-host canvas')).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Timeline' }).click();
+  await expect(page.locator('.strip canvas')).toBeVisible();
+  await expect(page.getByText("This browser can't draw the strip")).toHaveCount(0);
+
+  const broken = await page.context().newPage();
+  broken.on('pageerror', (e) => errors.push(String(e)));
+  await broken.route(/\/assets\/scene-[^/]*\.js$/, (route) => route.fulfill({ status: 404, body: '' }));
+  await broken.emulateMedia({ reducedMotion: 'reduce' });
+  await broken.goto(`/?seedview=brain#token=${token()}`);
+  await expect(broken.getByText("The brain didn't load")).toBeVisible({ timeout: 30_000 });
+  await broken.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: 'Timeline' }).click();
+  await expect(broken.getByText('Open a new tab at the address Skeinwise printed when it started')).toBeVisible();
+  await expect(broken.getByText("This browser can't draw the strip")).toHaveCount(0);
+  expect(await axeFails(broken, "the strip didn't load")).toEqual([]);
   expect(errors).toEqual([]);
 });
 
@@ -476,7 +507,10 @@ test.describe('at the cap', () => {
     await settle();
     await layouts.getByRole('radio', { name: 'Brain' }).click();
     await settle();
-    // The biggest hub: about 1,000 drawn entries, so its selection draws about 1,000 spokes.
+    // The biggest hub: about 1,000 drawn entries. The body draws its spokes to the head alone, and Activity, where the
+    // selection moves next, about 1,000 of them. In the Head framing, as the whole body leaves the head's labels small
+    // in this small window.
+    await headFraming(page);
     await labels(page).first().focus();
     await labels(page).first().click();
     await expect(cardTitle(page)).toHaveText(/^Hub \d+$/);

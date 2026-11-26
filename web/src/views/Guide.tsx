@@ -6,9 +6,17 @@ import { MOD, SidePanel } from '../ui/common.tsx';
 
 const LINES: [string, string, boolean][] = [
   ['Thread line', 'Joins the messages of one conversation, in the order they were said.', true],
-  ['Cross link', 'Joins two entries in different threads that read alike. The organiser finds them.', true],
+  [
+    'Cross link',
+    'Joins two entries in different threads that read alike. The organiser finds them. In the Brain layout, one that reaches down the body stays faint until you light its entries or select one of them.',
+    true,
+  ],
   ['Note link', 'A [[link]] you wrote in a note. It arcs between the two notes.', true],
-  ['Hub spoke', 'Joins a hub to each entry it holds. Faint until you light the entries.', true],
+  [
+    'Hub spoke',
+    'Joins a hub to each entry it holds. In the Brain layout it reaches only the notes and hubs in the head; Activity, Clusters and the Timeline strip join every entry. Faint until you light the entries.',
+    true,
+  ],
   ['Time chain', 'Joins entries in date order, so you can follow a day or a week.', false],
   ['Label spark', 'Flashes from a label to its points while you hover the label.', false],
   ['Label leader', 'Holds a label close to the point it names.', true],
@@ -22,13 +30,21 @@ export function GuidePanel() {
         <h3>Hubs</h3>
         <p>
           Hubs are the large labelled points. Each one stands for an idea the organiser found across many entries, and
-          a faint spoke joins it to each of them. Double-click a hub to read what it found.
+          a faint spoke joins it to each of them; in the Brain layout, only to those in the head. Double-click a hub to
+          read what it found.
           {hubs ? '' : ' There are none yet: run the organiser to make hubs.'}
         </p>
-        <h3>The stem</h3>
+        <h3>The body</h3>
         <p>
-          The originals, your messages and files, wind up the stem below the brain in date order: the oldest at the
-          bottom, the newest at the top. The notes you wrote and the hubs sit in the two lobes.
+          The notes you wrote and the hubs sit in the head's two lobes. Every other entry, your messages and files,
+          hangs on its source's nerve: chat assistants run down the arms, coding agents down the legs, and other sources
+          round the trunk.
+        </p>
+        <p>
+          The cord down the back is the calendar, with a ring at the edge of each month and this month at the top. A run
+          of empty months folds into one fainter ring. Along every nerve, time runs from its root at the cord, the
+          oldest, to its tip, today. A nerve that stops short shows when its source went quiet, and a faint one drawn
+          all the way has nothing in it yet. Framing brings the camera to the whole body, the head or the cord.
         </p>
         <h3>Clusters</h3>
         <p>Points close together have something in common: the same thread, the same group, or links between them.</p>

@@ -1,4 +1,5 @@
-// Timeline: entries per week, split by source or speaker. Drag across a span to light its points in the brain strip.
+// Timeline: entries per week, split by source or speaker. Drag across a span to light its points in the strip below
+// the chart, the brain's points laid in one lane per source in time order.
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { Brain, X } from 'lucide-preact';
@@ -65,7 +66,7 @@ export function TimelineView() {
     return ids;
   }, [range, brain]);
 
-  const { ok } = useBrainScene(strip, 'strip', spanIds);
+  const { ok, loadFailed } = useBrainScene(strip, 'strip', spanIds);
 
   const series = useMemo(() => (data ? fold(data) : []), [data]);
   const colors = useMemo(() => {
@@ -103,8 +104,16 @@ export function TimelineView() {
 
   return (
     <section class="view timeline" aria-label="Timeline">
-      <div class="strip" ref={strip} aria-label="The brain, with the span lit">
-        {!ok && <p class="soft pad">This browser can't draw the brain.</p>}
+      <div class="strip" ref={strip} aria-label="Every entry by source over time, with the span lit">
+        {loadFailed ? (
+          // The scene's file is gone, most often after a rebuild: not a WebGL problem, and a reload would lose the token.
+          <p class="soft pad">
+            The strip didn't load: Skeinwise was probably updated after this page opened. Open a new tab at the address
+            Skeinwise printed when it started.
+          </p>
+        ) : (
+          !ok && <p class="soft pad">This browser can't draw the strip.</p>
+        )}
       </div>
       <div class="timeline-body">
         <header class="view-head">
