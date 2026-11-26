@@ -6,11 +6,11 @@
 // Every input is built from the seed, the target and the iteration alone, so any finding replays exactly, and nothing
 // hostile is ever committed: the seed inputs are built here at run time.
 
-import { readdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { strToU8 } from 'fflate';
 import { mulberry32 } from '../../src/random.ts';
-import { beginWrites, endWrites } from './guard.ts';
+import { beginWrites, endWrites, leftOpen } from './guard.ts';
 
 export type Rng = () => number;
 
@@ -234,20 +234,12 @@ export interface LoopOptions {
 
 const MiB = 1024 ** 2;
 
-/** How many files the process has open, or -1 where /dev/fd can't say. */
-function openFiles(): number {
-  try {
-    return readdirSync('/dev/fd').length;
-  } catch {
-    return -1;
-  }
-}
-
 /**
  * Runs a target's inputs in turn. Memory is checked two ways after each input: what the process holds now against
  * what it held before the input, and its peak against the peak when the loop started; either past the target's budget
  * is a finding. The peak is the process's, so a run started after a bigger one sees less: fuzz one target to isolate.
- * An input that leaves a file open is run once more, and is a finding when it leaves one open again.
+ * An input that leaves a file open is run once more, and is a finding when it leaves one open again. Open files are
+ * counted by the guard (leftOpen), so only where it is installed: in the worker.
  */
 export function loop(target: Target, o: LoopOptions): { runs: number; refused: number; ms: number } {
   prepare(target);
@@ -266,15 +258,13 @@ export function loop(target: Target, o: LoopOptions): { runs: number; refused: n
       Atomics.add(o.progress, 1, 1);
     }
     const before = process.memoryUsage.rss();
-    const files = openFiles();
     const outcome = runOne(target, input, o.folder, o.budgetMs);
     runs++;
     if (outcome.refused) refused++;
     if (outcome.kind) finding(outcome.kind, outcome.error ?? '', outcome.ms);
-    if (files >= 0 && openFiles() > files) {
-      const again = openFiles();
+    if (leftOpen() > 0) {
       runOne(target, input, o.folder, o.budgetMs);
-      const left = openFiles() - again;
+      const left = leftOpen();
       if (left > 0) finding('leak', `it left ${left} file${left === 1 ? '' : 's'} open on ${input.length} bytes`, outcome.ms);
     }
     const held = process.memoryUsage.rss() - before;

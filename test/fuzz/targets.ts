@@ -1,7 +1,7 @@
 // Every fuzz target by name: the import parsers this track owns, the shared code they use, and the planted targets the
 // harness's own tests run to show it catches a crash, a hang, a heap that runs out and a write outside the folder.
 
-import { writeFileSync } from 'node:fs';
+import { openSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Target } from './engine.ts';
 import { IMPORTER_TARGETS } from './importers.ts';
@@ -34,6 +34,8 @@ export const PLANTED: Target[] = [
     for (;;) kept.push(Array.from({ length: 1e5 }, (_, i) => i));
   }),
   planted('write', (_input, file) => writeFileSync(join(dirname(file), '..', 'outside.txt'), 'x'), { fileName: 'input.bin' }),
+  // Opens its input and never closes it; the worker's end closes it.
+  planted('leak', (_input, file) => void openSync(file, 'r'), { fileName: 'input.bin' }),
 ];
 
 export function targetNamed(name: string): Target {

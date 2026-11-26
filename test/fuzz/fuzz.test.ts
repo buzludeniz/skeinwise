@@ -3,7 +3,7 @@
 // random seed: `pnpm fuzz`. The harness's own tests plant each kind of failure and check it is caught.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inputFor, loop, runOne, type Finding, type Target } from './engine.ts';
@@ -133,15 +133,8 @@ describe('the fuzz harness catches', () => {
     expect(findings.map((f) => f.kind)).toEqual(['memory']);
   });
 
-  it('a file an input leaves open', () => {
-    const fds: number[] = [];
-    const findings: Finding[] = [];
-    const leaky = planted((_input, file) => void fds.push(openSync(file, 'r')), { fileName: 'input.bin' });
-    try {
-      loop(leaky, { seed: SEED, start: 0, iterations: 1, deadline: Infinity, folder: folder('planted-leak'), budgetMs: 60_000, onFinding: (f) => findings.push(f) });
-    } finally {
-      for (const fd of fds) closeSync(fd);
-    }
-    expect(findings.map((f) => f.kind)).toEqual(['leak']);
-  });
+  it('a file an input leaves open, counted the same way on every system', async () => {
+    const { findings } = await fuzzTarget('planted-leak', options('planted-leak', 1));
+    expect(findings.map((f) => [f.kind, f.error])).toEqual([['leak', 'it left 1 file open on 1 bytes']]);
+  }, TIMEOUT);
 });

@@ -3,6 +3,9 @@
 // catches the error. node:fs's writing calls are wrapped once, in the worker, with installWriteGuard; ES module
 // imports of them see the wrappers through syncBuiltinESMExports. Writes through a FileHandle aren't seen: the
 // readers fuzzed here are synchronous and use none.
+//
+// The guard also counts the descriptors a target opens with openSync and hasn't closed (leftOpen), so the engine can
+// tell a file left open the same way on every system; /dev/fd, which macOS and Linux have, Windows hasn't.
 
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -13,7 +16,7 @@ export class OutsideWriteError extends Error {
   override name = 'OutsideWriteError';
 }
 
-const state = { active: false, root: '', writes: [] as string[], fds: new Set<number>() };
+const state = { active: false, root: '', writes: [] as string[], fds: new Set<number>(), open: new Set<number>() };
 
 const { O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND } = fs.constants;
 const WRITING = O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND;
@@ -90,7 +93,8 @@ export function installWriteGuard(): void {
       if (writingFlags(args[1])) check(call, args[0]);
     });
   }
-  // A descriptor opened for writing inside the folder may be written through.
+  // A descriptor opened for writing inside the folder may be written through. Every descriptor opened while a target
+  // runs is counted until it is closed.
   wrap(
     fs,
     'openSync',
@@ -98,9 +102,12 @@ export function installWriteGuard(): void {
       if (writingFlags(args[1])) check('openSync', args[0]);
     },
     (fd, args) => {
-      if (state.active && writingFlags(args[1])) state.fds.add(fd as number);
+      if (!state.active) return;
+      state.open.add(fd as number);
+      if (writingFlags(args[1])) state.fds.add(fd as number);
     },
   );
+  for (const call of ['close', 'closeSync']) wrap(fs, call, (args) => void state.open.delete(args[0] as number));
   syncBuiltinESMExports();
 }
 
@@ -110,6 +117,12 @@ export function beginWrites(root: string): void {
   state.root = resolve(root);
   state.writes = [];
   state.fds.clear();
+  state.open.clear();
+}
+
+/** The descriptors opened with openSync since beginWrites and not closed. 0 where the guard isn't installed. */
+export function leftOpen(): number {
+  return state.open.size;
 }
 
 /** The writes refused since beginWrites. */
