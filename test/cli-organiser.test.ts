@@ -86,16 +86,16 @@ describe('organising the demo record from the command line', () => {
   it('run all prints each run as it finishes and makes hubs for Plotline, sourdough and the river thesis', async () => {
     expect(ran.code).toBe(0);
     expect(ran.out).toContain('Run 1: tag Topics · No-AI · scope all · done');
-    expect(ran.out).toMatch(/Run 6: hub · No-AI · scope all · done · .*hubs 8/);
+    expect(ran.out).toMatch(/Run 7: hub · No-AI · scope all · done · .*hubs 8/);
     expect(ran.out).toContain('Undo a run with: skeinwise undo <run>');
     const runs = parsed<RunJson[]>(await sw('runs', '--json'));
-    expect(runs.map((r) => r.task).reverse()).toEqual(['tag', 'tag', 'tag', 'file', 'link', 'hub', 'layer', 'review']);
+    expect(runs.map((r) => r.task).reverse()).toEqual(['tag', 'tag', 'tag', 'tag', 'file', 'link', 'hub', 'layer', 'review']);
     expect(runs.every((r) => r.engine === 'none' && r.status === 'done' && r.tokensIn === 0)).toBe(true);
     const names = parsed<HubJson[]>(await sw('hubs', '--json')).map((h) => h.name);
     expect(names.some((n) => /Plotline/.test(n))).toBe(true);
     expect(names.some((n) => /sourdough/i.test(n))).toBe(true);
     expect(names.some((n) => /nitrate|samples|river|thesis/i.test(n))).toBe(true);
-    expect((await sw('runs')).out).toMatch(/^2026-11-20 18:00 {2}Run 8: review · No-AI/m);
+    expect((await sw('runs')).out).toMatch(/^2026-11-20 18:00 {2}Run 9: review · No-AI/m);
   });
 
   it('hub shows its three sections, cited by entry and date, then its entries', async () => {
@@ -103,45 +103,45 @@ describe('organising the demo record from the command line', () => {
     expect(r.code).toBe(0);
     expect(r.out).toMatch(new RegExp(`^${plotline.name}\\nHub ${plotline.id} · \\d+ entries · made by run ${runIds.hub}\\n`));
     for (const section of ['In short', 'What you found', 'Open ends', 'Entries:']) expect(r.out).toContain(`\n${section}\n`);
-    expect(r.out).toContain('  - Decided: Plotline runs on SQLite.  (#385, 2025-03-09)');
+    expect(r.out).toContain('  - Decided: Plotline runs on SQLite.  (#559, 2025-03-09)');
     expect(r.out).toMatch(/… and \d+ more \(--limit \d+ shows them all\)\n$/);
     const missing = await sw('hub', '999');
     expect(missing).toMatchObject({ code: 2, out: '' });
     expect(missing.err).toContain('No hub 999.');
   });
 
-  it('ask "what did I decide about sqlite" gives both Plotline decisions, oldest first', async () => {
+  it('ask "what did I decide about sqlite" gives the four Plotline decisions, oldest first', async () => {
     const answer = parsed<{ kind: string; hits: { entryId: number; why: string }[] }>(
       await sw('ask', 'what did I decide about sqlite', '--engine', 'none', '--json'),
     );
     expect(answer.kind).toBe('decided');
-    expect(answer.hits.map((h) => h.entryId)).toEqual([385, 345]);
+    expect(answer.hits.map((h) => h.entryId)).toEqual([559, 475, 219, 531]);
     const text = (await sw('ask', 'what', 'did', 'I', 'decide', 'about', 'sqlite', '--engine', 'none')).out;
-    expect(text).toMatch(/^What you decided about "sqlite", oldest first:\n#385 {2}2025-03-09 {2}you · Plotline runs on SQLite {2}\[decision\]\n/);
-    expect(text.indexOf('#345')).toBeGreaterThan(text.indexOf('#385'));
+    expect(text).toMatch(/^What you decided about "sqlite", oldest first:\n#559 {2}2025-03-09 {2}you · Plotline runs on SQLite {2}\[decision\]\n/);
+    expect(text.indexOf('#475')).toBeGreaterThan(text.indexOf('#559'));
     expect((await sw('ask', '--engine', 'none')).code).toBe(2);
   });
 
   it('similar lists entries from other threads that read alike', async () => {
-    const r = await sw('similar', '385');
-    expect(r.out).toMatch(/^Entries in other threads that read like #385 {2}2025-03-09 {2}you · Plotline runs on SQLite:\n#345 /);
+    const r = await sw('similar', '559');
+    expect(r.out).toMatch(/^Entries in other threads that read like #559 {2}2025-03-09 {2}you · Plotline runs on SQLite:\n#475 /);
   });
 
   it('review flags the Plotline note after the April 2026 move to Postgres, and saves an update only with --yes', async () => {
     const items = parsed<{ id: number; noteEntry: number; reasons: { entryId: number }[] }[]>(await sw('review', '--json'));
-    const item = items.find((i) => i.noteEntry === 420)!;
-    expect(item.reasons.map((r) => r.entryId)).toEqual([385, 345]);
-    expect((await sw('review')).out).toContain(`Item ${item.id}: #420  2025-02-05  you · Plotline may be out of date. Later entries:`);
+    const item = items.find((i) => i.noteEntry === 587)!;
+    expect(item.reasons.map((r) => r.entryId)).toEqual([559, 475, 219, 531]);
+    expect((await sw('review')).out).toContain(`Item ${item.id}: #587  2025-02-05  you · Plotline may be out of date. Later entries:`);
 
     const shown = await sw('review', '--resolve', String(item.id), 'update');
-    expect(shown.out).toContain('Note #420, as the update would change it:\n');
+    expect(shown.out).toContain('Note #587, as the update would change it:\n');
     expect(shown.out).toContain('+ ## Updates');
     expect(shown.out).toContain(`Nothing is saved yet. Save it with: skeinwise review --resolve ${item.id} update --yes`);
-    expect((await sw('history', '420')).out.trim().split('\n')).toHaveLength(1);
+    expect((await sw('history', '587')).out.trim().split('\n')).toHaveLength(1);
 
     const saved = await sw('review', '--resolve', String(item.id), 'update', '--yes');
-    expect(saved.out).toContain('Saved note #420 as version 2. The text before stays in its history: skeinwise history 420');
-    expect((await sw('history', '420')).out).toMatch(/^v2 {2}2026-11-20 18:00 {2}by you /m);
+    expect(saved.out).toContain('Saved note #587 as version 2. The text before stays in its history: skeinwise history 587');
+    expect((await sw('history', '587')).out).toMatch(/^v2 {2}2026-11-20 18:00 {2}by you /m);
     expect(parsed<{ id: number }[]>(await sw('review', '--json')).map((i) => i.id)).not.toContain(item.id);
 
     const wrong = await sw('review', '--resolve', String(items[0]!.id), 'maybe');
@@ -152,11 +152,11 @@ describe('organising the demo record from the command line', () => {
   it('links shows the five kinds of line, in all and for one entry', async () => {
     const all = (await sw('links')).out;
     for (const kind of ['thread line', 'cross link', 'note link', 'hub spoke', 'time chain']) expect(all).toMatch(new RegExp(`  ${kind} +\\d+  `));
-    const one = (await sw('links', '345')).out;
-    expect(one).toContain('  thread line after  #346');
-    expect(one).toMatch(/ {2}cross link +0\.\d\d #385 /);
+    const one = (await sw('links', '475')).out;
+    expect(one).toContain('  thread line after  #476');
+    expect(one).toMatch(/ {2}cross link +0\.\d\d #559 /);
     expect(one).toContain(`  hub spoke   hub ${plotline.id}: ${plotline.name}`);
-    expect(one).toContain('  time chain  before #412');
+    expect(one).toContain('  time chain  before #581');
   });
 
   it('layers shows the original beside the layers a run made, and says what makes a missing one', async () => {
@@ -221,7 +221,7 @@ describe('organising the demo record from the command line', () => {
   it('undo takes away what a run made and leaves your entries as they were', async () => {
     const before = (await sw('show', '18')).out;
     const r = await sw('undo', String(runIds.layer));
-    expect(r.out).toBe(`Undid run ${runIds.layer} (layer). Removed 12 layers.\n`);
+    expect(r.out).toBe(`Undid run ${runIds.layer} (layer). Removed 9 layers.\n`);
     expect((await sw('layers', '18')).out).toContain('No layers yet. Make them with: skeinwise run layer');
     expect((await sw('show', '18')).out).toBe(before);
     const again = await sw('undo', String(runIds.layer));
@@ -280,7 +280,8 @@ describe('a model engine from the command line', () => {
       throw new TypeError('fetch failed');
     }) as typeof globalThis.fetch;
     const sw = inHome(home, { fetch: down });
-    for (const argv of [['run', 'hub'], ['ask', 'what did I decide about sqlite']]) {
+    // The demo has more than CONFIRM_ENTRIES entries, so the run says --yes to reach the server.
+    for (const argv of [['run', 'hub', '--yes'], ['ask', 'what did I decide about sqlite']]) {
       const r = await sw(...argv);
       expect(r.code).toBe(2);
       expect(r.err).toContain('No model server answers at http://127.0.0.1:8731/v1.');
@@ -311,7 +312,7 @@ describe('a model engine from the command line', () => {
     const sw = inHome(home, { fetch: fake });
     const r = await sw('ask', 'what did I decide about sqlite');
     expect(r.code).toBe(0);
-    expect(r.out).toMatch(/^SQLite in March 2025, then Postgres in April 2026\.\n {4}\(local model models\/fake-4b\.gguf, citing #385, #345\)\n/);
+    expect(r.out).toMatch(/^SQLite in March 2025, then Postgres in April 2026\.\n {4}\(local model models\/fake-4b\.gguf, citing #559, #475\)\n/);
     const [run] = parsed<RunJson[]>(await sw('runs', '--json'));
     expect(run).toMatchObject({ task: 'ask', engine: 'local', status: 'done', tokensIn: 300, tokensOut: 25 });
     expect((await sw('undo', String(run!.id))).code).toBe(2);

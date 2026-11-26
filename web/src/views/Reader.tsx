@@ -277,7 +277,7 @@ function ThreadReader({ id, focus }: { id: number; focus?: number }) {
           Started {fmtDate(thread.startedAt)} · {entries[0]?.sourceLabel ?? ''}
         </p>
       </header>
-      {thread.notMine && <p class="band">Marked not mine: this thread is left out of the brain, search, You and Numbers.</p>}
+      {thread.notMine && <p class="band">Marked not mine: this thread is left out of the brain, search, Profile and Stats.</p>}
       <div class="reader-actions">
         <Button icon={UserX} small aria-pressed={thread.notMine} onClick={() => void setNotMine(!thread.notMine)}>
           {thread.notMine ? 'Mine after all' : 'Not mine'}

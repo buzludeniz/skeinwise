@@ -7,8 +7,6 @@
 // The three run before the record is opened (doctor must see a missing record as missing), so the CLI calls them
 // with a SetupCtx rather than through withStore.
 
-import { chmodSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { connect, type SetupCtx } from './connect.ts';
 import { doctor } from './doctor.ts';
 import { UsageError } from './errors.ts';
@@ -45,11 +43,6 @@ export async function setup(ctx: SetupCtx): Promise<number> {
 
   const store = openHome(ctx.home, io.now);
   try {
-    // The store creates record.db with the usual file mode; inside an owner-only folder, but doctor asks for 0600.
-    for (const name of ['record.db', 'record.db-wal', 'record.db-shm']) {
-      const file = join(ctx.home, name);
-      if (existsSync(file)) chmodSync(file, 0o600);
-    }
     const found = findSources(root, store.sources());
     const fresh = found.filter((f) => !f.inRecord);
     say(`Your record: ${ctx.home}\n\n`);

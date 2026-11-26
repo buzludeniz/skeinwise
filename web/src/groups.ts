@@ -6,7 +6,7 @@ import { speakerName } from './format.ts';
 import type { LayoutPoint } from './layout.ts';
 
 export type Grouping = 'project' | 'folder' | 'source' | 'speaker' | 'month';
-/** The groupings the legend offers; month is the Year rings' own. */
+/** The groupings the legend offers; month is the Activity layout's own. */
 export type ColourGrouping = Exclude<Grouping, 'month'>;
 
 export const GROUPING_LABELS: Record<ColourGrouping, string> = {

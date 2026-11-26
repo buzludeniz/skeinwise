@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BrainData, BrainPoint } from '../../src/server/queries.ts';
-import { buildModel, legendColors, litValues } from '../../web/src/brain/input.ts';
+import { buildModel, legendColors, litValues, MAX_POINTS, samplePoints } from '../../web/src/brain/input.ts';
 import { palette, theme } from '../../web/src/themes.ts';
 
 const t = (iso: string) => Date.parse(iso);
@@ -96,3 +96,75 @@ describe('brain input', () => {
     expect([...litValues(m, null, 1)!]).toEqual([0, 0, 0, 1, 1, 1, 0]);
   });
 });
+
+describe('the point cap', () => {
+  const day = 86_400_000;
+  /** n points: every fifth a note, every seventh a file, the rest messages, one a day; ids from 1. */
+  function big(n: number): BrainData {
+    const points: BrainPoint[] = Array.from({ length: n }, (_, i) => {
+      const kind = i % 5 === 0 ? 1 : i % 7 === 0 ? 2 : 0;
+      return [i + 1, kind, 0, kind === 1 ? 9 : 7, kind === 1 ? 0 : 3, kind === 1 ? 0 : 1, -1, t('2025-01-01T00:00:00Z') + i * day, `p${i + 1}`] as BrainPoint;
+    });
+    return { ...data(points), hubs: [{ id: 4, name: 'Soil', entries: points.map((p) => p[0]).filter((id) => id % 3 === 0) }] };
+  }
+
+  it('draws every point up to the cap', () => {
+    expect(MAX_POINTS).toBe(20_000);
+    expect(samplePoints(big(50).points, 50)).toBeNull();
+    const m = buildModel(big(50), 'source', ember, dusk, 50);
+    expect(m.data.points.length).toBe(50);
+    expect(m.total).toBe(50);
+  });
+
+  it('past the cap keeps every note and file and spreads the messages over time, in record order', () => {
+    const record = big(1000);
+    const keep = samplePoints(record.points, 400)!;
+    expect(keep).toHaveLength(400);
+    expect(keep).toEqual([...keep].sort((a, b) => a - b));
+    expect(new Set(keep).size).toBe(400);
+    const own = record.points.flatMap((p, i) => (p[1] === 0 ? [] : [i]));
+    for (const i of own) expect(keep).toContain(i);
+    // The messages reach from the start of the record to its end, not just its first or last stretch.
+    const messages = keep.filter((i) => record.points[i]![1] === 0);
+    expect(messages.length).toBe(400 - own.length);
+    expect(messages[0]!).toBeLessThan(20);
+    expect(messages.at(-1)!).toBeGreaterThan(980);
+  });
+
+  it('spreads the notes and files too when they alone pass the cap', () => {
+    const record = big(1000);
+    const keep = samplePoints(record.points, 100)!;
+    expect(keep).toHaveLength(100);
+    expect(keep.every((i) => record.points[i]![1] !== 0)).toBe(true);
+    expect(keep[0]!).toBeLessThan(20);
+    expect(keep.at(-1)!).toBeGreaterThan(950);
+  });
+
+  it("builds the scene from the sample, with the record's own counts", () => {
+    const record = big(1000);
+    const m = buildModel(record, 'source', ember, dusk, 400);
+    expect(m.data.points).toHaveLength(400);
+    expect(m.total).toBe(1000);
+    // Point i of the scene is point i of the drawn data, which is what the hover card reads.
+    m.data.points.forEach((p, i) => expect(m.input.points[i]!.id).toBe(p[0]));
+    for (let i = 0; i < m.data.points.length; i++) expect(m.indexOf.get(m.data.points[i]![0])).toBe(i);
+    // The legend counts the whole record, not the sample.
+    expect(m.legend.reduce((sum, g) => sum + g.count, 0)).toBe(1000);
+    expect(m.grouped.of).toHaveLength(400);
+    // The hub draws spokes only to the entries in the sample but counts all of its entries.
+    const hub = m.hubs[0]!;
+    expect(hub.index).toBe(400);
+    expect(hub.count).toBe(333);
+    expect(m.input.spokes.length / 2).toBeLessThan(333);
+  });
+
+  it('places a hub that holds a very large number of entries', () => {
+    // Spreading 300,000 times into Math.max overflows the call stack.
+    const record = big(300_000);
+    const all = { ...record, hubs: [{ id: 5, name: 'Everything', entries: record.points.map((p) => p[0]) }] };
+    const m = buildModel(all, 'source', ember, dusk, 300_000);
+    expect(m.hubs[0]!.count).toBe(300_000);
+    expect(m.input.points.at(-1)!.time).toBe(record.points.at(-1)![7]);
+  });
+});
+

@@ -62,7 +62,7 @@ function readKeyFile(folder: string): KeyFile {
 /** Refuses, before any passphrase is asked for, when this record already syncs or the folder already holds a sync. */
 export function checkStart(home: string, folder: string): string {
   const state = readState(home);
-  if (state) throw new UsageError(`This record already syncs with ${state.folder}. Write a fresh bundle there with: skeinwise sync push`);
+  if (state) throw new UsageError(`This record already syncs with ${state.folder}. Write a fresh bundle there with: skeinwise sync push --experimental`);
   const dir = resolve(folder);
   const record = resolve(home);
   if (dir === record || dir.startsWith(record + sep)) {
@@ -70,7 +70,7 @@ export function checkStart(home: string, folder: string): string {
   }
   if (statSync(dir, { throwIfNoEntry: false })?.isFile()) throw new UsageError(`${dir} is a file. Give a folder.`);
   if (existsSync(join(dir, KEYS_FILE)) || existsSync(join(dir, BUNDLE_FILE))) {
-    throw new UsageError(`${dir} already holds a Skeinwise sync. To make this computer a copy of it: skeinwise sync join ${dir}`);
+    throw new UsageError(`${dir} already holds a Skeinwise sync. To make this computer a copy of it: skeinwise sync join ${dir} --experimental`);
   }
   return dir;
 }
@@ -129,7 +129,7 @@ function folderBundle(folder: string): BundleHeader | null {
 /** Writes a fresh bundle of the whole record to the folder. */
 export function pushSync(store: Store, home: string, options: { force?: boolean } = {}): Pushed {
   const state = readState(home);
-  if (!state) throw new UsageError('This record does not sync yet. Start with: skeinwise sync init <folder>');
+  if (!state) throw new UsageError('This record does not sync yet. Start with: skeinwise sync init <folder> --experimental');
   const keys = readKeyFile(state.folder);
   if (keys.keyId !== state.keyId) {
     throw new UsageError(`${state.folder} now holds a different sync (its key file was replaced), so this computer can't push to it. Nothing was written.`);
@@ -138,18 +138,18 @@ export function pushSync(store: Store, home: string, options: { force?: boolean 
   try {
     current = folderBundle(state.folder);
   } catch (err) {
-    if (!options.force) throw new Error(`${(err as Error).message} Replace it with a fresh bundle: skeinwise sync push --force`);
+    if (!options.force) throw new Error(`${(err as Error).message} Replace it with a fresh bundle: skeinwise sync push --force --experimental`);
     current = null;
   }
   const ahead = current !== null && current.keyId === state.keyId && current.seq > state.seq;
   if (current && current.keyId !== state.keyId && !options.force) {
-    throw new UsageError(`The bundle in ${state.folder} belongs to a different sync. Replace it with this record: skeinwise sync push --force`);
+    throw new UsageError(`The bundle in ${state.folder} belongs to a different sync. Replace it with this record: skeinwise sync push --force --experimental`);
   }
   if (ahead && !options.force) {
     throw new UsageError(
       `Another computer pushed to ${state.folder} (push ${current!.seq}, ${current!.createdAt}) since this one last pushed or joined (push ${state.seq}).\n` +
         'Pushing now would replace that bundle, and what that computer added since would be in no bundle (it stays on that computer).\n' +
-        "Skeinwise can't merge two records yet. Nothing was written. To replace it anyway: skeinwise sync push --force",
+        "Skeinwise can't merge two records yet. Nothing was written. To replace it anyway: skeinwise sync push --force --experimental",
     );
   }
   const seq = Math.max(current?.seq ?? 0, state.seq) + 1;
@@ -167,12 +167,12 @@ export function checkJoin(store: Store, home: string, folder: string): string {
   if (state) throw new UsageError(`This record already syncs with ${state.folder}.`);
   const dir = resolve(folder);
   readKeyFile(dir);
-  if (!existsSync(join(dir, BUNDLE_FILE))) throw new UsageError(`${dir} has a key file but no bundle. Push one from a computer that syncs with it: skeinwise sync push`);
+  if (!existsSync(join(dir, BUNDLE_FILE))) throw new UsageError(`${dir} has a key file but no bundle. Push one from a computer that syncs with it: skeinwise sync push --experimental`);
   const why = notEmpty(store, home);
   if (why) {
     throw new UsageError(
       `This record is not empty: ${why}. Joining makes a record a copy of the folder's, so it only goes into an empty one. Nothing was written.\n` +
-        `Join with a new record folder instead, for example:\n  SKEINWISE_HOME=~/skeinwise-joined skeinwise sync join ${dir}\nor move ${home} aside first.`,
+        `Join with a new record folder instead, for example:\n  SKEINWISE_HOME=~/skeinwise-joined skeinwise sync join ${dir} --experimental\nor move ${home} aside first.`,
     );
   }
   return dir;
@@ -196,7 +196,7 @@ export function joinSync(store: Store, home: string, folder: string, secret: Sec
   if (!key) {
     throw new UsageError(
       slot === 'passphrase'
-        ? `That passphrase does not open the sync in ${dir}. Nothing was written. If it is lost, use the recovery phrase: skeinwise sync restore ${dir}`
+        ? `That passphrase does not open the sync in ${dir}. Nothing was written. If it is lost, use the recovery phrase: skeinwise sync restore ${dir} --experimental`
         : `That recovery phrase does not open the sync in ${dir}. Nothing was written.`,
     );
   }
@@ -231,7 +231,7 @@ export function syncStatus(home: string): Status {
     const keys = readKeyFile(state.folder);
     if (keys.keyId !== state.keyId) return { ...status, problem: 'the folder now holds a different sync' };
     const current = folderBundle(state.folder);
-    if (!current) return { ...status, problem: 'the folder has no bundle; write one with: skeinwise sync push' };
+    if (!current) return { ...status, problem: 'the folder has no bundle; write one with: skeinwise sync push --experimental' };
     return { ...status, folderSeq: current.seq, folderAt: current.createdAt, behind: current.seq > state.seq };
   } catch (err) {
     return { ...status, problem: (err as Error).message };

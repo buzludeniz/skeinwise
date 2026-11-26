@@ -1,7 +1,7 @@
 // Turns the record's brain data into what the scene draws: a colour, size and place per point, the line pairs and the
 // labels. Pure (no DOM, no WebGL), so the tests can check it.
 
-import type { BrainData } from '../../../src/server/queries.ts';
+import type { BrainData, BrainPoint } from '../../../src/server/queries.ts';
 import { type Grouped, type Grouping, groupPoints, layoutPoints, linkDegree, linkPairs, threadPairs } from '../groups.ts';
 import type { LayoutPoint } from '../layout.ts';
 import { hexToRgb, mix, type Palette, pointColors, type Theme } from '../themes.ts';
@@ -35,6 +35,11 @@ export interface LegendItem {
 }
 
 export interface BrainModel {
+  /** The record as drawn: every point, or the sample when the record is past the cap. Point i of the scene is data.points[i]. */
+  data: BrainData;
+  /** How many entries the record holds; more than data.points.length when the scene shows a sample. */
+  total: number;
+  /** Groups over the whole record, so the legend's counts are the record's; `of` follows data.points. */
   grouped: Grouped;
   /** One colour per group, in legend order. */
   legend: LegendItem[];
@@ -43,6 +48,29 @@ export interface BrainModel {
   indexOf: Map<number, number>;
   /** The concept hubs' points, which come after every entry's point. */
   hubs: HubPoint[];
+}
+
+/** The most entry points the scene draws. Past it, the brain shows a sample and says so. */
+export const MAX_POINTS = 20_000;
+
+/** Picks `room` of the given indices spread evenly over time, so the sample keeps the record's shape. */
+function spread(points: BrainPoint[], indices: number[], room: number): number[] {
+  if (indices.length <= room) return indices;
+  const byTime = [...indices].sort((a, b) => points[a]![7] - points[b]![7] || a - b);
+  return Array.from({ length: room }, (_, k) => byTime[Math.floor((k * byTime.length) / room)]!);
+}
+
+/**
+ * The indices of the points to draw, in record order, or null when they all fit. Notes and files come first, since
+ * you wrote or kept them; the room left goes to messages spread evenly over time.
+ */
+export function samplePoints(points: BrainPoint[], cap = MAX_POINTS): number[] | null {
+  if (points.length <= cap) return null;
+  const kept: number[] = [];
+  const messages: number[] = [];
+  points.forEach((p, i) => (p[1] === 0 ? messages : kept).push(i));
+  const first = spread(points, kept, cap);
+  return [...first, ...spread(points, messages, cap - first.length)].sort((a, b) => a - b);
 }
 
 /** World sizes (diameters) before the size setting; smaller in big records so the stem doesn't turn into a smear. */
@@ -68,7 +96,9 @@ function hubPoints(data: BrainData, points: LayoutPoint[], indexOf: Map<number, 
   for (const hub of data.hubs) {
     const members = hub.entries.map((id) => indexOf.get(id)).filter((i): i is number => i !== undefined);
     if (!members.length) continue;
-    const time = Math.max(...members.map((i) => points[i]!.time));
+    // A loop, not Math.max(...): a hub can hold more entries than a call can take arguments.
+    let time = -Infinity;
+    for (const i of members) time = Math.max(time, points[i]!.time);
     const point: LayoutPoint = {
       id: -hub.id,
       kind: 1,
@@ -89,8 +119,12 @@ export function legendColors(count: number, pal: Palette, theme: Theme): string[
   return Array.from({ length: count }, (_, i) => (i < colors.length - 1 ? colors[i]! : count === colors.length ? colors[i]! : tail));
 }
 
-export function buildModel(data: BrainData, by: Grouping, pal: Palette, theme: Theme): BrainModel {
-  const grouped = groupPoints(data, by);
+export function buildModel(record: BrainData, by: Grouping, pal: Palette, theme: Theme, cap = MAX_POINTS): BrainModel {
+  const all = groupPoints(record, by);
+  const keep = samplePoints(record.points, cap);
+  const data = keep ? { ...record, points: keep.map((i) => record.points[i]!) } : record;
+  const grouped = keep ? { groups: all.groups, of: Int32Array.from(keep, (i) => all.of[i]!) } : all;
+  const inRecord = keep ? new Set(record.points.map((p) => p[0])) : null;
   const entries = layoutPoints(data, grouped.of);
   const indexOf = new Map(data.points.map((p, i) => [p[0], i]));
   const hubs = hubPoints(data, entries, indexOf);
@@ -129,6 +163,8 @@ export function buildModel(data: BrainData, by: Grouping, pal: Palette, theme: T
   notes.sort((a, b) => degree[b]! - degree[a]! || entries[b]!.time - entries[a]!.time || a - b);
   const noteLabels = notes.slice(0, Math.max(0, 16 - hubLabels.length)).map((index) => ({ index, text: data.points[index]![8].trim() }));
   return {
+    data,
+    total: record.points.length,
     grouped,
     legend: grouped.groups.map((g, i) => ({ label: g.label, count: g.count, color: hex[i]! })),
     input: {
@@ -142,7 +178,8 @@ export function buildModel(data: BrainData, by: Grouping, pal: Palette, theme: T
       labels: [...hubLabels.slice(0, 16), ...noteLabels],
     },
     indexOf,
-    hubs: hubs.map((h, k) => ({ index: entries.length + k, id: h.hub.id, name: h.hub.name, count: h.members.length })),
+    // A hub's count is its entries in the whole record, not just the ones in the sample.
+    hubs: hubs.map((h, k) => ({ index: entries.length + k, id: h.hub.id, name: h.hub.name, count: inRecord ? h.hub.entries.filter((id) => inRecord.has(id)).length : h.members.length })),
   };
 }
 
