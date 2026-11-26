@@ -8,7 +8,8 @@ import { getState, type NavSection, type Organiser, type Panel, setState, type T
 import { engineLabel } from '../../src/format.ts';
 import { modelName } from './format.ts';
 import { plural } from './format.ts';
-import type { BrainData, Config, OrganiseJob, Run, SavedEntry, Status } from './types.ts';
+import type { BrainWire, Config, OrganiseJob, Run, SavedEntry, Status } from './types.ts';
+import { unpackBrain } from './brain/unpack.ts';
 
 type Patch<T> = { [K in keyof T]?: T[K] extends object ? (T[K] extends unknown[] ? T[K] : Patch<T[K]>) : T[K] };
 
@@ -56,7 +57,7 @@ export async function boot(): Promise<void> {
 
 export async function loadRecord(): Promise<void> {
   const [brain, status, organiser] = await Promise.all([
-    api.get<BrainData>('brain'),
+    api.get<BrainWire>('brain').then(unpackBrain),
     api.get<Status>('status'),
     api.get<Organiser>('organiser'),
   ]);

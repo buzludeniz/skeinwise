@@ -7,6 +7,7 @@ import { main } from '../../src/cli.ts';
 import { loadConfig, saveConfig } from '../../src/config.ts';
 import { type Running, startServer } from '../../src/server/serve.ts';
 import { fileRequest } from '../../src/mcp/requests.ts';
+import { unpackBrain } from '../../web/src/brain/unpack.ts';
 
 let dir: string;
 let home: string;
@@ -150,7 +151,7 @@ describe('reading the record', () => {
   });
 
   it('gives one point per visible entry for the brain', async () => {
-    const b = (await api('brain')).body;
+    const b = unpackBrain((await api('brain')).body);
     expect(b.points).toHaveLength((await api('status')).body.entries);
     expect(b.organiser).toBe(true);
     expect(b.sources.length).toBe(4);
@@ -285,7 +286,7 @@ describe('writing', () => {
     const sources = (await api('sources')).body as { id: number; entries: number; kind: string }[];
     const chatgpt = sources.find((s) => s.kind === 'chatgpt')!;
     await api(`sources/${chatgpt.id}`, { body: { status: 'out' } });
-    expect((await api('brain')).body.points.length).toBe(before - chatgpt.entries);
+    expect(unpackBrain((await api('brain')).body).points.length).toBe(before - chatgpt.entries);
     await api(`sources/${chatgpt.id}`, { body: { status: 'in' } });
     expect((await api('status')).body.entries).toBe(before);
     expect((await api(`sources/${chatgpt.id}`, { body: { status: 'gone' } })).status).toBe(400);
@@ -346,7 +347,7 @@ describe('the organiser', () => {
     expect(stats.organiser.tagged).toBeGreaterThan(0.5);
     expect(stats.organiser.filed).toBe(1);
 
-    const brain = (await api('brain')).body;
+    const brain = unpackBrain((await api('brain')).body);
     expect(brain.hubs.length).toBe(o.hubs.length);
     expect(brain.links.some((l: number[]) => l[2] === 1)).toBe(true);
     expect(brain.projects.length).toBeGreaterThan(0);

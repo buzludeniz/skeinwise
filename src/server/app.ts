@@ -42,6 +42,7 @@ import {
   lastSaved,
   numbers,
   organiserReady,
+  packBrain,
 } from './queries.ts';
 import { sameToken } from './token.ts';
 import { BATCH_ID, CutOff, saveUpload, TooLarge, UPLOAD_LIMIT } from './uploads.ts';
@@ -229,7 +230,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       return store.sources();
     }],
 
-    ['GET', /^\/api\/brain$/, () => brainData(store.db)],
+    ['GET', /^\/api\/brain$/, () => packBrain(brainData(store.db))],
 
     ['GET', /^\/api\/entries\/(\d+)$/, (req) => {
       const detail = entryDetail(store, id(req.params[0]));

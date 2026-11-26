@@ -4,10 +4,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gzipSync } from 'node:zlib';
+import { writeCorpus } from '../../bench/corpus.ts';
 import { main } from '../../src/cli.ts';
 import { openHome } from '../../src/home.ts';
-import { BRAIN_POINTS, brainData, type BrainPoint, pointLabel, samplePoints } from '../../src/server/queries.ts';
+import { BRAIN_POINTS, type BrainData, brainData, type BrainPoint, packBrain, pointLabel, samplePoints } from '../../src/server/queries.ts';
 import type { Store } from '../../src/store/store.ts';
+import { unpackBrain } from '../../web/src/brain/unpack.ts';
 
 let dir: string;
 let store: Store;
@@ -85,5 +88,95 @@ describe('brainData past the cap', () => {
       expect(h.entries.every((id) => shown.has(id))).toBe(true);
       expect(h.size).toBe(whole.hubs.find((w) => w.id === h.id)!.entries.length);
     }
+  });
+});
+
+/** What the page is handed: a value through JSON, as fetch gives it. */
+const viaJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+const brain = (points: BrainPoint[], links: BrainData['links'], hubs: BrainData['hubs']): BrainData => ({
+  kinds: ['message', 'note', 'file'],
+  speakers: ['you'],
+  sources: [{ id: 1, label: 'Notes', kind: 'notes' }],
+  folders: ['Inbox'],
+  projects: [],
+  threads: {},
+  points,
+  total: points.length,
+  links,
+  hubs,
+  organiser: true,
+});
+
+describe('packBrain and unpackBrain', () => {
+  it('give the page back exactly the BrainData that JSON carried, whole and past the cap', () => {
+    for (const cap of [BRAIN_POINTS, 200]) {
+      const d = brainData(store.db, cap);
+      expect(unpackBrain(viaJson(packBrain(d)))).toEqual(viaJson(d));
+    }
+  });
+
+  it('keep a point without a time, ids out of order, links in any order and every hub entry', () => {
+    const d = brain(
+      [point(30, 1, 5_000), point(7, 0, Number.NaN), point(12, 2, 4_000), point(40, 0, 9_000)],
+      [
+        [40, 30, 1],
+        [30, 12, 0],
+        [7, 40, 1],
+      ],
+      [{ id: 3, name: 'Sourdough', size: 3, entries: [7, 12, 40] }],
+    );
+    const back = unpackBrain(viaJson(packBrain(d)));
+    expect(back).toEqual(viaJson(d));
+    expect(back.points[1]![7]).toBeNull(); // as JSON has always sent the NaN
+    expect(unpackBrain(viaJson(packBrain(brain([], [], []))))).toEqual(viaJson(brain([], [], [])));
+  });
+
+  it('refuse a link to an entry that is not a point, and a reply packed some other way', () => {
+    expect(() => packBrain(brain([point(1, 1, 0)], [[1, 2, 0]], []))).toThrow(/the link 1 → 2 names an entry that isn't a point/);
+    const unknown = { ...packBrain(brain([], [], [])), packed: 2 } as unknown as ReturnType<typeof packBrain>;
+    expect(() => unpackBrain(unknown)).toThrow(/packed: 2/);
+  });
+});
+
+describe("/api/brain's size on an organised record", () => {
+  // The bench's own corpus at 1,500 entries, organised as the bench organises its 50k (run all --engine none), so it
+  // has both kinds of link and hubs, as the 50k first load does.
+  let fixtureDir: string;
+  let fixture: Store;
+
+  beforeAll(async () => {
+    fixtureDir = mkdtempSync(join(tmpdir(), 'skeinwise-brain-size-'));
+    const env = { SKEINWISE_HOME: join(fixtureDir, 'home'), HOME: join(fixtureDir, 'user') };
+    const io = { out: () => undefined, err: () => undefined, env };
+    const corpus = writeCorpus(join(fixtureDir, 'corpus'), 1_500);
+    expect(await main(['import', ...corpus.paths], io)).toBe(0);
+    expect(await main(['run', 'all', '--engine', 'none'], io)).toBe(0);
+    fixture = openHome(env.SKEINWISE_HOME);
+  });
+
+  afterAll(() => {
+    fixture?.db.close();
+    rmSync(fixtureDir, { recursive: true, force: true });
+  });
+
+  it('packs to at most 41 kB gzip, under three quarters of the plain BrainData', () => {
+    // On the bench's organised 50k record (20,000 points, 38,977 links, 40 hubs) packing took the first load from
+    // 740 kB to 471 kB gzip, under plan section 7's 600 kB. Here it is 39.7 kB. If this grows past the pin, measure
+    // the 50k again (bench/README.md) before raising it.
+    const d = brainData(fixture.db);
+    expect(d.links.some((l) => l[2] === 0) && d.links.some((l) => l[2] === 1) && d.hubs.length > 0).toBe(true);
+    const gzip = (value: unknown) => gzipSync(JSON.stringify(value)).length;
+    const packed = gzip(packBrain(d));
+    expect(packed).toBeLessThanOrEqual(41_000);
+    expect(packed / gzip(d)).toBeLessThan(0.75);
+  });
+
+  it('sorts the links by kind, then by where from and then to sit in the points', () => {
+    const d = brainData(fixture.db);
+    const at = new Map(d.points.map((p, i) => [p[0], i]));
+    const keys = d.links.map(([a, b, kind]) => [kind, at.get(a)!, at.get(b)!]);
+    const sorted = [...keys].sort((x, y) => x[0]! - y[0]! || x[1]! - y[1]! || x[2]! - y[2]!);
+    expect(keys).toEqual(sorted);
   });
 });
