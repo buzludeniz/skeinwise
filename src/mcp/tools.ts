@@ -121,8 +121,30 @@ function visibleEntry(store: Store, entryId: number): Entry {
 
 /** A hub's bullets, without any that quote an entry the record no longer shows. */
 function visibleSections(store: Store, sections: HubSections): Record<keyof HubSections, HubItem[]> {
-  const keep = (items: HubItem[]) => items.filter((i) => store.visibleEntry(i.entryId));
+  const shown = new Set(store.visibleIds([...sections.in_short, ...sections.what_you_found, ...sections.open_ends].map((i) => i.entryId)));
+  const keep = (items: HubItem[]) => items.filter((i) => shown.has(i.entryId));
   return { in_short: keep(sections.in_short), what_you_found: keep(sections.what_you_found), open_ends: keep(sections.open_ends) };
+}
+
+/** read_hub's page of member ids: at 7 bytes an id, the largest page stays well inside a call's 32 KB. */
+const HUB_PAGE = 1000;
+const MAX_HUB_PAGE = 2000;
+
+/**
+ * Each store's record view, kept while the record is unchanged. Building one reads and splits every entry the record
+ * shows, which takes seconds on a big record, so a server process builds it again only when the store's change mark
+ * has moved: any write, by this process or another (an import, a run, an undo, an edit, a hide).
+ */
+const views = new WeakMap<Store, { mark: string; view: RecordView }>();
+
+export function recordView(store: Store): RecordView {
+  // The mark is read before the view, so a write landing while it is built moves the mark and the next call rebuilds.
+  const mark = store.changeMark();
+  const kept = views.get(store);
+  if (kept?.mark === mark) return kept.view;
+  const view = new RecordView(store);
+  views.set(store, { mark, view });
+  return view;
 }
 
 // Tools
@@ -166,7 +188,7 @@ export const MEMORY_TOOLS: Tool<MemoryCtx>[] = [
     run: async (ctx, a) => {
       const question = text(a, 'question', 500, true);
       readNotes(ctx.store, ctx.home);
-      const result = await ask(ctx.store, new RecordView(ctx.store), question, {
+      const result = await ask(ctx.store, recordView(ctx.store), question, {
         engine: 'none',
         budget: loadConfig(ctx.home).budget,
         limit: int(a, 'limit', 10, 1, MAX_ENTRIES),
@@ -285,13 +307,28 @@ export const MEMORY_TOOLS: Tool<MemoryCtx>[] = [
   {
     name: 'read_hub',
     title: 'Read a hub',
-    description: "One concept hub: the organiser's reading of the user's entries (not their words), each point citing a dated entry.",
-    inputSchema: { type: 'object', properties: { hub_id: integer('The hub.') }, required: ['hub_id'] },
+    description:
+      "One concept hub: the organiser's reading of the user's entries (not their words), each point citing a dated entry, and the ids of the entries it holds, a page at a time. entry_count is how many it holds; while next_offset isn't null, call again with offset set to it for the next page. read_entry reads one.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        hub_id: integer('The hub.'),
+        offset: { type: 'integer', minimum: 0, description: 'Entry ids to skip (default 0).' },
+        limit: integer(`How many entry ids (default ${HUB_PAGE}).`, { maximum: MAX_HUB_PAGE }),
+      },
+      required: ['hub_id'],
+    },
     readOnly: true,
     run: (ctx, a) => {
       const hubId = id(a, 'hub_id');
       const hub = getLiveHub(ctx.store.db, hubId);
       if (!hub) throw new UsageError(`There is no hub ${hubId}. list_hubs names them.`);
+      const offset = int(a, 'offset', 0, 0, Number.MAX_SAFE_INTEGER);
+      const limit = int(a, 'limit', HUB_PAGE, 1, MAX_HUB_PAGE);
+      const ids = ctx.store.visibleIds(hubEntryIds(ctx.store.db, hub.id));
+      const page = ids.slice(offset, offset + limit);
+      // The paging fields sit in the hub's own entry: the frame pages `entries` by a top-level offset, and here that list
+      // is the one hub.
       return {
         entries: [
           {
@@ -299,7 +336,10 @@ export const MEMORY_TOOLS: Tool<MemoryCtx>[] = [
             name: hub.name,
             run: hub.runId,
             sections: visibleSections(ctx.store, hub.sections),
-            entry_ids: hubEntryIds(ctx.store.db, hub.id).filter((e) => ctx.store.visibleEntry(e)),
+            entry_count: ids.length,
+            offset,
+            next_offset: offset + page.length < ids.length ? offset + page.length : null,
+            entry_ids: page,
           },
         ],
       };
