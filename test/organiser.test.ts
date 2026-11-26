@@ -9,10 +9,10 @@ import { cleaned } from '../src/organiser/layers.ts';
 import { createModel } from '../src/organiser/model.ts';
 import { text } from '../src/organiser/plan.ts';
 import { type RunOptions, runSteps, runTask, steps } from '../src/organiser/organise.ts';
-import { RecordView } from '../src/organiser/record.ts';
+import { linkTargets, RecordView } from '../src/organiser/record.ts';
 import { withUpdates } from '../src/organiser/review.ts';
 import { getRun, listRuns, undoRun } from '../src/organiser/runs.ts';
-import { entryLayers, findSchema, liveFolders, liveHubs, liveLinks, liveTags, openReviewItems } from '../src/organiser/views.ts';
+import { entryLayers, findSchema, hubEntryIds, liveFolders, liveHubs, liveLinks, liveTags, openReviewItems } from '../src/organiser/views.ts';
 import { openDb } from '../src/store/db.ts';
 import { type EntryInput, Store } from '../src/store/store.ts';
 
@@ -56,6 +56,15 @@ describe('the No-AI organiser on the demo record', () => {
     expect(plotline.sections.what_you_found.map((i) => i.text)).toContain('Decided: Plotline runs on SQLite.');
     expect(plotline.sections.open_ends.every((i) => i.text.endsWith('?'))).toBe(true);
     for (const item of Object.values(plotline.sections).flat()) expect(store.getEntry(item.entryId)!.speaker).toBe('you');
+  });
+
+  it('review flags only the notes later entries overtake: 3 or fewer of the 12', () => {
+    expect(listRuns(store.db).find((r) => r.task === 'review')!.counts).toMatchObject({ notes: 12 });
+    const flagged = openReviewItems(store.db).map((i) => store.getEntry(i.noteEntry)!.title);
+    expect(flagged.length).toBeLessThanOrEqual(3);
+    // Plotline moved from SQLite to Postgres; the stall's "Decided: two loaves only" is what its note already says.
+    expect(flagged).toContain('Plotline');
+    expect(flagged).not.toContain('Market stall');
   });
 
   it('files every entry once and tags every entry with a topic', () => {
@@ -156,21 +165,160 @@ describe('scope new', () => {
     expect(folders.reduce((n, f) => n + f.entryIds.length, 0)).toBe(14);
   });
 
-  it('adds only links that are not there yet', async () => {
-    add('index.md', 'See [[Bread 1]] and [[River 2]] and [[Nowhere]].', 'Index');
+  it('adds only cross links that are not there yet', async () => {
     const first = await run('link', 'all');
-    expect(first.counts).toMatchObject({ note: 2, unresolved: 1 });
     expect(first.engine).toBe('none');
+    expect(first.counts.cross).toBeGreaterThan(0);
+    clock = '2026-02-01T00:00:00.000Z';
+    add('bread9.md', 'Notes on the rye crumb. The rye crumb and the oven matter for the loaf, and the dough too.', 'Bread 9');
+    const second = await run('link', 'new');
+    expect(second.counts.cross).toBeGreaterThan(0);
+    expect(second.counts.cross).toBeLessThan(first.counts.cross!);
+    // A run over everything replaces both, so it makes every link afresh.
+    expect((await run('link', 'all')).counts.cross).toBe(liveLinks(store.db).filter((l) => l.kind === 'cross').length);
+  });
+
+  it('reads the [[links]] you wrote from your notes as they stand, so undo leaves them (LS-14)', async () => {
+    add('index.md', 'See [[Bread 1]] and [[River 2]] and [[Nowhere]].', 'Index');
+    const yours = () =>
+      liveLinks(store.db)
+        .filter((l) => l.kind === 'note')
+        .map((l) => `${store.getEntry(l.from)!.title} > ${store.getEntry(l.to)!.title}`);
+    expect(yours()).toEqual(['Index > Bread 1', 'Index > River 2']);
+    const first = await run('link', 'all');
+    expect(first.counts).toEqual({ cross: expect.any(Number), unresolved: 1 });
+    expect(first.message).toMatch(/The 2 \[\[links\]\] you wrote are read from your notes as they stand/);
     clock = '2026-02-01T00:00:00.000Z';
     add('more.md', 'Also [[Bread 1]].', 'More');
-    expect((await run('link', 'new')).counts).toMatchObject({ note: 1, unresolved: 0 });
-    // A run over everything replaces both, so it makes every link afresh.
-    expect((await run('link', 'all')).counts).toMatchObject({ note: 3, unresolved: 1 });
+    expect((await run('link', 'new')).counts).toMatchObject({ unresolved: 0 });
+    expect(yours()).toEqual(['Index > Bread 1', 'Index > River 2', 'More > Bread 1']);
+
+    // Undoing every link run takes away the cross links it made and none of yours.
+    expect(liveLinks(store.db).some((l) => l.kind === 'cross')).toBe(true);
+    for (const r of listRuns(store.db)) undoRun(store.db, r.id);
+    expect(liveLinks(store.db).some((l) => l.kind === 'cross')).toBe(false);
+    expect(yours()).toEqual(['Index > Bread 1', 'Index > River 2', 'More > Bread 1']);
+    // They follow your text: edit a note and its links change with it.
+    const index = store.allEntries().find((e) => e.title === 'Index')!;
+    store.editEntry(index.id, 'Only [[River 2]] now.', 'you');
+    expect(yours()).toEqual(['Index > River 2', 'More > Bread 1']);
   });
 
   it('review needs hubs first', async () => {
     await expect(runTask(store, new RecordView(store), { ...NONE, task: 'review' })).rejects.toThrow(/Run the hub task first/);
     expect(listRuns(store.db)).toHaveLength(0);
+  });
+});
+
+describe('a quieter review (LS-14)', () => {
+  let store: Store;
+  const NOW = '2026-06-01T00:00:00.000Z';
+  const BREAD: [string, string][] = [
+    ['Rye loaf', 'The rye loaf proofs four hours and bakes at 250 in the oven. Rye flour from the mill, the dough kept wet.'],
+    ['Sourdough starter', 'The sourdough starter lives in the fridge and gets fed daily with rye flour. The dough rises slowly in winter.'],
+    ['Oven schedule', 'The oven schedule: bake the rye and sourdough loaves on Saturdays, the dough shaped the night before.'],
+    ['Market stall', 'The market stall sells rye and white sourdough loaves, twelve loaves by eleven.'],
+    ['Flour order', 'The flour order goes to the mill each month: rye flour and white flour for the loaves and the dough.'],
+  ];
+  const RIVER = ['nitrate samples', 'river samples', 'nitrate rain', 'river outflow', 'outflow nitrate', 'river rain'];
+
+  function say(id: string, body: string, createdAt: string) {
+    store.ingest({
+      source: { kind: 'chatgpt', label: 'ChatGPT', location: '' },
+      threads: [{ externalId: id, title: id, entries: [{ externalId: `${id}-m`, kind: 'message', speaker: 'you', createdAt, body }] }],
+    });
+    return store.allEntries().find((e) => e.externalId === `${id}-m`)!;
+  }
+  const titles = () => openReviewItems(store.db).map((i) => store.getEntry(i.noteEntry)!.title).sort();
+  const review = () => runTask(store, new RecordView(store), { ...NONE, task: 'review' });
+
+  beforeEach(async () => {
+    store = new Store(openDb(':memory:'), () => NOW);
+    store.ingest({
+      source: { kind: 'notes', label: 'notes', location: '/n' },
+      threads: [],
+      entries: [
+        ...BREAD.map(([title, body], i): EntryInput => ({ externalId: `${title}.md`, kind: 'note', speaker: 'you', title, createdAt: `2025-01-0${i + 1}T00:00:00.000Z`, body })),
+        ...RIVER.map((w, i): EntryInput => ({
+          externalId: `river${i}.md`,
+          kind: 'note',
+          speaker: 'you',
+          title: `River ${i}`,
+          createdAt: `2025-02-0${i + 1}T00:00:00.000Z`,
+          body: `Notes on the ${w}. The ${w} at the site after the storm, and the flow too.`,
+        })),
+      ],
+    });
+    // Written five hours after the starter note: the same sitting, not news that overtakes it.
+    say('same-day', 'No longer feeding the sourdough starter daily; it gets fed weekly instead.', '2025-01-02T05:00:00.000Z');
+    await runTask(store, new RecordView(store), { ...NONE, task: 'hub' });
+    say('stall', 'Decided: the market stall sells rye and white sourdough loaves, twelve by eleven.', '2026-03-01T00:00:00.000Z');
+    say('rye', 'Decided: the rye loaf now uses a spelt starter and bakes at 240.', '2026-03-02T00:00:00.000Z');
+    say('oven', 'Changing my mind on the oven schedule: we bake on Fridays instead.', '2026-03-03T00:00:00.000Z');
+    say('flour', 'The flour order no longer goes to the mill; we switch to the co-op.', '2026-03-04T00:00:00.000Z');
+  });
+
+  it('flags a change of course, and a decision only when it says something new about the note', async () => {
+    const run = await review();
+    expect(titles()).toEqual(['Flour order', 'Oven schedule', 'Rye loaf']);
+    expect(run.counts).toMatchObject({ flagged: 3 });
+  });
+
+  it('keeps at most 3 notes per hub in the queue, and says how many more wait', async () => {
+    say('starter', 'Sourdough starter: no longer kept in the fridge, it lives on the counter instead.', '2026-03-05T00:00:00.000Z');
+    const run = await review();
+    const hubOf = new Map(liveHubs(store.db).flatMap((h) => hubEntryIds(store.db, h.id).map((id) => [id, h.id] as const)));
+    const perHub = new Map<number, number>();
+    for (const i of openReviewItems(store.db)) perHub.set(hubOf.get(i.noteEntry)!, (perHub.get(hubOf.get(i.noteEntry)!) ?? 0) + 1);
+    expect(Math.max(...perHub.values())).toBeLessThanOrEqual(3);
+    expect(run.counts).toMatchObject({ flagged: 3, capped: 1 });
+    expect(run.message).toMatch(/1 more note may be out of date/);
+    // The changes of course come first; the decision about the rye loaf waits.
+    expect(titles()).toEqual(['Flour order', 'Oven schedule', 'Sourdough starter']);
+  });
+});
+
+// LS-19's folder links and the escaped pipe wait for 1.1 (cut by Deniz on Nov 25). bd66d5d has them and their tests.
+describe('[[links]] by file name or title', () => {
+  let store: Store;
+  let record: RecordView;
+  const note = (externalId: string, title: string, i: number, body = `About ${title}.`): EntryInput => ({
+    externalId,
+    kind: 'note',
+    speaker: 'you',
+    title,
+    createdAt: `2025-01-0${i}T00:00:00.000Z`,
+    body,
+  });
+
+  beforeEach(() => {
+    store = new Store(openDb(':memory:'), () => '2026-01-01T00:00:00.000Z');
+    store.ingest({
+      source: { kind: 'notes', label: 'vault', location: '/v' },
+      threads: [],
+      entries: [
+        note('Projects/Plotline/Plan.md', 'Plan', 1),
+        note('Garden/Plan.md', 'Plan', 2),
+        note('Inbox/Meeting notes.markdown', 'Standup 3 March', 3),
+        note('Index.md', 'Index', 4, 'See [[plan|the plan]], [[Meeting notes#Week 2]], [[Standup 3 March]] and [[Garden/Plan]].'),
+      ],
+    });
+    record = new RecordView(store);
+  });
+  const at = (target: string) => record.resolveLink(target)?.externalId;
+
+  it('finds a note by file name or title in any case, the first in the record when names are shared', () => {
+    expect(at('Plan')).toBe('Projects/Plotline/Plan.md');
+    expect(at(' meeting NOTES ')).toBe('Inbox/Meeting notes.markdown');
+    expect(at('Standup 3 March')).toBe('Inbox/Meeting notes.markdown');
+    expect(at('Garden/Plan')).toBeUndefined();
+  });
+
+  it('reads past an alias and a heading, and links the notes named', () => {
+    const index = record.entries.find((e) => e.title === 'Index')!;
+    expect(linkTargets(index.body).map(at)).toEqual(['Projects/Plotline/Plan.md', 'Inbox/Meeting notes.markdown', 'Inbox/Meeting notes.markdown', undefined]);
+    const to = liveLinks(store.db, index.id).map((l) => store.getEntry(l.to)!.externalId);
+    expect(to).toEqual(['Projects/Plotline/Plan.md', 'Inbox/Meeting notes.markdown']);
   });
 });
 
@@ -273,6 +421,35 @@ describe('a planted export does not steer hubs or review (H1)', () => {
       expect(item.reasons.map((r) => r.entryId)).not.toContain(planted.id);
       expect(item.proposed).not.toMatch(ATTACKER);
     }
+  });
+
+  it('keeps an import that waits for your yes out of hubs and review, and its planted date out once accepted', async () => {
+    // What live does with a chat export it finds in Downloads (trusted: false): it waits in `live pending`.
+    const r = store.ingest(
+      {
+        source: { kind: 'chatgpt', label: 'ChatGPT', location: '' },
+        threads: [
+          {
+            externalId: 'evil-1',
+            title: 'Quarterly pension review',
+            entries: [{ externalId: 'evil-1-m0', kind: 'message', speaker: 'you', createdAt: '2030-01-01T09:00:00.000Z', body: INJECTED }],
+          },
+        ],
+      },
+      { trusted: false },
+    );
+    expect(r.pendingId).not.toBeNull();
+    await organise('hub', 'all');
+    await organise('review', 'all');
+    expect(prompts.filter((p) => /note to the organiser/i.test(p.user))).toEqual([]);
+
+    store.acceptPending(r.pendingId!);
+    const planted = store.allEntries().find((e) => e.externalId === 'evil-1-m0')!;
+    expect(planted.timeFlag).toBe('future');
+    await organise('hub', 'all');
+    await organise('review', 'all');
+    expect(prompts.filter((p) => /note to the organiser/i.test(p.user))).toEqual([]);
+    for (const item of openReviewItems(store.db)) expect(item.reasons.map((x) => x.entryId)).not.toContain(planted.id);
   });
 
   it('never credits a genuine entry with words its cited sentences do not hold', async () => {

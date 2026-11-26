@@ -1,6 +1,8 @@
 // Each migration runs once, in order. PRAGMA user_version records how many have run.
 // Never edit a migration that has shipped in a release: add a new one.
 
+import { PA_MIGRATION } from '../pa/schema.ts';
+
 export const MIGRATIONS: readonly string[] = [
   // 1. The record: sources, threads, entries and their versions. Originals are append-only.
   `
@@ -373,6 +375,10 @@ export const MIGRATIONS: readonly string[] = [
   CREATE UNIQUE INDEX pending_origin ON pending (origin_sha256, source_kind) WHERE origin_sha256 IS NOT NULL;
   CREATE INDEX pending_status ON pending (status);
   `,
+
+  // 6. The assistant: tasks and reminders, what you said about open loops, a model's reading of them, and the briefs
+  // (src/pa/schema.ts). It reads versions.id as its marks, which 5's rebuild of versions keeps.
+  PA_MIGRATION,
 
   // 7. An agent's note saved through the memory server is a run of its own (task 'note', engine 'agent'), and the
   // versions it saves carry its run_id, so undoing the run takes the note back. runs is rebuilt for the new task as in

@@ -3,6 +3,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { posix } from 'node:path';
+import { withoutNoteExt } from '../importers/note-ext.ts';
 import type { Entry, SearchHit, Store, Version } from '../store/store.ts';
 import { parseQuestion } from '../organiser/ask.ts';
 import { findSchema, hubEntryIds, liveHubs, liveLinks, liveTags } from '../organiser/views.ts';
@@ -103,7 +104,7 @@ export function noteLinks(db: DatabaseSync): [number, number][] {
     .all() as unknown as { id: number; title: string | null; externalId: string; body: string }[];
   const byName = new Map<string, number>();
   for (const n of notes) {
-    const file = posix.basename(n.externalId.replaceAll('\\', '/')).replace(/\.(md|markdown|txt)$/i, '');
+    const file = withoutNoteExt(posix.basename(n.externalId.replaceAll('\\', '/')));
     for (const key of [n.title, file]) if (key && !byName.has(key.toLowerCase())) byName.set(key.toLowerCase(), n.id);
   }
   const links: [number, number][] = [];

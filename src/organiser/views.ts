@@ -3,6 +3,8 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 
+import { linkTargets, type NoteName, NoteNames } from './record.ts';
+
 const LIVE = '(SELECT id FROM live_runs)';
 
 export interface HubItem {
@@ -174,15 +176,55 @@ export interface Link {
   score: number;
 }
 
+/** Cross links from live runs, then the [[links]] you wrote (`writtenLinks`); with an entry, the ones at it. */
 export function liveLinks(db: DatabaseSync, entryId?: number): Link[] {
   const where = entryId === undefined ? '' : 'AND (from_entry = ? OR to_entry = ?)';
   const args = entryId === undefined ? [] : [entryId, entryId];
-  return db
+  // Runs before LS-14 saved note links too; the ones read from your text replace them.
+  const cross = db
     .prepare(
       `SELECT from_entry AS "from", to_entry AS "to", kind, score FROM links
-       WHERE run_id IN ${LIVE} ${where} ORDER BY kind, score DESC, id`,
+       WHERE kind = 'cross' AND run_id IN ${LIVE} ${where} ORDER BY score DESC, id`,
     )
     .all(...args) as unknown as Link[];
+  const written = writtenLinks(db);
+  return [...cross, ...(entryId === undefined ? written : written.filter((l) => l.from === entryId || l.to === entryId))];
+}
+
+/**
+ * Store.allEntries' rule (store.ts VISIBLE): an included source, and not in a thread marked not mine. The joins and the
+ * condition, for queries that read fewer columns than the store's own.
+ */
+export const VISIBLE_ENTRIES = `JOIN sources s ON s.id = e.source_id LEFT JOIN threads t ON t.id = e.thread_id
+  WHERE s.status = 'in' AND COALESCE(t.not_mine, 0) = 0`;
+
+/**
+ * The [[links]] you wrote, read from your entries as they stand now. They are yours, not something a run made, so
+ * undoing a run never takes them away, and editing a note changes them (LS-14).
+ */
+export function writtenLinks(db: DatabaseSync): Link[] {
+  const notes = db
+    .prepare(`SELECT e.id, e.kind, e.title, e.external_id AS externalId FROM entries e ${VISIBLE_ENTRIES} AND e.kind = 'note' ORDER BY e.created_at, e.id`)
+    .all() as unknown as NoteName[];
+  if (!notes.length) return [];
+  const names = new NoteNames(notes);
+  const linking = db
+    .prepare(
+      `SELECT e.id, v.body FROM entries e JOIN versions v ON v.entry_id = e.id AND v.version = e.version ${VISIBLE_ENTRIES}
+         AND instr(v.body, '[[') > 0 ORDER BY e.created_at, e.id`,
+    )
+    .all() as unknown as { id: number; body: string }[];
+  const links: Link[] = [];
+  for (const { id, body } of linking) {
+    const seen = new Set<number>();
+    for (const target of linkTargets(body)) {
+      const to = names.resolve(target)?.id;
+      if (to === undefined || to === id || seen.has(to)) continue;
+      seen.add(to);
+      links.push({ from: id, to, kind: 'note', score: 1 });
+    }
+  }
+  return links;
 }
 
 export type LayerName = 'cleaned' | 'expanded' | 'digest' | 'ideas';

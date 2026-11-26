@@ -19,6 +19,7 @@ import { CliOnly, ConfigError, readConfig, TABLE_PROPS, writeConfig } from './co
 import { findAgents, findSources, preview } from './found.ts';
 import type { AppLive } from './live.ts';
 import { appendDaily, createNote, NoteError, noteTitles, ownFile, saveEntry } from './notes.ts';
+import { paRoutes } from './pa.ts';
 import {
   askQuestion,
   entryLines,
@@ -266,6 +267,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       if (q.length > 2000) throw new HttpError(413, 'The question is too long');
       return askQuestion(store, home, q, req.url.searchParams.get('engine') ?? undefined, deps());
     }],
+    ...paRoutes({ store, home, deps }),
     ['GET', /^\/api\/claim$/, (req) => {
       const q = req.url.searchParams.get('q')?.trim() ?? '';
       if (!q) throw new HttpError(400, 'Give a sentence to check');
@@ -409,7 +411,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       if (!(REVIEW_ACTIONS as readonly unknown[]).includes(action)) throw new HttpError(400, `action is ${REVIEW_ACTIONS.join(', ')}`);
       return resolveReview(store, home, id(req.params[0]), action as ReviewAction, yes === true);
     }],
-    ['POST', /^\/api\/runs\/(\d+)\/undo$/, (req) => undoRun(store.db, id(req.params[0]))],
+    ['POST', /^\/api\/runs\/(\d+)\/undo$/, (req) => undoRun(store.db, id(req.params[0]), home)],
 
     // The agents' requests that wait for the person's yes (src/mcp/requests.ts): the same list, confirm and refuse as
     // `skeinwise mcp pending`, `confirm` and `refuse`, on the same file, so either side sees what the other did.

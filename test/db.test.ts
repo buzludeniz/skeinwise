@@ -214,7 +214,7 @@ describe('openDb', () => {
     ]);
   });
 
-  // Migration 7 (MCP-5): note runs. It is the last migration on this branch (v1/pa's 6 goes before it).
+  // Migration 7 (MCP-5): note runs, on a record with the assistant's tables (6) pointing at runs too.
   it('upgrades a record to note runs, keeping every run, its versions and what points at it', () => {
     const db = new DatabaseSync(':memory:');
     db.exec('PRAGMA foreign_keys = ON');
@@ -226,6 +226,7 @@ describe('openDb', () => {
         (7, 'tag', 'none', NULL, 'all', 1, 'done', '{"tags":1}', 'x'),
         (8, 'tag', 'agent', 'claude-code', 'agent', 1, 'done', '{}', 'x');
       INSERT INTO tags (schema_id, name, run_id) VALUES (1, 'bread', 7);
+      INSERT INTO pa_tasks (title, run_id, created_at, updated_at) VALUES ('bake', 7, 'x', 'x');
       INSERT INTO sources (id, kind, label, location, added_at) VALUES (1, 'notes', 'Notes', '/n', 'x');
       INSERT INTO entries (id, source_id, external_id, kind, speaker, created_at) VALUES (1, 1, 'a.md', 'note', 'you', 'x');
       INSERT INTO versions (entry_id, version, body, content_hash, editor, edited_at, observed_at, run_id)
@@ -241,6 +242,7 @@ describe('openDb', () => {
       { id: 8, task: 'tag', engine: 'agent', model: 'claude-code', counts: '{}' },
     ]);
     expect(db.prepare('SELECT run_id FROM versions').all()).toEqual([{ run_id: 8 }]);
+    expect(db.prepare('SELECT run_id FROM pa_tasks').all()).toEqual([{ run_id: 7 }]);
     const note = Number(db.prepare("INSERT INTO runs (task, engine, model, scope, status, started_at) VALUES ('note', 'agent', 'claude-code', 'agent', 'done', 'x')").run().lastInsertRowid);
     expect(db.prepare('SELECT id FROM live_runs ORDER BY id').all()).toEqual([{ id: 7 }, { id: 8 }]);
     expect(note).toBe(9);
@@ -404,6 +406,7 @@ describe('two processes opening one old record', () => {
       { entry_id: 1, version: 1, body: 'later' },
       { entry_id: 2, version: 1, body: 'planted' },
     ]);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'pa\\_%' ESCAPE '\\' ORDER BY name").all().map((r) => r.name)).toEqual(['pa_briefs', 'pa_found', 'pa_loops', 'pa_tasks']);
     db.close();
   }
 
