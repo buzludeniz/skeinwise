@@ -102,6 +102,28 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm coverage
 
+  axe:
+    # Plan 7.1's accessibility gate: e2e/axe.e2e.ts scans every screen of the app, in every theme, wide and compact,
+    # and fails on a serious or critical WCAG 2.1 A/AA violation. Its server's record has no model to reach.
+    name: axe
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
+        with:
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm build
+      - run: pnpm exec playwright test -c e2e/playwright.config.ts axe
+
   secrets:
     name: secret scan
     runs-on: ubuntu-latest
