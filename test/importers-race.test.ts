@@ -257,10 +257,29 @@ for (const windows of [false, true]) {
           writeFileSync(join(vault, 'sub', 'note.md'), 'mine');
           writeFileSync(join(vault, 'other', 'note.md'), 'other');
           swap.highIds = highIds;
-          // openSafe resolves the opened file's real path; right after that, sub becomes a link to other.
-          swapAfter('realpathSync', join(vault, 'sub'), join(vault, 'other'), 1, 'note.md');
-          const { error } = outcome(() => readSafe(join(vault, 'sub', 'note.md'), { root: vault }));
+          // openSafe resolves the opened file's real path; right after that, sub becomes a link to other. Windows won't
+          // move a folder while a file in it is open (EPERM or EBUSY), so there the swap itself is refused and the race
+          // can't happen: the read must then return the file that was asked for.
+          let refused = false;
+          armAfter('realpathSync', 'note.md', 1, () => {
+            const sub = join(vault, 'sub');
+            try {
+              renameSync(sub, `${sub}.moved`);
+            } catch (err) {
+              const code = (err as NodeJS.ErrnoException).code;
+              if (process.platform !== 'win32' || (code !== 'EPERM' && code !== 'EBUSY')) throw err;
+              refused = true;
+              return;
+            }
+            symlinkSync(join(vault, 'other'), sub);
+          });
+          const { error, result } = outcome(() => readSafe(join(vault, 'sub', 'note.md'), { root: vault }));
           expect(swap.run).toBeNull();
+          if (refused) {
+            expect(error).toBeUndefined();
+            expect((result as { bytes: Buffer }).bytes.toString()).toBe('mine');
+            return;
+          }
           expect(error).toBeInstanceOf(UnsafeFileError);
           expect((error as InstanceType<typeof UnsafeFileError>).reason).toBe('outside');
           expect((error as Error).message).toMatch(/note\.md: skipped, it changed while it was being read/);

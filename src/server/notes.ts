@@ -5,8 +5,8 @@
 // that touch it run one at a time per home, so an edit is never overwritten by a read of the file from before it.
 
 import { mkdirSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
-import { readImportsInWorker } from '../importers/detect.ts';
+import { join, resolve } from 'node:path';
+import { pathInside, readImportsInWorker } from '../importers/detect.ts';
 import type { Store, Version } from '../store/store.ts';
 import { folderInside, readPlain, UnsafeFile, writeNew, writeOver } from './files.ts';
 
@@ -63,7 +63,7 @@ function oneAtATime<T>(home: string, work: () => T | Promise<T>): Promise<T> {
 async function importNote(home: string, store: Store, file: string): Promise<number> {
   const dir = notesDir(home);
   for (const batch of await readImportsInWorker(dir)) store.ingest(batch, 'you');
-  const externalId = relative(dir, file);
+  const externalId = pathInside(dir, file);
   const row = store.db
     .prepare(`SELECT e.id FROM entries e JOIN sources s ON s.id = e.source_id WHERE s.kind = 'notes' AND s.location = ? AND e.external_id = ?`)
     .get(dir, externalId) as { id: number } | undefined;

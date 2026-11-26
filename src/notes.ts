@@ -24,7 +24,7 @@ import {
 } from 'node:fs';
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { UsageError } from './errors.ts';
-import { readImports } from './importers/detect.ts';
+import { pathInside, readImports } from './importers/detect.ts';
 import { parseFrontMatter } from './importers/notes.ts';
 import { currentMark, finishRun, startRun } from './organiser/runs.ts';
 import { inTransaction } from './store/db.ts';
@@ -193,7 +193,7 @@ export function writeAgentNote(store: Store, home: string, agent: string, title:
     return { path, created: true, ...saveOrPutBack(store, dir, path, agent, { speaker: true, created: true, now }, null) };
   }
   const owner = parseFrontMatter(readNoteFile(notePath(dir, path))).meta.agent;
-  const file = relative(dir, path);
+  const file = pathInside(dir, path);
   if (typeof owner !== 'string' || !owner) {
     throw new UsageError(`${file} is your note, and agents can't change your notes. Pick another title, or add a line to today's note.`);
   }
@@ -240,7 +240,8 @@ function saveAsAgent(
   agent: string,
   { speaker, created, now, sha256 }: { speaker: boolean; created: boolean; now: Date; sha256: string },
 ): { entryId: number; runId: number } {
-  const file = relative(dir, path);
+  // The entries' "/" id, which on Windows differs from relative()'s.
+  const file = pathInside(dir, path);
   const batches = readImports(dir).filter((b) => b.source.kind === 'notes');
   const db = store.db;
   const at = now.toISOString();
@@ -290,7 +291,7 @@ function saveOrPutBack(
   try {
     return saveAsAgent(store, dir, path, agent, { ...save, sha256 });
   } catch (error) {
-    const file = relative(dir, path);
+    const file = pathInside(dir, path);
     try {
       if (present(path) && fileSha256(path) === sha256) {
         if (before === null) unlinkSync(notePath(dir, path));
@@ -348,7 +349,7 @@ function entryOf(store: Store, dir: string, path: string): number {
       `SELECT e.id FROM entries e JOIN sources s ON s.id = e.source_id
        WHERE s.kind = 'notes' AND s.location = ? AND e.external_id = ?`,
     )
-    .get(dir, relative(dir, path)) as { id: number } | undefined;
+    .get(dir, pathInside(dir, path)) as { id: number } | undefined;
   if (!row) throw new Error(`${path} was written but did not reach the record.`);
   return row.id;
 }
