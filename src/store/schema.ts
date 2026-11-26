@@ -258,8 +258,125 @@ export const MIGRATIONS: readonly string[] = [
     ));
   `,
 
+  // 4. Live capture's state, one row per file it watches, so one bad file never moves another's cursor. Only
+  // src/live reads and writes it; extra is JSON that live alone interprets (fingerprints, a session's cursor).
+  `
+  CREATE TABLE live_files (
+    path TEXT PRIMARY KEY,
+    target TEXT NOT NULL,
+    size INTEGER,
+    mtime_ms REAL,
+    sha256 TEXT,
+    byte_offset INTEGER NOT NULL DEFAULT 0,
+    last_ok_at TEXT,
+    saved_at TEXT,
+    last_error TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_try_at TEXT,
+    extra TEXT
+  );
+  CREATE INDEX live_files_target ON live_files (target);
+  `,
+
+  // 5. Provenance, and imports that propose instead of overwrite.
+  // - Every version says when Skeinwise saw it (observed_at), what time the file claimed (claimed_at), which file it
+  //   came from (origin path and SHA-256), which account the export claimed, and the run that made it. versions is
+  //   rebuilt (same ids) so observed_at can be NOT NULL; old rows get the best time known.
+  // - A thread's title is versioned in thread_titles instead of being overwritten; threads.title is the current one.
+  // - entries.claimed_at keeps the time the file claimed; time_flag marks one that is missing, more than a day after it
+  //   was seen, or before 1990, and created_at (what everything sorts by) becomes observed_at for those.
+  //   project and git_branch come from agent sessions.
+  // - sources.account is the account fingerprint the source's first import claimed.
+  // - pending holds a batch that would change the record but isn't trusted (a capture, or another account's export)
+  //   until the person accepts or rejects it. One row per origin file and source kind, in any state, so a rejected
+  //   file never comes back; the batch itself is dropped once decided.
+  `
+  CREATE TABLE versions_new (
+    id INTEGER PRIMARY KEY,
+    entry_id INTEGER NOT NULL REFERENCES entries(id),
+    version INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    editor TEXT NOT NULL,
+    edited_at TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    claimed_at TEXT,
+    title TEXT,
+    properties TEXT,
+    origin_path TEXT,
+    origin_sha256 TEXT,
+    account TEXT,
+    run_id INTEGER REFERENCES runs(id),
+    UNIQUE (entry_id, version)
+  );
+  INSERT INTO versions_new (id, entry_id, version, body, content_hash, editor, edited_at, observed_at, claimed_at)
+    SELECT v.id, v.entry_id, v.version, v.body, v.content_hash, v.editor, v.edited_at,
+           CASE WHEN v.version = 1
+             THEN COALESCE((SELECT s.added_at FROM entries e JOIN sources s ON s.id = e.source_id WHERE e.id = v.entry_id), v.edited_at)
+             ELSE v.edited_at END,
+           CASE WHEN v.version = 1 THEN v.edited_at END
+    FROM versions v;
+  DROP TABLE versions;
+  ALTER TABLE versions_new RENAME TO versions;
+  CREATE INDEX versions_hash ON versions (content_hash);
+  CREATE INDEX versions_run ON versions (run_id) WHERE run_id IS NOT NULL;
+
+  CREATE TABLE thread_titles (
+    id INTEGER PRIMARY KEY,
+    thread_id INTEGER NOT NULL REFERENCES threads(id),
+    version INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    editor TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    origin_path TEXT,
+    origin_sha256 TEXT,
+    account TEXT,
+    run_id INTEGER REFERENCES runs(id),
+    UNIQUE (thread_id, version)
+  );
+  INSERT INTO thread_titles (thread_id, version, title, editor, observed_at)
+    SELECT t.id, 1, t.title, 'import', s.added_at FROM threads t JOIN sources s ON s.id = t.source_id;
+
+  ALTER TABLE entries ADD COLUMN observed_at TEXT;
+  ALTER TABLE entries ADD COLUMN claimed_at TEXT;
+  ALTER TABLE entries ADD COLUMN time_flag TEXT CHECK (time_flag IN ('missing', 'future', 'early'));
+  ALTER TABLE entries ADD COLUMN project TEXT;
+  ALTER TABLE entries ADD COLUMN git_branch TEXT;
+  UPDATE entries SET observed_at = (SELECT s.added_at FROM sources s WHERE s.id = entries.source_id), claimed_at = created_at;
+  -- Version 0.3 wrote the epoch for a missing time.
+  UPDATE entries SET time_flag = 'missing', claimed_at = NULL WHERE created_at LIKE '1970-01-01T00:00:00%';
+  UPDATE versions SET claimed_at = NULL WHERE version = 1 AND claimed_at LIKE '1970-01-01T00:00:00%';
+  UPDATE entries SET time_flag = 'early' WHERE time_flag IS NULL AND created_at < '1990-01-01';
+  -- An old entry was seen some time before this upgrade, not necessarily when its source was added (live adds to one
+  -- source for months), so only a time more than a day past the upgrade is in the future.
+  UPDATE entries SET time_flag = 'future' WHERE time_flag IS NULL AND julianday(created_at) > julianday('now') + 1;
+  UPDATE entries SET created_at = observed_at WHERE time_flag IS NOT NULL AND observed_at IS NOT NULL;
+  CREATE INDEX entries_project ON entries (project) WHERE project IS NOT NULL;
+
+  ALTER TABLE sources ADD COLUMN account TEXT;
+
+  CREATE TABLE pending (
+    id INTEGER PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
+    reason TEXT NOT NULL CHECK (reason IN ('unconfirmed', 'account')),
+    source_kind TEXT NOT NULL,
+    source_label TEXT NOT NULL,
+    origin_path TEXT,
+    origin_sha256 TEXT,
+    account TEXT,
+    threads INTEGER NOT NULL DEFAULT 0,
+    entries INTEGER NOT NULL DEFAULT 0,
+    bytes INTEGER NOT NULL DEFAULT 0,
+    batch TEXT,
+    observed_at TEXT NOT NULL,
+    decided_at TEXT,
+    CHECK ((status = 'pending') = (batch IS NOT NULL))
+  );
+  CREATE UNIQUE INDEX pending_origin ON pending (origin_sha256, source_kind) WHERE origin_sha256 IS NOT NULL;
+  CREATE INDEX pending_status ON pending (status);
+  `,
+
   // 6. The assistant: tasks and reminders, what you said about open loops, a model's reading of them, and the briefs
-  // (src/pa/schema.ts). It follows t-intake's 4 and 5 once v1/intake is merged; until then it runs fourth here, so
-  // open no real record with this branch.
+  // (src/pa/schema.ts). It reads versions.id as its marks, which 5's rebuild of versions keeps.
   PA_MIGRATION,
 ];

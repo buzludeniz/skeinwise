@@ -1,9 +1,11 @@
-// A small MCP server over stdio: JSON-RPC 2.0, one message per line. It speaks both eras of the protocol. Older clients
-// open with `initialize`, whose clientInfo names the agent for the whole session. Clients on 2026-07-28 or later send
-// no handshake and carry the version and their name in each request's _meta. Only tools are offered.
+// A small MCP server over stdio: JSON-RPC 2.0, one message per line, and no network socket (MCP-1). It speaks both
+// eras of the protocol. Older clients open with `initialize`, whose clientInfo gives the client's name for the whole
+// session. Clients on 2026-07-28 or later send no handshake and carry the version and their name in each request's
+// _meta. The name is only a label: who may call what is the context's decision. Only tools are offered.
 
 import type { Readable } from 'node:stream';
 import { UsageError } from '../errors.ts';
+import { safeJson } from '../safe-text.ts';
 import { AccessError } from './access.ts';
 
 /** Versions that carry everything in each request's _meta. */
@@ -32,8 +34,13 @@ export interface ServerOptions<C> {
   version: string;
   instructions: string;
   tools: Tool<C>[];
-  /** Builds a tool's context for the agent calling it; it may refuse (AccessError) before the tool runs. */
-  context: (agent: string | null) => C | Promise<C>;
+  /** The tools tools/list shows; every tool by default. A tool left out can still be called, and may refuse. */
+  listed?: (label: string | null) => Tool<C>[];
+  /**
+   * Builds a tool's context for the caller; it may refuse (AccessError) before the tool runs. `label` is the name the
+   * client gives itself (clientInfo.name), which any program can claim: a label, never proof of who is asking.
+   */
+  context: (label: string | null) => C | Promise<C>;
   /** Where unexpected errors are logged; stdout belongs to the protocol. */
   log: (text: string) => void;
 }
@@ -115,7 +122,7 @@ export class McpServer<C> {
     const client = meta[META_CLIENT];
     const agent = modern ? (isObject(client) && typeof client.name === 'string' ? client.name : null) : this.agent;
     if (method === 'tools/list') {
-      const tools = this.options.tools.map((t) => ({
+      const tools = (this.options.listed?.(agent) ?? this.options.tools).map((t) => ({
         name: t.name,
         title: t.title,
         description: t.description,
@@ -194,7 +201,8 @@ export function serveStdio<C>(server: McpServer<C>, input: Readable, write: (tex
       if (!line.trim()) return;
       queue = queue.then(async () => {
         const reply = await server.handleLine(line);
-        if (reply) write(`${JSON.stringify(reply)}\n`);
+        // safeJson escapes the control and bidi characters JSON allows raw, so a frame shows exactly what it holds.
+        if (reply) write(`${safeJson(reply)}\n`);
       });
     };
     input.setEncoding('utf8');

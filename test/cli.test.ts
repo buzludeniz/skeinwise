@@ -43,6 +43,20 @@ describe('the skeinwise command', () => {
     expect(JSON.parse((await cli('version', '--json')).out)).toEqual({ version: expect.stringMatching(/^\d+\.\d+\.\d+$/) });
   });
 
+  it('keeps sync hidden in v1.0: no command, no flags, no help; export stays', async () => {
+    const help = (await cli('help')).out;
+    expect(help).toContain('export [<file>]');
+    expect(help).not.toMatch(/sync (init|push|join|restore|status)|passphrase-file|phrase-file/);
+    for (const argv of [['sync', 'status'], ['sync', 'init', join(dir, 'folder')]]) {
+      const r = await cli(...argv);
+      expect(r.code, argv.join(' ')).not.toBe(0);
+      expect(r.err).toContain('Unknown command: sync');
+    }
+    const flag = await cli('export', join(dir, 'x.zip'), '--passphrase-file', join(dir, 'p'));
+    expect(flag.code).not.toBe(0);
+    expect(flag.err).toMatch(/passphrase-file/);
+  });
+
   it('creates an owner-only record folder', async () => {
     expect(JSON.parse((await cli('init', '--json')).out)).toEqual({ home: join(dir, 'home') });
     expect(statSync(join(dir, 'home')).mode & 0o777).toBe(0o700);
@@ -70,7 +84,11 @@ describe('the skeinwise command', () => {
     expect(show.out).toMatch(/rye loaf/);
     expect((await cli('history', String(hits[0]!.id))).out).toMatch(/^v1 .* by import/);
 
-    expect((await cli('stats')).out).toContain('Woven from 2 entries');
+    const stats = (await cli('stats')).out;
+    expect(stats).toContain('Woven from 2 entries');
+    // Plan 7.3: the busiest months are plain text, with no bar glyphs.
+    expect(stats).toMatch(/Busiest months:\n {2}\d{4}-\d{2} {2}2 entries\n/);
+    expect(stats).not.toMatch(/[\u2580-\u259F\u2500-\u257F]/);
     expect((await cli('sources')).out).toMatch(/1 {2}in {4}vault \(notes\): 2 entries/);
     expect(JSON.parse((await cli('exclude', '1', '--json')).out)).toEqual({ source: 1, status: 'out' });
     expect((await cli('search', 'rye')).out).toContain('Nothing found');
@@ -87,6 +105,89 @@ describe('the skeinwise command', () => {
     expect((await cli('search', 'reservoir', '--speaker', 'you')).out).toContain('Nothing found');
   });
 
+  it('restores an old version of an entry as a new one', async () => {
+    const notes = join(dir, 'vault');
+    mkdirSync(notes);
+    writeFileSync(join(notes, 'plan.md'), 'Paint the shed green.');
+    await cli('import', notes);
+    writeFileSync(join(notes, 'plan.md'), 'Paint the shed blue.');
+    expect((await cli('import', notes)).out).toContain('0 new, 1 changed');
+    expect((await cli('help')).out).toMatch(/history <entry> .*\n {2}restore <entry> <version> /);
+
+    const restored = await cli('restore', '1', '1');
+    expect(restored).toMatchObject({ code: 0, out: 'Entry 1 reads as version 1 again, saved as version 3. Every version is kept.\n' });
+    expect((await cli('show', '1')).out).toContain('Paint the shed green.');
+    expect((await cli('history', '1')).out.trim().split('\n')).toHaveLength(3);
+    expect(JSON.parse((await cli('restore', '1', '1', '--json')).out)).toEqual({ entry: 1, restored: 1, version: 3, changed: false });
+    expect(await cli('restore', '1', '9')).toMatchObject({ code: 2, err: expect.stringContaining('has no version 9') });
+    expect(await cli('restore', '1')).toMatchObject({ code: 2, err: expect.stringContaining('Give an entry and a version') });
+  });
+
+  it('says when an export from another account waits in pending instead of "0 new"', async () => {
+    const claude = (account: string, text: string) =>
+      JSON.stringify([
+        {
+          uuid: 'conv-1',
+          name: 'Choosing a database',
+          created_at: '2026-03-01T10:00:00Z',
+          account: { uuid: account },
+          chat_messages: [{ uuid: 'msg-1', sender: 'human', text, created_at: '2026-03-01T10:00:00Z' }],
+        },
+      ]);
+    const mine = join(dir, 'mine.json');
+    const theirs = join(dir, 'theirs.json');
+    writeFileSync(mine, claude('acct-invented-a', 'We decided on Postgres.'));
+    writeFileSync(theirs, claude('acct-invented-b', 'We decided on MongoDB.'));
+    expect((await cli('import', mine)).out).toContain('1 new');
+
+    const held = await cli('import', theirs);
+    expect(held.code).toBe(0);
+    expect(held.out).toBe("Claude: 1 change from another account than this source's wait for your yes as #1; nothing was imported: skeinwise live pending\n");
+    expect(JSON.parse((await cli('import', theirs, '--json')).out)).toEqual([
+      expect.objectContaining({ kind: 'claude', added: 0, versioned: 0, proposed: 1, pendingId: null }),
+    ]);
+    expect((await cli('import', theirs)).out).toBe('Claude: nothing imported; this export from another account was proposed before as #1 (pending)\n');
+    expect((await cli('show', '1')).out).toContain('We decided on Postgres.');
+
+    // live pending, accept and reject are routed to the pending commands, with --all.
+    expect((await cli('help')).out).toMatch(/--once .*\n {2}live pending .*\n.*\n {2}live accept <n> .*\n {2}live reject <n> /);
+    const waiting = await cli('live', 'pending');
+    expect(waiting.code).toBe(0);
+    expect(waiting.out).toContain('1 import waits for your yes:');
+    expect(waiting.out).toContain("#1  Claude · 1 chat, 1 entry to add or change");
+    expect(waiting.out).toContain(`from ${theirs}, `);
+    expect(await cli('live', 'reject', '1')).toMatchObject({ code: 0, out: expect.stringContaining('Left #1 out for good.') });
+    expect((await cli('live', 'pending')).out).toBe('Nothing waits for your yes.\n');
+    expect((await cli('live', 'pending', '--all')).out).toContain('1 import proposed, 0 waiting:');
+    expect(await cli('live', 'accept', '1')).toMatchObject({ code: 2, err: expect.stringContaining('#1 was already rejected') });
+    expect((await cli('show', '1')).out).toContain('We decided on Postgres.');
+    expect((await cli('import', theirs)).out).toBe('Claude: nothing imported; this export from another account was proposed before as #1 (rejected)\n');
+  });
+
+  it('takes a waiting import into the record with live accept', async () => {
+    const claude = (account: string, text: string) =>
+      JSON.stringify([
+        {
+          uuid: 'conv-1',
+          name: 'Choosing a database',
+          created_at: '2026-03-01T10:00:00Z',
+          account: { uuid: account },
+          chat_messages: [{ uuid: 'msg-1', sender: 'human', text, created_at: '2026-03-01T10:00:00Z' }],
+        },
+      ]);
+    const mine = join(dir, 'mine.json');
+    const theirs = join(dir, 'theirs.json');
+    writeFileSync(mine, claude('acct-invented-a', 'We decided on Postgres.'));
+    writeFileSync(theirs, claude('acct-invented-b', 'We decided on MongoDB.'));
+    await cli('import', mine);
+    await cli('import', theirs);
+    const accepted = await cli('live', 'accept', '1', '--json');
+    expect(accepted.code).toBe(0);
+    expect(JSON.parse(accepted.out)).toMatchObject({ id: 1, added: 0, versioned: 1 });
+    expect((await cli('show', '1')).out).toContain('We decided on MongoDB.');
+    expect((await cli('history', '1')).out.trim().split('\n')).toHaveLength(2);
+  });
+
   it('fails loudly with usage errors', async () => {
     expect(await cli('nope')).toMatchObject({ code: 2, err: expect.stringContaining('Unknown command: nope') });
     expect(await cli('show')).toMatchObject({ code: 2, err: expect.stringContaining('entry number') });
@@ -95,6 +196,10 @@ describe('the skeinwise command', () => {
     expect(await cli('search')).toMatchObject({ code: 2 });
     expect(await cli('import', join(dir, 'missing'))).toMatchObject({ code: 1, err: expect.stringContaining('ENOENT') });
     expect((await cli('search', 'x', '--bogus')).code).toBe(1);
+    // A word live doesn't know is a mistake, not a reason to start recording.
+    expect(await cli('live', 'pendng')).toMatchObject({ code: 2, err: expect.stringContaining('Unknown live command: pendng') });
+    expect(await cli('live', 'toString')).toMatchObject({ code: 2, err: expect.stringContaining('Unknown live command') });
+    expect(await cli('live', 'accept')).toMatchObject({ code: 2, err: expect.stringContaining('Give one number') });
   });
 });
 
@@ -129,28 +234,15 @@ describe('the demo record', () => {
   });
 });
 
-describe('export and sync from the command line', () => {
-  it('lists them in help, exports a zip and starts a sync from a passphrase file', async () => {
-    expect((await cli('help')).out).toContain('sync init <folder>');
+describe('export from the command line (sync is hidden in v1.0; test/sync covers its module)', () => {
+  it('lists export in help and exports a zip', async () => {
+    expect((await cli('help')).out).toContain('export [<file>]');
     expect((await cli('demo', '--out', join(dir, 'demo'))).code).toBe(0);
 
     const zip = join(dir, 'record.zip');
     const exported = await cli('export', zip);
     expect(exported.code).toBe(0);
     expect(readFileSync(zip).subarray(0, 2).toString()).toBe('PK');
-
-    const pass = join(dir, 'pass.txt');
-    writeFileSync(pass, 'a long invented test passphrase\n');
-    const started = await cli('sync', 'init', join(dir, 'cloud'), '--passphrase-file', pass);
-    expect(started.code).toBe(0);
-    expect(statSync(join(dir, 'cloud')).isDirectory()).toBe(true);
-    expect((await cli('sync', 'status')).code).toBe(0);
-  });
-
-  it('says what to do when sync was never started', async () => {
-    const pushed = await cli('sync', 'push');
-    expect(pushed.code).toBe(2);
-    expect(pushed.err).toMatch(/sync init/);
   });
 });
 
@@ -158,11 +250,15 @@ describe('connectors, which are off in v1.0', () => {
   it('leaves them out of help and refuses their commands', async () => {
     const help = (await cli('help')).out;
     expect(help).not.toMatch(/connect <service>|disconnect <service>|Connectors/);
-    for (const command of ['connect', 'connections', 'disconnect']) {
+    for (const command of ['connections', 'disconnect']) {
       const run = await cli(command, 'gmail');
       expect(run.code).toBe(2);
       expect(run.err).toMatch(new RegExp(`Unknown command: ${command}\\.`));
     }
+    // `connect` is the agents' command in v1.0 (setup.ts): a service name gets the list of agents, not a connector.
+    const gmail = await cli('connect', 'gmail');
+    expect(gmail.code).toBe(2);
+    expect(gmail.err).toContain('Name the agent to connect: skeinwise connect claude-code');
     expect((await cli('connect', '--client-id', 'x')).err).toMatch(/Unknown option '--client-id'/);
   });
 });

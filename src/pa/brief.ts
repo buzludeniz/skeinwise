@@ -7,7 +7,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { UsageError } from '../errors.ts';
 import { localDay } from '../notes.ts';
 import { DECISION_CUES, isQuestion } from '../organiser/cues.ts';
-import type { RecordView } from '../organiser/record.ts';
+import { type RecordView, vouched } from '../organiser/record.ts';
 import { currentMark } from '../organiser/runs.ts';
 import { safeLine } from '../safe-text.ts';
 import type { Entry } from '../store/store.ts';
@@ -167,10 +167,10 @@ export function briefChanges(record: RecordView, win: BriefWindow, now: string):
   const before = db.prepare('SELECT body FROM versions WHERE entry_id = ? AND id < ? ORDER BY id DESC LIMIT 1');
   const changed: Changed[] = [];
   const older = new Map<string, number>();
-  const until = Date.parse(now);
   for (const row of rows) {
     const entry = record.byId.get(row.entryId);
-    if (!entry || Date.parse(entry.createdAt) > until + DAY_MS) continue;
+    // The organiser's rule for a date it can trust: a planted export dated ahead, or a flagged date, is left out.
+    if (!entry || !vouched(entry, now)) continue;
     if (row.firstVersion === 1 && row.editedAt < win.cutoff) {
       older.set(entry.sourceLabel, (older.get(entry.sourceLabel) ?? 0) + 1);
       continue;
