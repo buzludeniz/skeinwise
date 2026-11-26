@@ -96,7 +96,9 @@ function hubPoints(data: BrainData, points: LayoutPoint[], indexOf: Map<number, 
   for (const hub of data.hubs) {
     const members = hub.entries.map((id) => indexOf.get(id)).filter((i): i is number => i !== undefined);
     if (!members.length) continue;
-    const time = Math.max(...members.map((i) => points[i]!.time));
+    // A loop, not Math.max(...): a hub can hold more entries than a call can take arguments.
+    let time = -Infinity;
+    for (const i of members) time = Math.max(time, points[i]!.time);
     const point: LayoutPoint = {
       id: -hub.id,
       kind: 1,

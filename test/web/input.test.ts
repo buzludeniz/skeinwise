@@ -157,4 +157,14 @@ describe('the point cap', () => {
     expect(hub.count).toBe(333);
     expect(m.input.spokes.length / 2).toBeLessThan(333);
   });
+
+  it('places a hub that holds a very large number of entries', () => {
+    // Spreading 300,000 times into Math.max overflows the call stack.
+    const record = big(300_000);
+    const all = { ...record, hubs: [{ id: 5, name: 'Everything', entries: record.points.map((p) => p[0]) }] };
+    const m = buildModel(all, 'source', ember, dusk, 300_000);
+    expect(m.hubs[0]!.count).toBe(300_000);
+    expect(m.input.points.at(-1)!.time).toBe(record.points.at(-1)![7]);
+  });
 });
+
