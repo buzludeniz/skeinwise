@@ -11,7 +11,7 @@ import { fmtRange, plural } from '../format.ts';
 import type { Found, ImportResult, Preview } from '../types.ts';
 import { EXPORTS } from '../ui/AppMenu.tsx';
 import { Button, SidePanel } from '../ui/common.tsx';
-import { importSummary } from '../upload.ts';
+import { anyHeldBack, importSummary } from '../upload.ts';
 
 type Guide = 'chatgpt' | 'claude' | 'gemini';
 type FoundRow = Found & { decision: 'in' | 'out' | 'later' | null };
@@ -55,7 +55,7 @@ export async function bringIn(path: string, owner: string, label: string): Promi
   const results = await api.post<ImportResult[]>('import', { path, owner });
   growOnNextLoad();
   await loadRecord();
-  toast(importSummary(results), { tone: 'ok' });
+  toast(importSummary(results), { tone: anyHeldBack(results) ? undefined : 'ok' });
   return results;
 }
 
@@ -170,7 +170,7 @@ export function AddPanel({ guide }: { guide?: Guide }) {
   const known = found?.filter((f) => f.inRecord) ?? [];
 
   return (
-    <SidePanel title={guide ? `Add from ${GUIDES[guide].name}` : 'Add'} label="Add" onClose={closePanel}>
+    <SidePanel title={guide ? `Add from ${GUIDES[guide].name}` : 'Add'} label="Add" onClose={closePanel} shows={guide ?? ''}>
       {guide ? (
         <GuideView guide={guide} found={found ?? []} />
       ) : (
