@@ -89,8 +89,13 @@ function withLock<T>(home: string, fn: () => T): T {
   const lock = join(home, `${REQUESTS_FILE}.lock`);
   const mine = JSON.stringify({ pid: process.pid, nonce: randomBytes(8).toString('hex') });
   const deadline = Date.now() + LOCK_WAIT_MS;
-  while (!takeLock(lock, mine)) {
-    if (freeDeadLock(lock)) continue;
+  for (;;) {
+    try {
+      if (takeLock(lock, mine)) break;
+      if (freeDeadLock(lock)) continue;
+    } catch (err) {
+      if (!lockBusy(err)) throw err;
+    }
     if (Date.now() >= deadline) {
       throw new UsageError(`Another Skeinwise process held ${lock} for over ${LOCK_WAIT_MS / 1000} seconds, so no agent request changed. Try again in a moment.`);
     }
@@ -99,7 +104,28 @@ function withLock<T>(home: string, fn: () => T): T {
   try {
     return fn();
   } finally {
-    if (readLock(lock) === mine) unlinkSync(lock);
+    if (heldBy(lock, mine)) unlinkSync(lock);
+  }
+}
+
+/**
+ * Whether an error from taking, reading, stat-ing or renaming the lock means only that it is in use. On Windows, a
+ * lock its holder deleted while another process still had it open (a waiter reading it) stays "delete pending" until
+ * that handle closes, and opening, stat-ing or renaming it meanwhile fails with EPERM (libuv's mapping of
+ * ERROR_ACCESS_DENIED) or EACCES, not EEXIST or ENOENT. Elsewhere those mean what they say and are thrown.
+ */
+function lockBusy(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException).code;
+  return process.platform === 'win32' && (code === 'EPERM' || code === 'EACCES');
+}
+
+/** Whether this process still holds the lock. A lock being deleted (lockBusy) is no longer this process's to release. */
+function heldBy(lock: string, mine: string): boolean {
+  try {
+    return readLock(lock) === mine;
+  } catch (err) {
+    if (lockBusy(err)) return false;
+    throw err;
   }
 }
 
@@ -144,8 +170,9 @@ function freeDeadLock(lock: string): boolean {
     try {
       linkSync(aside, lock);
     } catch (err) {
-      // EEXIST: a third process took the free name meanwhile. The holder moved aside still releases only its own lock.
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      // EEXIST: a third process took the free name meanwhile (or, on Windows, took and released it, and the name is still
+      // busy: lockBusy). The holder moved aside still releases only its own lock, and the copy aside goes below.
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST' && !lockBusy(err)) throw err;
     }
   }
   unlinkSync(aside);
