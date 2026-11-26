@@ -2,7 +2,7 @@
 // on a point or its label pins a card for it; double-click opens it.
 
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { Focus, Info, Plus, Search, SlidersHorizontal, X } from 'lucide-preact';
+import { Focus, Info, Plus, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-preact';
 import { clearLight, go, light, message, openEntry, openPanel, saveConfig, setGrouping, setLayout, toast } from '../actions.ts';
 import { api, qs } from '../api.ts';
 import { PartCard } from '../brain/PartCard.tsx';
@@ -31,7 +31,7 @@ function selectedText(part: Part): string {
 
 export function BrainView() {
   const host = useRef<HTMLDivElement>(null);
-  const { scene, model, ok, hover } = useBrainScene(host, 'full');
+  const { scene, model, ok, loadFailed, hover } = useBrainScene(host, 'full');
   const brain = useApp((s) => s.brain);
   const layout = useApp((s) => s.layout);
   const lit = useApp((s) => s.lit);
@@ -110,12 +110,23 @@ export function BrainView() {
   return (
     <section class="view brain-view" aria-label="Brain">
       <div class="brain-host" ref={host} />
-      {!ok && (
+      {loadFailed ? (
         <div class="brain-fallback">
-          <Empty title="This browser can't draw the brain">
-            <p>It needs WebGL. Everything else works: try Threads or Stats.</p>
+          <Empty title="The brain didn't load">
+            <p>Its drawing code couldn't be fetched, most often because Skeinwise was updated after this page opened. Reloading fetches the new version.</p>
+            <Button icon={RefreshCw} onClick={() => location.reload()}>
+              Reload the page
+            </Button>
           </Empty>
         </div>
+      ) : (
+        !ok && (
+          <div class="brain-fallback">
+            <Empty title="This browser can't draw the brain">
+              <p>It needs WebGL. Everything else works: try Threads or Stats.</p>
+            </Empty>
+          </div>
+        )
       )}
       {empty && (
         <div class="brain-fallback">
