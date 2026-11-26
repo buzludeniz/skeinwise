@@ -152,7 +152,10 @@ export interface BrainData {
    * project (each in the order of its list above; `noProject` for entries in none), and by month (0 = January, UTC).
    */
   counts?: { speaker: number[]; source: number[]; folder: number[]; project: number[]; noProject: number; month: number[] };
-  /** [from, to, kind]: 0 = note link, 1 = cross link. Only between points in `points`. */
+  /**
+   * [from, to, kind]: 0 = note link, 1 = cross link. Only between points in `points`, sorted by kind, then by where
+   * from and then to sit in `points`: the order packBrain packs smallest.
+   */
   links: [number, number, number][];
   /** The organiser's concept hubs: `size` entries in all, `entries` those of them in `points` (its spokes). */
   hubs: { id: number; name: string; size?: number; entries: number[] }[];
@@ -168,8 +171,9 @@ export const BRAIN_POINTS = 20_000;
 /**
  * A point's label as /api/brain sends it. A note's or a file's title keeps up to 90 characters, since the brain draws
  * the best-linked notes' titles on the canvas. A message's label is only a preview of its first line, shown on hover,
- * and most points are messages, so it keeps 56: that holds a 50,000-entry record's first load under the 600 kB budget
- * (plan section 7: 558 kB on the bench corpus, 672 kB at 90).
+ * and most points are messages, so it keeps 56: 558 kB gzip against 672 kB at 90 on the bench's 50k corpus, measured
+ * on an imported record before any run. The bench measures after run all, whose links and hubs took the plain reply
+ * to 740 kB; packBrain brings that to 471 kB, under plan section 7's 600 kB.
  */
 export function pointLabel(title: string, kind: string): string {
   const max = kind === 'message' ? 56 : 90;
@@ -262,6 +266,8 @@ export function brainData(db: DatabaseSync, cap = BRAIN_POINTS): BrainData {
   const links: [number, number, number][] = [];
   for (const [a, b] of noteLinks(db)) if (shown.has(a) && shown.has(b)) links.push([a, b, 0]);
   if (ready) for (const l of liveLinks(db)) if (l.kind === 'cross' && shown.has(l.from) && shown.has(l.to)) links.push([l.from, l.to, 1]);
+  const at = new Map(points.map((p, i) => [p[0], i]));
+  links.sort((x, y) => x[2] - y[2] || at.get(x[0])! - at.get(y[0])! || at.get(x[1])! - at.get(y[1])!);
   const hubs = ready
     ? liveHubs(db)
         .map((h) => {
@@ -284,6 +290,76 @@ export function brainData(db: DatabaseSync, cap = BRAIN_POINTS): BrainData {
     hubs,
     organiser: ready,
   };
+}
+
+/**
+ * /api/brain's reply as it is sent: BrainData with its three big parts packed so gzip finds more to share, which keeps
+ * a 50,000-entry record's first load under plan section 7's 600 kB: 471 kB gzip on the bench's organised 50k record,
+ * against 740 kB as plain BrainData. Nothing is left out: unpackBrain (web/src/brain/unpack.ts) gives the page back
+ * exactly the BrainData that JSON carried before, and test/server/brain.test.ts checks that.
+ */
+export interface BrainWire extends Omit<BrainData, 'points' | 'links' | 'hubs'> {
+  /** How the parts below are packed. unpackBrain refuses any other value, so a page and a server that disagree say so. */
+  packed: 1;
+  /**
+   * The points column by column, in BrainPoint's order. An id is the step from the point before's id. A time is the
+   * step from the last point that had one, or null for a point without one (as JSON has always sent NaN).
+   */
+  points: [
+    id: number[],
+    kind: (0 | 1 | 2)[],
+    speaker: number[],
+    source: number[],
+    thread: number[],
+    folder: number[],
+    project: number[],
+    time: (number | null)[],
+    label: string[],
+  ];
+  /**
+   * The links as indices into points, in BrainData's order: a from is the step from the link before's from, and a to
+   * is the step from its own from.
+   */
+  links: [from: number[], to: number[], kind: number[]];
+  /** The hubs, each entry as the step from the entry before (they come in id order, so the steps are small). */
+  hubs: { id: number; name: string; size?: number; entries: number[] }[];
+}
+
+export function packBrain(data: BrainData): BrainWire {
+  const { points, links, hubs, ...rest } = data;
+  const cols: BrainWire['points'] = [[], [], [], [], [], [], [], [], []];
+  const at = new Map<number, number>();
+  let id = 0;
+  let time = 0;
+  points.forEach((p, i) => {
+    at.set(p[0], i);
+    cols[0].push(p[0] - id);
+    id = p[0];
+    cols[1].push(p[1]);
+    cols[2].push(p[2]);
+    cols[3].push(p[3]);
+    cols[4].push(p[4]);
+    cols[5].push(p[5]);
+    cols[6].push(p[6]);
+    if (Number.isFinite(p[7])) {
+      cols[7].push(p[7] - time);
+      time = p[7];
+    } else cols[7].push(null);
+    cols[8].push(p[8]);
+  });
+  const packedLinks: BrainWire['links'] = [[], [], []];
+  let from = 0;
+  for (const [a, b, kind] of links) {
+    const i = at.get(a);
+    const j = at.get(b);
+    if (i === undefined || j === undefined) throw new Error(`packBrain: the link ${a} → ${b} names an entry that isn't a point`);
+    packedLinks[0].push(i - from);
+    packedLinks[1].push(j - i);
+    packedLinks[2].push(kind);
+    from = i;
+  }
+  const packedHubs = hubs.map((h) => ({ ...h, entries: h.entries.map((e, k) => e - (k ? h.entries[k - 1]! : 0)) }));
+  return { ...rest, packed: 1, points: cols, links: packedLinks, hubs: packedHubs };
 }
 
 export interface EntryDetail {

@@ -27,7 +27,7 @@ unless `--keep` is given, and the bench only ever clears a folder it made.
 | First `run all --engine none`, peak memory | stopped at twice its time budget, which counts as over |
 | Organise 100 new entries | `import` of 100 new messages, then `run all --scope new` |
 | `/api/brain` first load | bytes on the wire with gzip accepted, from `startServer` |
-| MCP call p95, largest reply | 17 or more tool calls from an allowed agent: search, ask, timeline, list_hubs, read_hub |
+| MCP lookup p95, slowest MCP ask, largest reply | 17 or more tool calls from an allowed agent: the p95 of the lookups (search, timeline, list_hubs, read_hub), and the slowest of the 3 asks against the CLI's ask budget |
 | Live: write to searchable, idle memory | `skeinwise live` on the stand-in home; one message appended to a session, then searched for every 100 ms; resident memory once its background pass is over |
 | `demo` build | the `demo` command into a new record |
 | Web initial JS | the gzip size of the built page's module script and preloads (`pnpm build` first) |

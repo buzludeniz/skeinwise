@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Locator, type Page, test } from '@playwright/test';
-import type { BrainData, BrainPoint } from '../src/server/queries.ts';
+import { type BrainData, type BrainPoint, packBrain } from '../src/server/queries.ts';
 import type { EntryLines } from '../src/server/organiser.ts';
 import { THEMES } from '../web/src/themes.ts';
 import { runFolder } from './run.ts';
@@ -481,7 +481,8 @@ test.describe('at the cap', () => {
           }
         });
     });
-    const record = JSON.stringify(bigRecord(20_000, 25_000));
+    // Packed, as the server sends it (packBrain).
+    const record = JSON.stringify(packBrain(bigRecord(20_000, 25_000)));
     await page.route(
       (url) => url.pathname === '/api/brain',
       (route) => route.fulfill({ status: 200, contentType: 'application/json', body: record }),

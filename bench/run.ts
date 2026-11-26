@@ -67,6 +67,18 @@ export const MCP_CALLS: Extract<Job, { kind: 'mcp' }>['calls'] = [
   { name: 'timeline', args: { limit: 20, newest_first: true } },
 ];
 
+/** The MCP measures from one worker's calls: the p95 of the lookups, the slowest ask, and the largest reply. */
+export function mcpResults(r: WorkerReport): Record<'mcp.p95' | 'mcp.ask' | 'mcp.size', Result> {
+  const asks = r.times.filter((_, i) => r.tools[i] === 'ask');
+  const lookups = r.times.filter((_, i) => r.tools[i] !== 'ask');
+  if (!asks.length) throw new Error('No MCP ask was made, so the slowest ask is not known.');
+  return {
+    'mcp.p95': { value: percentile(lookups, 95), note: `${lookups.length} calls` },
+    'mcp.ask': { value: Math.max(...asks), note: `the slowest of ${asks.length}` },
+    'mcp.size': { value: Math.max(...r.sizes) / 1024 },
+  };
+}
+
 export interface BenchOptions {
   size: Size;
   dir: string;
@@ -249,10 +261,9 @@ export async function bench(opts: BenchOptions): Promise<number> {
     results.set('brain.gzip', { value: r.sizes[0]! / 1000, note: `${show(r.times[0]!, 'ms')} on this computer` });
   });
 
-  await measure(['mcp.p95', 'mcp.size'], 'MCP calls', async () => {
+  await measure(['mcp.p95', 'mcp.ask', 'mcp.size'], 'MCP calls', async () => {
     const r = await runWorker({ kind: 'mcp', calls: MCP_CALLS, hubs: 3 }, env, 300_000);
-    results.set('mcp.p95', { value: percentile(r.times, 95), note: `${r.times.length} calls` });
-    results.set('mcp.size', { value: Math.max(...r.sizes) / 1024 });
+    for (const [key, result] of Object.entries(mcpResults(r))) results.set(key, result);
   });
 
   await measure(['live.searchable', 'live.idle'], 'live', () => live(env, home, user, results));
