@@ -1176,6 +1176,14 @@ code {
   z-index: 4;
 }
 
+.legend-sample {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--ink-soft);
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
 .legend-by {
   font-size: 13px;
   color: var(--ink-soft);

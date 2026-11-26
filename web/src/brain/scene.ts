@@ -217,7 +217,9 @@ export class BrainScene {
   private goal: Orbit | null = null;
   private turning = true;
   private touched = false;
-  private readonly reducedMotion: boolean;
+  /** The system asks for less motion: no turning, and moves, growth and camera glides land at once. Follows the setting live. */
+  private reducedMotion: boolean;
+  private readonly motionQuery: MediaQueryList | null;
   private options: SceneOptions = { pointSize: 1, lineDensity: 0.6, labels: true, turning: true };
   private theme: SceneTheme = { light: false, ground: '#0f1219', shell: '#8d9ab8', ink: '#e9e4d8' };
 
@@ -252,7 +254,9 @@ export class BrainScene {
     this.labelLayer.className = 'brain-labels';
     this.labelLayer.setAttribute('aria-hidden', 'true');
     this.root.append(this.canvas, this.labelLayer);
-    this.reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    this.motionQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+    this.reducedMotion = this.motionQuery?.matches ?? false;
+    this.motionQuery?.addEventListener('change', this.onMotionChange);
 
     this.backMat = new ShaderMaterial({
       vertexShader: BACK_VERT,
@@ -492,7 +496,32 @@ export class BrainScene {
     this.dirty = true;
   }
 
+  /** Less motion: stops the turning and finishes any move, growth or camera glide now. Turning comes back when it is lifted. */
+  setReducedMotion(reduce: boolean): void {
+    this.reducedMotion = reduce;
+    this.turning = this.options.turning && !this.touched && !reduce;
+    if (reduce) {
+      if (this.goal) {
+        this.orbit = this.goal;
+        this.goal = null;
+      }
+      if (this.mix < 1) {
+        this.mix = 1;
+        this.applyMix();
+        this.buildRings();
+      }
+      if (this.grow < 1) {
+        this.grow = 1;
+        this.pointMat.uniforms.uGrow!.value = 1;
+      }
+    }
+    this.dirty = true;
+  }
+
+  private onMotionChange = (e: MediaQueryListEvent): void => this.setReducedMotion(e.matches);
+
   dispose(): void {
+    this.motionQuery?.removeEventListener('change', this.onMotionChange);
     this.detach();
     this.renderer?.dispose();
     this.renderer = null;
