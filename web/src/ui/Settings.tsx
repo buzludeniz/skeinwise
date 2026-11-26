@@ -101,7 +101,10 @@ function Agents({ config }: { config: Config }) {
           ))}
         </ul>
       )}
-      <Note>Connecting an agent is not available yet.</Note>
+      <Note>
+        To give an agent your record as its memory, run <code>skeinwise connect claude-code</code> in a terminal, with
+        codex, cursor or claude-desktop in place of claude-code for the others.
+      </Note>
       <Button
         icon={Copy}
         small
