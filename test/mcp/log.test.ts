@@ -10,6 +10,7 @@ import type { Caller } from '../../src/mcp/session.ts';
 import type { Store } from '../../src/store/store.ts';
 import { keyShaped } from '../samples.ts';
 import { call, context, demoRecord, initialize } from './helpers.ts';
+import { expectMode } from '../modes.ts';
 
 // The MCP log (MCP-7): every call an agent makes, served or refused, as one line in mcp-log.jsonl.
 
@@ -70,7 +71,7 @@ describe('the MCP log', () => {
     expect(write).toMatchObject({ agent: 'cursor', tool: 'write_note', entry_ids: [note.json.entry_id], outcome: 'ok' });
     expect(hubs).toMatchObject({ tool: 'list_hubs', outcome: 'ok' });
     expect(hubs!.entry_ids).toBeUndefined();
-    expect(statSync(join(home, LOG_FILE)).mode & 0o777).toBe(0o600);
+    expectMode(join(home, LOG_FILE), 0o600);
   });
 
   it('records refusals: no token, the read scope, the lock', async () => {

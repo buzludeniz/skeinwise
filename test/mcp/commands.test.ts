@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -9,6 +9,7 @@ import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP, serveMcp } from '../../src/mcp/comma
 import { fileRequest, pendingRequests, REQUESTS_FILE } from '../../src/mcp/requests.ts';
 import type { Store } from '../../src/store/store.ts';
 import { context, demoRecord } from './helpers.ts';
+import { expectMode } from '../modes.ts';
 
 // `skeinwise mcp allow|deny|agents|lock|unlock`, called with a context built as the CLI builds it.
 
@@ -37,7 +38,7 @@ describe('skeinwise mcp', () => {
     expect(out).toMatch(/^Allowed claude-code to read your record\. Its token, shown only this once:\n\n {2}swa_[A-Za-z0-9_-]{43}\n\nGive it to the agent's MCP config as SKEINWISE_AGENT_TOKEN/);
     const token = /swa_[A-Za-z0-9_-]{43}/.exec(out)![0];
     const file = join(home, ACCESS_FILE);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expectMode(file, 0o600);
     const saved = readFileSync(file, 'utf8');
     expect(saved).not.toContain(token);
     expect(JSON.parse(saved)).toEqual({ locked: false, agents: { 'claude-code': { scope: 'read', since: NOW, tokenHash: hashToken(token) } } });
@@ -136,7 +137,7 @@ describe('agent requests: mcp pending, confirm and refuse', () => {
     expect(listed).toContain(`  ${a.id}  2026-11-25 09:00  claude-code asks: Leave out thread ${first}, "red"`);
     expect(listed).toContain(`  ${b.id}  2026-11-25 09:00  cursor asks: Leave out thread ${second}`);
     expect(listed).not.toContain('\u001b');
-    expect(statSync(join(home, REQUESTS_FILE)).mode & 0o777).toBe(0o600);
+    expectMode(join(home, REQUESTS_FILE), 0o600);
 
     expect((await mcp(['confirm', String(a.id)])).out).toBe(`Done: thread ${first} is left out now. Bring it back with: skeinwise not-mine ${first} --undo\n`);
     expect(store.visibleThread(first!)).toBeUndefined();

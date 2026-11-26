@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -11,6 +11,7 @@ import { BUNDLE_FILE, notEmpty, readHeader } from '../../src/sync/bundle.ts';
 import { type KdfParams, KEYS_FILE } from '../../src/sync/keys.ts';
 import { joinSync, pushSync, readState, STATE_FILE, startSync, syncStatus } from '../../src/sync/sync.ts';
 import { count, demoRecord, dump } from './fixture.ts';
+import { expectMode } from '../modes.ts';
 
 // Sync between record folders on one disk, standing in for two computers and a cloud folder. The passphrase is made
 // up for the test; scrypt runs on light settings here (the command tests use the real ones).
@@ -62,14 +63,14 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 describe('sync init', () => {
   it('writes a key file and a bundle to the folder, owner-only, with neither secret in them', () => {
     expect(readdirSync(folder).sort()).toEqual([BUNDLE_FILE, KEYS_FILE]);
-    for (const f of [BUNDLE_FILE, KEYS_FILE]) expect(statSync(join(folder, f)).mode & 0o777).toBe(0o600);
+    for (const f of [BUNDLE_FILE, KEYS_FILE]) expectMode(join(folder, f), 0o600);
     const keys = readFileSync(join(folder, KEYS_FILE), 'utf8');
     expect(keys).not.toContain(PASS);
     for (const w of phrase.split(' ')) expect(keys).not.toMatch(new RegExp(`\\b${w}\\b`));
     const { header } = readHeader(readFileSync(join(folder, BUNDLE_FILE)), 'b');
     expect(header).toMatchObject({ seq: 1, keyId: JSON.parse(keys).keyId, createdAt: DEMO_NOW });
     expect(readState(a.home)).toMatchObject({ folder, seq: 1 });
-    expect(statSync(join(a.home, STATE_FILE)).mode & 0o777).toBe(0o600);
+    expectMode(join(a.home, STATE_FILE), 0o600);
   });
 
   it('refuses a second start, from this record or into a folder that already holds a sync', () => {

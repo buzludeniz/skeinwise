@@ -9,6 +9,7 @@ import { liveHubs } from '../../src/organiser/views.ts';
 import type { Store } from '../../src/store/store.ts';
 import { exportZip, writeExport } from '../../src/sync/export.ts';
 import { count, demoRecord } from './fixture.ts';
+import { expectMode } from '../modes.ts';
 
 // `skeinwise export` on the demo record: what is in the zip, and that it is readable without Skeinwise.
 
@@ -85,7 +86,7 @@ describe('skeinwise export', () => {
     const file = join(dir, 'out', 'export.zip');
     const r = writeExport(a.store, a.home, file);
     expect(r).toMatchObject({ file, chats: count(a.store.db, 'threads') });
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expectMode(file, 0o600);
     expect(statSync(file).size).toBe(r.bytes);
     writeFileSync(join(dir, 'keep.zip'), 'mine');
     expect(() => writeExport(a.store, a.home, join(dir, 'keep.zip'))).toThrow(/already exists.*--force/);
