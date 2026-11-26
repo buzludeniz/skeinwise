@@ -135,9 +135,9 @@ suggested one.
 The record keeps itself current without you running anything.
 
 1. **Live capture.** With **Record live** on (`skeinwise live` on the command line), Skeinwise watches Claude Code
-   and Codex history, the note folders and vaults you chose (`liveFolders`), and Downloads for new ChatGPT, Claude and
-   Gemini exports. New and changed entries are imported within seconds, through the same importers as a manual
-   import, so dedupe and versions work the same way. On start-up it catches up on whatever changed while it was off.
+   and Codex history and the note folders and vaults you chose (`liveFolders`). New and changed entries are imported
+   within seconds, through the same importers as a manual import, so dedupe and versions work the same way. On
+   start-up it catches up on whatever changed while it was off. Downloads is watched only when you ask (below).
 2. **Background organising.** After each capture, the organiser runs over the new entries only (`--scope new`:
    entries added or changed since that task's last run): tag, file, link, then the summaries of the hubs those entries
    joined, then a staleness check of the notes on those hubs. One pass runs at a time; captures that arrive during a
@@ -157,6 +157,17 @@ The record keeps itself current without you running anything.
 - **Off switch.** `skeinwise config liveOrganise off` keeps live capture and leaves organising to you.
 - **Connectors.** Live also pulls from the services you connected, and what a pull brings is organised like a
   capture.
+- **Downloads** is off by default; `skeinwise config liveDownloads on` turns it on. Then a ChatGPT, Claude or Gemini
+  export that lands there is proposed, never imported: review it with `skeinwise live pending` (`--all` for the ones
+  already decided), then `skeinwise live accept <n>` or `skeinwise live reject <n>`. The same file is never proposed
+  twice, and a rejected one is never proposed again. Accepting keeps the version each change replaced. Only chat
+  exports are proposed, a link is refused, and the status line counts what waits.
+- **One bad file never stops live.** It is listed by its path and tried again after 1 min, 5 min and 30 min, then
+  hourly, and at once when it changes. A bad line is skipped, or kept with no time, and named by `file:line`.
+- **A busy record** (another skeinwise command writing to it) makes live wait and try again.
+- **A corrupt `live.json`** is moved aside to `live.json.bad-<time>`, and live starts afresh.
+- **Large sessions.** A growing Claude Code session is read from where the last read stopped. The first pass after
+  an upgrade reads every watched file whole once.
 
 ## Tagging schemas
 
@@ -244,6 +255,7 @@ Details: [mcp.md](mcp.md).
 | `skeinwise runs`, `skeinwise undo <run>` | Lists runs; undoes one |
 | `skeinwise note <text>` | Appends to today's daily note |
 | `skeinwise live [--once]` | Turns on the update stream: live capture and background organising, and pulls from connected services |
+| `skeinwise live pending [--all]`, `accept <n>`, `reject <n>` | Imports waiting for your yes (Downloads, another account's export); takes one in or leaves it out for good |
 | `skeinwise model check`, `fetch`, `serve` | Tests, downloads (after asking) or starts the local model |
 | `skeinwise serve` | Starts the app *(planned, v0.4)* |
 | `skeinwise setup [--yes]` | Finds your AI histories and notes, brings them in, and names the agents to connect |

@@ -11,6 +11,7 @@ import { day, entryHeader, indent, minute, speakerLabel } from './format.ts';
 import { homeDir, openHome } from './home.ts';
 import { readImports } from './importers/detect.ts';
 import { readStatus } from './live/capture.ts';
+import { LIVE_COMMANDS, LIVE_FLAGS, LIVE_HELP } from './live/pending.ts';
 import { describeStatus, startLive } from './live/run.ts';
 import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP } from './mcp/commands.ts';
 import { MODEL_HELP } from './model-commands.ts';
@@ -69,6 +70,7 @@ ${STORE_HELP}  stats                    Counts and the busiest months
   live                      Record live: import new chats and notes as they appear, and
                             organise what is new in the background
       --once                Catch up and organise once, then stop
+${LIVE_HELP}
   demo                      Build a demo record from invented data
       --out <dir>           Where to write the demo export files
       --force               Import even if the record is not empty
@@ -173,7 +175,7 @@ function importLine(store: Store, batch: ImportBatch, r: IngestResult): string {
   const label = batch.source.label;
   if (r.pendingId) {
     const changes = `${r.proposed} change${r.proposed === 1 ? '' : 's'}`;
-    return `${label}: ${changes} from another account than this source's wait for your yes as #${r.pendingId}; nothing was imported\n`;
+    return `${label}: ${changes} from another account than this source's wait for your yes as #${r.pendingId}; nothing was imported: skeinwise live pending\n`;
   }
   if (r.proposed) {
     const before = batch.origin ? store.pendingByHash(batch.origin.sha256, batch.source.kind) : undefined;
@@ -210,6 +212,7 @@ async function run(argv: string[], io: Io): Promise<number> {
       remove: { type: 'boolean' },
       run: { type: 'boolean' },
       ...MCP_FLAGS,
+      ...LIVE_FLAGS,
       ...STORE_FLAGS,
       // --yes (and --write, also in MCP_FLAGS) come from here; every command reads them the same way.
       ...SETUP_FLAGS,
@@ -318,6 +321,12 @@ async function run(argv: string[], io: Io): Promise<number> {
 
     case 'live': {
       const home = homeDir(io.env);
+      const sub = positionals[0];
+      if (sub !== undefined) {
+        // live pending, accept and reject. Any other word is a mistake, never a reason to start recording.
+        if (!Object.hasOwn(LIVE_COMMANDS, sub)) throw new UsageError(`Unknown live command: ${sub}. Try: skeinwise live pending`);
+        return withStore(io, (store) => LIVE_COMMANDS[sub]!({ io, home, store, values, args: positionals.slice(1), json }));
+      }
       const store = openHome(home, io.now);
       let started = false; // the catch-up pass is printed below, so only later passes print here
       const live = startLive(store, home, {
