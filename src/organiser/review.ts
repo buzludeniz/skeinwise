@@ -28,7 +28,7 @@ const MIN_NEW_WORDS = 0.5;
 /** The most notes per hub that go to the queue in one run. */
 const MAX_PER_HUB = 3;
 
-interface Check {
+export interface Check {
   note: Entry;
   since: string;
   newer: Entry[];
@@ -45,8 +45,8 @@ interface Flag {
   rank: number;
 }
 
-export function planReview(ctx: TaskContext): Plan {
-  const checks = reviewChecks(ctx);
+/** `checks` is for tests that weigh another way of finding them. */
+export function planReview(ctx: TaskContext, checks: Check[] = reviewChecks(ctx)): Plan {
   const asks = ctx.model ? checks.filter((c) => c.newer.length).map((c, i, all) => ({ check: c, ...reviewRequest(ctx.record, c, i + 1, all.length) })) : [];
   return {
     requests: asks.map((a) => a.request),
@@ -84,7 +84,7 @@ export function planReview(ctx: TaskContext): Plan {
 }
 
 /** Your notes in live hubs (in scope, or in a hub that an entry in scope touches), with the newer entries to weigh. */
-function reviewChecks(ctx: TaskContext): Check[] {
+export function reviewChecks(ctx: TaskContext): Check[] {
   const { record, db } = ctx;
   const hubs = liveHubs(db);
   if (!hubs.length) throw new UsageError('Review reads hubs, and there are none yet. Run the hub task first: skeinwise run hub');
@@ -105,20 +105,58 @@ function reviewChecks(ctx: TaskContext): Check[] {
   const yours = record.entries.flatMap((e) => (e.speaker === 'you' && vouched(e, ctx.now) ? [{ e, at: Date.parse(e.createdAt) }] : []));
   const names = new Map(notes.map((n) => [n.id, titleStems(n)]));
   const holding = bodiesHolding(yours.map((y) => y.e), new Set([...names.values()].flat()));
+  // A note weighs only your entries that share one of its hubs or hold every stem of its title, from `after` on. So
+  // they are listed by hub and by stem, each list in time order, and a note visits its own lists from `after`, not all
+  // your entries: 5,000 notes × 28,000 entries took 33 s of a run all at 50,000.
+  const byTime = (list: number[]) => list.sort((a, b) => yours[a]!.at - yours[b]!.at);
+  const inHub = new Map<number, number[]>();
+  yours.forEach(({ e }, i) => {
+    for (const h of hubsOf.get(e.id) ?? []) {
+      const list = inHub.get(h);
+      if (list) list.push(i);
+      else inHub.set(h, [i]);
+    }
+  });
+  for (const list of inHub.values()) byTime(list);
+  for (const held of holding.values()) byTime(held.list);
+  /** The first place in a time-ordered list dated `after` or later (none when `after` doesn't parse). */
+  const from = (list: number[], after: number) => {
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (yours[list[mid]!]!.at >= after) hi = mid;
+      else lo = mid + 1;
+    }
+    return lo;
+  };
   return notes.map((note) => {
     const since = lastChanged(record.store, note);
     const held = heldEntries(db, note.id);
     const own = new Set(hubsOf.get(note.id));
     const name = names.get(note.id)!;
     const after = Date.parse(since) + MIN_GAP_MS;
-    const newer = yours.flatMap(({ e, at }) =>
-      e.id !== note.id &&
-      at >= after &&
-      !held.has(e.id) &&
-      ((hubsOf.get(e.id) ?? []).some((h) => own.has(h)) || (name.length > 0 && name.every((s) => holding.get(s)?.has(e.id))))
-        ? [e]
-        : [],
-    );
+    const found = new Set<number>();
+    for (const h of own) {
+      const list = inHub.get(h) ?? [];
+      for (let k = from(list, after); k < list.length; k++) found.add(list[k]!);
+    }
+    const stems = name.map((s) => holding.get(s));
+    if (stems.length > 0 && stems.every((s) => s !== undefined)) {
+      // Every stem must be held, so the stem fewest entries hold names the candidates.
+      const rarest = stems.reduce((a, b) => (b.list.length < a.list.length ? b : a));
+      for (let k = from(rarest.list, after); k < rarest.list.length; k++) {
+        const i = rarest.list[k]!;
+        if (stems.every((s) => s.has.has(i))) found.add(i);
+      }
+    }
+    // In record order, as the scan over all your entries gave them.
+    const newer = [...found]
+      .sort((a, b) => a - b)
+      .flatMap((i) => {
+        const { e } = yours[i]!;
+        return e.id !== note.id && !held.has(e.id) ? [e] : [];
+      });
     return { note, since, newer, hubs: [...own] };
   });
 }
@@ -154,18 +192,21 @@ function titleStems(note: Entry): string[] {
   return [...new Set(tokenize(note.title ?? ''))];
 }
 
-/** For each of these stems, the ids of the entries whose body holds it. */
-function bodiesHolding(entries: Entry[], stems: Set<string>): Map<string, Set<number>> {
-  const out = new Map<string, Set<number>>();
+/** For each of these stems, the entries whose body holds it, by their place in `entries`: as a list and as a set. */
+function bodiesHolding(entries: Entry[], stems: Set<string>): Map<string, { list: number[]; has: Set<number> }> {
+  const out = new Map<string, { list: number[]; has: Set<number> }>();
   if (!stems.size) return out;
-  for (const e of entries) {
+  entries.forEach((e, i) => {
     for (const s of tokenize(e.body)) {
       if (!stems.has(s)) continue;
-      const ids = out.get(s);
-      if (ids) ids.add(e.id);
-      else out.set(s, new Set([e.id]));
+      const held = out.get(s);
+      if (!held) out.set(s, { list: [i], has: new Set([i]) });
+      else if (!held.has.has(i)) {
+        held.list.push(i);
+        held.has.add(i);
+      }
     }
-  }
+  });
   return out;
 }
 
