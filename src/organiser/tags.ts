@@ -4,6 +4,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import { withoutNoteExt } from '../importers/note-ext.ts';
+import { safeLine } from '../safe-text.ts';
 import type { Entry } from '../store/store.ts';
 import { type Existing, type Group, groupName, groupUnits, namingRequest } from './groups.ts';
 import { invalid, isRecord, list, type ModelRequest, type Plan, type Product, round, type TaskContext } from './plan.ts';
@@ -41,6 +42,7 @@ function planTopics(ctx: TaskContext, schema: Schema): Plan {
   const { groups } = groupUnits(record, ctx.entries, existing);
   const fresh = groups.filter((g) => !g.existing);
   const request = ctx.model && fresh.length ? namingRequest(record, fresh, 'topic', 'one or two words', 'topic names') : undefined;
+  const given = frontMatterTags(ctx.db, ctx.entries);
   return {
     requests: request ? [request] : [],
     finish: (answers) => {
@@ -52,9 +54,68 @@ function planTopics(ctx: TaskContext, schema: Schema): Plan {
         tags.push({ name, description: `Words: ${groupName(record, g, 6)}.` });
         for (const e of g.entries) taggings.push({ entryId: e.id, name, score: unitScore(record, g, e) });
       }
+      // A note's own tags join the topics as written, with or without a model; one a topic already has joins that topic.
+      const named = new Set(tags.map((t) => t.name.toLowerCase()));
+      for (const t of given) {
+        if (!named.has(t.name.toLowerCase())) tags.push({ name: t.name, description: FROM_FRONT_MATTER });
+        named.add(t.name.toLowerCase());
+        taggings.push(t);
+      }
       return product(ctx, schema, tags, taggings);
     },
   };
+}
+
+const FROM_FRONT_MATTER = "Tagged in the notes' front matter.";
+/** As long as a topic's name may be (a model's answer is held to the same). */
+const TAG_MAX = 60;
+
+/**
+ * The tags each entry's newest version gives in its front matter, taken as written. Notes keep their front matter as
+ * properties (b8aef58); only the tag task turns them into tags, so they show wherever tags do and go when its run is
+ * undone.
+ */
+function frontMatterTags(db: DatabaseSync, entries: Entry[]): Tagging[] {
+  if (!entries.length) return [];
+  const inScope = new Set(entries.map((e) => e.id));
+  const rows = db
+    .prepare(
+      `SELECT e.id, v.properties FROM entries e JOIN versions v ON v.entry_id = e.id AND v.version = e.version
+       WHERE v.properties IS NOT NULL ORDER BY e.id`,
+    )
+    .all() as { id: number; properties: string }[];
+  const out: Tagging[] = [];
+  for (const r of rows) {
+    if (!inScope.has(r.id)) continue;
+    for (const name of frontMatterTagNames(JSON.parse(r.properties) as Record<string, unknown>)) out.push({ entryId: r.id, name, score: 1 });
+  }
+  return out;
+}
+
+/**
+ * The tags in a note's front matter: `tags`, else `tag` (older Obsidian vaults), whichever first names one, so a blank
+ * `tags:` line doesn't hide a `tag:` key. A list is read item by item and a line split at commas and spaces, as
+ * Obsidian reads them. A leading # goes, controls go (`safeLine`), and a name longer than a topic's is left out. Keys
+ * match in any case; names keep their own and count once.
+ */
+export function frontMatterTagNames(properties: Record<string, unknown>): string[] {
+  for (const want of ['tags', 'tag']) {
+    for (const key of Object.keys(properties).filter((k) => k.toLowerCase() === want)) {
+      const value = properties[key];
+      const items: unknown[] = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[,\s]+/) : [];
+      const seen = new Set<string>();
+      const names: string[] = [];
+      for (const item of items) {
+        if (typeof item !== 'string') continue;
+        const name = safeLine(item).trim().replace(/^#+/, '').trim();
+        if (!name || name.length > TAG_MAX || seen.has(name.toLowerCase())) continue;
+        seen.add(name.toLowerCase());
+        names.push(name);
+      }
+      if (names.length) return names;
+    }
+  }
+  return [];
 }
 
 /** One word per topic, each used once: the group's best word that no other topic has taken. */

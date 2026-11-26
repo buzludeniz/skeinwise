@@ -35,3 +35,12 @@ unless `--keep` is given, and the bench only ever clears a folder it made.
 Times are taken inside each measure's process, from the command's start to its end, without Node's own start-up. The
 brain's frame rate needs a browser and a GPU, so the bench lists that budget without measuring it. The budgets are set
 for an M1 with 16 GB; a busy machine runs slower, and the report's first line gives the load.
+
+## Migrations
+
+`node bench/migrations.ts [50k|150k] [--from <version>]` times the schema migrations on an old record: it imports the
+same corpus, copies the record's content into a record at an older schema version (3 by default), and times each
+migration step after it, `openDb` in one fresh process, and two processes opening the record at once (whether the second
+waits out the upgrade or fails). Its folder is `.skeinwise/bench/migrations-<size>` by default. It has no budget: the
+number to watch is any step past the 5 s busy timeout, which a second process opening the record meanwhile waits out
+at most twice.
