@@ -1,7 +1,8 @@
 // LS-03, H1 capture side: a file that lands in Downloads must not reach the record on its own. Built from the audit's
 // PoC 06 (a crafted Claude export with the genuine conversation's ids, a new body and a planted 2014 entry).
 
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { zipSync, strToU8 } from 'fflate';
@@ -162,6 +163,29 @@ describe('Downloads capture', () => {
       withStore((store) => {
         unchanged(store);
         expect(store.pendingItems()).toHaveLength(1);
+      });
+    });
+
+    it('keeps where a drive-by came from and the account it claims, so another account\u2019s export waits as such', async () => {
+      // The record's source belongs to one account; the file in Downloads claims another.
+      const withAccount = (convs: ReturnType<typeof conv>[], uuid: string) => convs.map((c) => ({ ...c, account: { uuid } }));
+      const mine = join(dir, 'mine.json');
+      writeFileSync(mine, JSON.stringify(withAccount(GENUINE, 'acct-invented-mine')));
+      withStore((store) => {
+        for (const batch of readImports(mine)) store.ingest(batch);
+      });
+      writeFileSync(dropped, JSON.stringify(withAccount(DRIVE_BY, 'acct-invented-stranger')));
+      const claimed = readImports(dropped)[0]!.account;
+      expect(claimed).toMatch(/^[0-9a-f]{32,}$/); // a fingerprint, never the id itself
+
+      const r = await liveOnce();
+      expect(r.code).toBe(0);
+      expect(r.err).toMatch(/changes to Claude wait for your yes as #1: skeinwise live pending/);
+      withStore((store) => {
+        unchanged(store);
+        expect(store.pendingItems().map((p) => ({ reason: p.reason, origin: p.origin, account: p.account }))).toEqual([
+          { reason: 'account', origin: { path: dropped, sha256: createHash('sha256').update(readFileSync(dropped)).digest('hex') }, account: claimed },
+        ]);
       });
     });
 
