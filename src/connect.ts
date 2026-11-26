@@ -9,7 +9,7 @@
 // from the process's own, so a test's throwaway HOME is all it ever reads or writes.
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { Io } from './cli.ts';
@@ -83,6 +83,8 @@ export interface ConnectDeps {
   script: string;
   /** The node that runs it. */
   node: string;
+  /** The platform the config paths and commands are for (tests set it). */
+  platform?: NodeJS.Platform;
 }
 
 const defaultDeps = (): ConnectDeps => ({ script: process.argv[1] ?? '', node: process.execPath });
@@ -94,10 +96,11 @@ const defaultDeps = (): ConnectDeps => ({ script: process.argv[1] ?? '', node: p
  */
 export function launchCommand(env: NodeJS.ProcessEnv, deps: ConnectDeps): Launch {
   const script = deps.script ? resolve(deps.script) : '';
+  const platform = deps.platform ?? process.platform;
   if (script.includes(`${sep}_npx${sep}`)) {
-    return { command: onPath(process.platform === 'win32' ? 'npx.cmd' : 'npx', env.PATH) ?? 'npx', args: ['-y', 'skeinwise@1', 'mcp'] };
+    return { command: onPath(platform === 'win32' ? 'npx.cmd' : 'npx', env.PATH) ?? 'npx', args: ['-y', 'skeinwise@1', 'mcp'] };
   }
-  const onPathFile = onPath(process.platform === 'win32' ? 'skeinwise.cmd' : 'skeinwise', env.PATH);
+  const onPathFile = onPath(platform === 'win32' ? 'skeinwise.cmd' : 'skeinwise', env.PATH);
   if (onPathFile) return { command: onPathFile, args: ['mcp'] };
   if (!script) throw new UsageError("Skeinwise can't tell how it was started, so it can't write a command that starts it. See docs/mcp.md.");
   return { command: deps.node, args: [script, 'mcp'] };
@@ -167,10 +170,14 @@ type Plan = { kind: 'claude'; file: string; claude: string } | { kind: 'json'; f
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Reads the agent's config file and checks Skeinwise can edit it; throws a UsageError naming the file if not. */
-function planWrite(client: AgentClient, env: NodeJS.ProcessEnv): Plan {
-  const file = client.configFile(env);
+function planWrite(client: AgentClient, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Plan {
+  const file = client.configFile(env, platform);
   if (client.key === 'claude-code') {
-    const claude = onPath(process.platform === 'win32' ? 'claude.cmd' : 'claude', env.PATH);
+    // claude is a .cmd on Windows, and Node won't start one without a shell, whose quoting rules differ: print it there.
+    if (platform === 'win32') {
+      throw new UsageError("On Windows, Skeinwise doesn't run claude mcp add for you. Run the command skeinwise connect claude-code prints, in a terminal where claude works.");
+    }
+    const claude = onPath('claude', env.PATH);
     if (!claude) throw new UsageError(
         "Claude Code's claude command isn't on your PATH here, so Skeinwise can't run claude mcp add for you. Run it where claude works: skeinwise connect claude-code prints it.",
       );
@@ -204,7 +211,8 @@ function stamp(now: string): string {
 function backup(file: string, now: string): string | null {
   if (!existsSync(file)) return null;
   const copy = `${file}.skeinwise-backup-${stamp(now)}`;
-  copyFileSync(file, copy);
+  // Written owner-only from the start, never copied at the original's mode first.
+  writeFileSync(copy, readFileSync(file), { mode: 0o600 });
   chmodSync(copy, 0o600);
   return copy;
 }
@@ -262,7 +270,7 @@ export async function connect(ctx: SetupCtx, deps: ConnectDeps = defaultDeps()):
   let plan: Plan | null = null;
   let unwritable: string | null = null;
   try {
-    plan = planWrite(client, io.env);
+    plan = planWrite(client, io.env, deps.platform ?? process.platform);
   } catch (err) {
     if (ctx.values.yes || !(err instanceof UsageError)) throw err;
     unwritable = err.message;
@@ -271,7 +279,7 @@ export async function connect(ctx: SetupCtx, deps: ConnectDeps = defaultDeps()):
   mkdirSync(ctx.home, { recursive: true, mode: 0o700 });
   const allowed = allowAgent(ctx.home, client.key, now, ctx.values.write ? 'write' : 'read');
   const env = serverEnv(io.env, allowed.token);
-  const file = client.configFile(io.env);
+  const file = client.configFile(io.env, deps.platform ?? process.platform);
   const setup =
     client.key === 'claude-code'
       ? `claude ${claudeAddArgs(launch, env).map(shellWord).join(' ')}`
