@@ -1,4 +1,4 @@
-// The Navigator's middle column, built from the brain data the page already holds: one row per thread, note or file.
+// The Threads view's middle column, built from the brain data the page already holds: one row per thread, note or file.
 // Pure, so the tests can check it.
 
 import type { BrainData } from '../../src/server/queries.ts';

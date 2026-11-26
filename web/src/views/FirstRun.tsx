@@ -334,7 +334,7 @@ function Grow({ owners }: { owners: Record<string, string> }) {
         </p>
       ) : (
         phase === 'done' &&
-        hubs === 0 && <p class="soft small">Hubs appear once the organiser has run. Start it any time from Navigator’s Runs, or type “organise” in the command bar.</p>
+        hubs === 0 && <p class="soft small">Hubs appear once the organiser has run. Start it any time from Runs in Threads, or type “organise” in the command bar.</p>
       )}
       {phase === 'done' && (
         <>
@@ -344,7 +344,7 @@ function Grow({ owners }: { owners: Record<string, string> }) {
               <Kbd>{MOD}K</Kbd> searches, answers questions and runs commands.
             </li>
             <li>
-              Keys <Kbd>1</Kbd> to <Kbd>8</Kbd> move between views. Learn, on <Kbd>7</Kbd>, explains the shapes.
+              Keys <Kbd>1</Kbd> to <Kbd>8</Kbd> move between views. Guide, on <Kbd>7</Kbd>, explains the shapes.
             </li>
           </ol>
           <div class="fr-actions">
