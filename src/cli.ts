@@ -63,7 +63,7 @@ Your record:
 ${STORE_SEARCH_HELP}  show <entry>              Print one entry
   thread <thread>           Print a whole thread
   history <entry>           List an entry's versions
-${STORE_HELP}  stats                    Counts and the busiest months
+${STORE_HELP}  stats                     Counts and the busiest months
   sources                   List sources with their status
   exclude <source>          Leave a source out of search and the map
   include <source>          Bring an excluded source back

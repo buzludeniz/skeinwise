@@ -44,6 +44,17 @@ describe('the skeinwise command', () => {
     expect(JSON.parse((await cli('version', '--json')).out)).toEqual({ version: expect.stringMatching(/^\d+\.\d+\.\d+$/) });
   });
 
+  it('starts every description in the help at column 28, or 31 in the sections with long commands', async () => {
+    // A description one column off (stats was at 27) reads as a typo in the list.
+    const off = (await cli('help')).out
+      .split('\n')
+      .flatMap((line) => {
+        const gap = /^( {2}| {6})\S.*?\S {2,}(?=\S)/.exec(line);
+        return gap && gap[0].length !== 28 && gap[0].length !== 31 ? [`${gap[0].length}: ${line.trim()}`] : [];
+      });
+    expect(off).toEqual([]);
+  });
+
   it('keeps sync hidden in v1.0: no command, no flags, no help; export stays', async () => {
     const help = (await cli('help')).out;
     expect(help).toContain('export [<file>]');
