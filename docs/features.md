@@ -257,7 +257,7 @@ Details: [mcp.md](mcp.md).
 | `skeinwise import <path>…` | Imports exports, history folders or note folders |
 | `skeinwise search <words> [--project <name>]` | Full-text search; `--project` keeps to coding sessions run in that folder (a name or a path) |
 | `skeinwise history <entry>`, `skeinwise restore <entry> <version>` | Lists an entry's versions; brings an old one back as a new version |
-| `skeinwise ask <question>` | A question, answered as a view |
+| `skeinwise ask <question> [--project <name>]` | A question, answered as a view; `--project` as for search |
 | `skeinwise run <task> [--scope new]` | Runs an organiser task |
 | `skeinwise runs`, `skeinwise undo <run>` | Lists runs; undoes one |
 | `skeinwise note <text>` | Appends to today's daily note |

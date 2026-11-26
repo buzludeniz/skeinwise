@@ -1,13 +1,13 @@
 import { spawn } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AGENT_CLIENTS, type ConnectDeps, connect, launchCommand, type SetupCtx, shellWord, withoutCodexEntry } from '../src/connect.ts';
 import { writeDemo } from '../src/demo/demo.ts';
 import { UsageError } from '../src/errors.ts';
 import { openHome } from '../src/home.ts';
-import { agentOfToken, readAccess } from '../src/mcp/access.ts';
+import { agentOfToken, quoteArg, readAccess } from '../src/mcp/access.ts';
 import { FRAME_OPEN, unframe } from '../src/mcp/frame.ts';
 import { SETUP_COMMANDS, SETUP_HELP, setup } from '../src/setup.ts';
 import { demoRecord, LEGACY_VERSION } from './mcp/helpers.ts';
@@ -49,7 +49,7 @@ function setupCtx(args: string[], values: SetupCtx['values'] = {}, ask?: (q: str
     io: {
       out: (t) => (output.out += t),
       err: (t) => (output.err += t),
-      env: { HOME: user, SKEINWISE_HOME: home, PATH: `${bin}:/usr/bin:/bin`, CLAUDE_CALLS: calls },
+      env: { HOME: user, SKEINWISE_HOME: home, PATH: [bin, '/usr/bin', '/bin'].join(delimiter), CLAUDE_CALLS: calls },
       now: () => NOW,
       ...(ask
         ? {
@@ -111,7 +111,9 @@ function search(command: string, args: string[], env: Record<string, string>): P
 describe('skeinwise connect', () => {
   beforeEach(() => demoRecord(dir, home).db.close());
 
-  it('connect claude-code writes nothing without --yes and prints a command that works', async () => {
+  // Skeinwise runs claude itself only off Windows, and the line it prints is split as a POSIX shell splits it. What
+  // Windows does instead is the test 'prints the Claude Code command on Windows but never runs it there'.
+  it.skipIf(process.platform === 'win32')('connect claude-code writes nothing without --yes and prints a command that works', async () => {
     fakeClaude();
     const { ctx, output } = setupCtx(['claude-code']);
     expect(await connect(ctx, DEPS)).toBe(0);
@@ -143,7 +145,8 @@ describe('skeinwise connect', () => {
     expect((unframe(text) as { entries: unknown[] }).entries.length).toBeGreaterThan(0);
   }, 60_000);
 
-  it('runs claude mcp add with --yes, after keeping a copy of .claude.json', async () => {
+  // The fake claude is a shell script, and Windows never runs claude (see above).
+  it.skipIf(process.platform === 'win32')('runs claude mcp add with --yes, after keeping a copy of .claude.json', async () => {
     fakeClaude();
     writeFileSync(join(user, '.claude.json'), '{"numStartups": 3}\n');
     const { ctx, output } = setupCtx(['claude-code'], { yes: true, write: true });
@@ -164,15 +167,18 @@ describe('skeinwise connect', () => {
     expect(output.out).toContain(`kept at ${copy}`);
   });
 
-  it('says what went wrong when claude mcp add fails', async () => {
+  // As above: a shell-script fake, and Windows never runs claude.
+  it.skipIf(process.platform === 'win32')('says what went wrong when claude mcp add fails', async () => {
     fakeClaude('echo "boom: config locked" >&2; exit 1');
     await expect(connect(setupCtx(['claude-code'], { yes: true }).ctx, DEPS)).rejects.toThrow(/claude mcp add failed: boom: config locked/);
   });
 
   it('refuses --yes without claude on PATH, before the token changes', async () => {
+    // Off Windows; on Windows connect refuses --yes for Claude Code before it looks (the next test).
+    const posix = { ...DEPS, platform: 'linux' as const };
     const { ctx } = setupCtx(['claude-code'], { yes: true });
-    await expect(connect(ctx, DEPS)).rejects.toThrow(UsageError);
-    await expect(connect(ctx, DEPS)).rejects.toThrow(/claude command isn't on your PATH/);
+    await expect(connect(ctx, posix)).rejects.toThrow(UsageError);
+    await expect(connect(ctx, posix)).rejects.toThrow(/claude command isn't on your PATH/);
     expect(readAccess(home).agents['claude-code']).toBeUndefined();
   });
 
@@ -322,12 +328,16 @@ describe('skeinwise connect', () => {
 
 describe('the command an agent starts', () => {
   it('uses npx when this CLI came from npx, the skeinwise on PATH, or else this node and file', () => {
-    const env = { PATH: `${bin}:/usr/bin:/bin` };
+    const env = { PATH: [bin, '/usr/bin', '/bin'].join(delimiter) };
     expect(launchCommand(env, { script: '/home/x/.npm/_npx/abc/node_modules/skeinwise/dist/src/cli.js', node: '/n' }).args).toEqual(['-y', 'skeinwise@1', 'mcp']);
     expect(launchCommand(env, DEPS)).toEqual({ command: process.execPath, args: [resolve('src/cli.ts'), 'mcp'] });
-    writeFileSync(join(bin, 'skeinwise'), '#!/bin/sh\n');
-    chmodSync(join(bin, 'skeinwise'), 0o755);
-    expect(launchCommand(env, DEPS)).toEqual({ command: join(bin, 'skeinwise'), args: ['mcp'] });
+    // npm puts skeinwise.cmd on PATH on Windows, and skeinwise elsewhere.
+    for (const name of ['skeinwise', 'skeinwise.cmd']) {
+      writeFileSync(join(bin, name), '');
+      chmodSync(join(bin, name), 0o755);
+    }
+    expect(launchCommand(env, { ...DEPS, platform: 'linux' })).toEqual({ command: join(bin, 'skeinwise'), args: ['mcp'] });
+    expect(launchCommand(env, { ...DEPS, platform: 'win32' })).toEqual({ command: join(bin, 'skeinwise.cmd'), args: ['mcp'] });
   });
 
   it('quotes a word only when the shell needs it', () => {
@@ -352,7 +362,7 @@ describe('skeinwise setup', () => {
     expect(await setup(ctx)).toBe(0);
     expect(output.out).toContain('Claude Code history: ');
     expect(output.out).toContain('Notes: Notes: 1 note');
-    expect(output.out).toContain(`skeinwise import ${join(user, 'Documents', 'Notes')}`);
+    expect(output.out).toContain(`skeinwise import ${quoteArg(join(user, 'Documents', 'Notes'))}`);
     expect(output.out).toContain('or all at once: skeinwise setup --yes');
     expect(output.out).toContain('skeinwise connect claude-code');
     const store = openHome(home);
@@ -362,8 +372,12 @@ describe('skeinwise setup', () => {
   });
 
   it('brings everything in with --yes, sums it up, and finds it already in the next time', async () => {
+    fakeClaude();
     const first = setupCtx([], { yes: true });
     expect(await setup(first.ctx)).toBe(0);
+    // Setup names the connect command and never runs claude itself, on any OS.
+    expect(first.output.out).toContain('skeinwise connect claude-code');
+    expect(existsSync(calls)).toBe(false);
     expect(first.output.out).toMatch(/Claude Code: \d+ new entries in \d+ conversations/);
     expect(first.output.out).toMatch(/Notes: 1 new entry\n/);
     expect(first.output.out).toContain('Notes came in as your own words');
@@ -402,6 +416,16 @@ describe('skeinwise setup', () => {
     expect(result!.found).toHaveLength(2);
     expect(result!.brought.every((b) => b.results.length > 0)).toBe(true);
     expect(result!.agents).toEqual(['claude-code']);
+  });
+
+  // The Windows side of runClaude: setup's connect, the one the CLI runs, refuses --yes for Claude Code there.
+  it.runIf(process.platform === 'win32')("setup's connect claude-code --yes refuses on Windows and runs nothing", async () => {
+    fakeClaude();
+    writeFileSync(join(bin, 'claude.cmd'), '@exit /b 0\r\n');
+    const { ctx } = setupCtx(['claude-code'], { yes: true });
+    await expect(SETUP_COMMANDS.connect!(ctx)).rejects.toThrow(/On Windows, Skeinwise doesn't run claude mcp add for you/);
+    expect(readAccess(home).agents['claude-code']).toBeUndefined();
+    expect(existsSync(calls)).toBe(false);
   });
 
   it('is wired as setup, connect and doctor, with help lines', () => {

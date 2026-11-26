@@ -182,9 +182,13 @@ describe('search --project (acceptance)', () => {
       ['s-plot-web', '/home/mara/code/plotline/web', 'The plotline page shows reminders twice'],
       ['s-plotter', '/home/mara/code/plotter', 'Reminders in plotter are fine'],
       ['s-ledger', '/home/mara/code/ledger', 'Reminders for invoices go out twice'],
+      // Sessions run on Windows record the folder with backslashes.
+      ['w-plot', 'C:\\Users\\mara\\code\\plotline', 'The kettle test runs twice in plotline'],
+      ['w-plot-web', 'C:\\Users\\mara\\code\\plotline\\web', 'The plotline page boils the kettle twice'],
+      ['w-plotter', 'C:\\Users\\mara\\code\\plotter', 'The kettle in plotter is fine'],
     ];
     for (const [id, cwd, prompt] of sessions) {
-      const folder = join(projects, cwd.replaceAll('/', '-'));
+      const folder = join(projects, cwd.replace(/[\\/:]/g, '-'));
       mkdirSync(folder, { recursive: true });
       writeFileSync(join(folder, `${id}.jsonl`), claudeCodeSession(id, cwd, 'main', prompt));
     }
@@ -209,6 +213,16 @@ describe('search --project (acceptance)', () => {
     expect(projectsOf(store.search('reminders', { project: '/home/mara/code/plotline/web' }))).toEqual(['/home/mara/code/plotline/web']);
     expect(store.search('reminders', { project: '/mara/code/plotline' })).toEqual([]);
     expect(() => store.search('reminders', { project: ' / ' })).toThrow('Give a project');
+  });
+
+  it('takes \\ and / alike between folders, so a Windows folder matches by name or in full', () => {
+    const plotline = ['C:\\Users\\mara\\code\\plotline', 'C:\\Users\\mara\\code\\plotline\\web'];
+    expect(projectsOf(store.search('kettle', { project: 'plotline' }))).toEqual(plotline);
+    expect(projectsOf(store.search('kettle', { project: 'code\\plotline' }))).toEqual(plotline);
+    expect(projectsOf(store.search('kettle', { project: 'C:\\Users\\mara\\code\\plotline\\' }))).toEqual(plotline);
+    expect(projectsOf(store.search('kettle', { project: 'C:/Users/mara/code/plotline/web' }))).toEqual([plotline[1]]);
+    expect(store.search('kettle', { project: 'plot' })).toEqual([]);
+    expect(store.search('kettle', { project: '\\Users\\mara\\code\\plotline' })).toEqual([]);
   });
 
   it('no "you" result holds a summary, a reminder or a tool’s output', () => {

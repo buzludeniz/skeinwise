@@ -4,11 +4,11 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Ctx, Values } from '../../src/cli-organiser.ts';
 import { DEMO_NOW } from '../../src/demo/demo.ts';
-import { openHome } from '../../src/home.ts';
 import { newNote } from '../../src/notes.ts';
 import { main } from '../../src/cli.ts';
 import { EXPORT_PLAIN_TEXT, phraseGrid, type SecretIo, SYNC_COMMANDS, SYNC_EXPERIMENTAL, SYNC_FLAGS, SYNC_HELP } from '../../src/sync/commands.ts';
 import { readState } from '../../src/sync/sync.ts';
+import { closeRecords, openRecord } from './fixture.ts';
 
 // The export and sync commands as the CLI will call them, with a Ctx built here and a fake hidden prompt. These run
 // scrypt on its real settings. Every passphrase here is made up for the test.
@@ -21,7 +21,10 @@ let n = 0;
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'skeinwise-sync-cmd-'));
 });
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  closeRecords();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 interface Run {
   code: number;
@@ -34,7 +37,7 @@ interface Run {
 /** A record folder (a computer) and a way to run a command in it. */
 function computer(name = `c${++n}`) {
   const home = join(dir, name);
-  const store = openHome(home, () => DEMO_NOW);
+  const store = openRecord(home);
   const run = async (args: string[], values: Values & Record<string, unknown> = {}, answers: (string | null)[] = [], asked: string[] = []): Promise<Run> => {
     let out = '';
     let err = '';
@@ -132,7 +135,8 @@ describe('the sync commands', () => {
     newNote(a.store, a.home, 'Made-up note', new Date(DEMO_NOW));
     const file = join(dir, 'e.zip');
     const r = await a.run(['export', file]);
-    expect(r.out).toMatch(new RegExp(`Wrote ${file} .*0 chats, 0 other entries and 1 notes as Markdown`));
+    expect(r.out).toContain(`Wrote ${file} (`);
+    expect(r.out).toMatch(/\): 0 chats, 0 other entries and 1 notes as Markdown/);
     // L18: every export says it is plain text, on stderr so --json output stays one JSON value. The zip is owner-only.
     expect(r.err).toBe(`${EXPORT_PLAIN_TEXT}\n`);
     expect(EXPORT_PLAIN_TEXT).toMatch(/plain text, not encrypted/);

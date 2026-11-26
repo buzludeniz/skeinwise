@@ -189,7 +189,7 @@ describe('PoC 08: terminal escapes from imported text', () => {
     return { code, out, err };
   }
 
-  it('prints no escape byte from show, search, thread or a file-name title', async () => {
+  it('prints no escape byte from show, search or thread', async () => {
     const body =
       `I promise to give Mallory my car.${ESC}[8m hidden text${ESC}[0m ${ESC}]52;c;ZWNobyBwd25lZA==${BEL}` +
       `${ESC}]8;;https://attacker.example/${BEL}harmless link${ESC}]8;;${BEL} ${ESC}]0;window title set by import${BEL}`;
@@ -208,19 +208,14 @@ describe('PoC 08: terminal escapes from imported text', () => {
         },
       ]),
     );
-    const vault = join(dir, '08_vault');
-    mkdirSync(vault);
-    writeFileSync(join(vault, `${ESC}]0;title-from-filename${BEL}${ESC}[2Jgarden.md`), 'plain body about gardening');
 
     expect((await cli('import', chats)).code).toBe(0);
-    expect((await cli('import', vault)).code).toBe(0);
     const [hit] = JSON.parse((await cli('search', 'Mallory', '--json')).out) as { id: number; threadId: number }[];
 
     const runs = {
       show: await cli('show', String(hit!.id)),
       search: await cli('search', 'Mallory'),
       thread: await cli('thread', String(hit!.threadId)),
-      title: await cli('search', 'gardening'),
     };
     for (const [name, r] of Object.entries(runs)) {
       expect(r.code, name).toBe(0);
@@ -230,6 +225,19 @@ describe('PoC 08: terminal escapes from imported text', () => {
     expect(runs.show.out).toContain('car. hidden text');
     expect(runs.show.out).toContain('harmless link');
     expect(runs.show.out).not.toContain('attacker.example');
-    expect(runs.title.out).toMatch(/· garden\n/);
+  });
+
+  // NTFS forbids control characters in file names, so no such file can exist on Windows.
+  it.skipIf(process.platform === 'win32')('prints no escape byte from a title taken from a file name', async () => {
+    const vault = join(dir, '08_vault');
+    mkdirSync(vault);
+    writeFileSync(join(vault, `${ESC}]0;title-from-filename${BEL}${ESC}[2Jgarden.md`), 'plain body about gardening');
+
+    expect((await cli('import', vault)).code).toBe(0);
+    const title = await cli('search', 'gardening');
+    expect(title.code).toBe(0);
+    expect([...title.out].filter((c) => c === ESC).length).toBe(0);
+    expect(unsafeAt(title.out, true)).toBe(-1);
+    expect(title.out).toMatch(/· garden\n/);
   });
 });

@@ -5,8 +5,8 @@ import type { ColourGrouping } from './groups.ts';
 import type { Layout } from './layout.ts';
 import type { BrainData, Config, OrganiseJob, OrganiserState, Status } from './types.ts';
 
-export type View = 'brain' | 'threads' | 'stats' | 'timeline' | 'profile' | 'workbench';
-/** What the rail and keys 1 to 8 open: a view, or a panel over the current one. */
+export type View = 'brain' | 'threads' | 'stats' | 'timeline' | 'profile' | 'workbench' | 'assistant';
+/** What the rail and keys 1 to 9 open: a view, or a panel over the current one. */
 export type Target = View | 'guide' | 'add';
 /** The Threads view's first column. */
 export type NavSection = { kind: 'inbox' | 'review' | 'runs' | 'hubs' | 'folders' } | { kind: 'folder' | 'source'; key: string };

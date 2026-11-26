@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { strFromU8, unzipSync } from 'fflate';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { notesDir } from '../../src/notes.ts';
@@ -8,7 +8,7 @@ import { listRuns } from '../../src/organiser/runs.ts';
 import { liveHubs } from '../../src/organiser/views.ts';
 import type { Store } from '../../src/store/store.ts';
 import { exportZip, writeExport } from '../../src/sync/export.ts';
-import { count, demoRecord } from './fixture.ts';
+import { closeRecords, count, demoRecord } from './fixture.ts';
 import { expectMode } from '../modes.ts';
 
 // `skeinwise export` on the demo record: what is in the zip, and that it is readable without Skeinwise.
@@ -26,7 +26,10 @@ beforeAll(async () => {
   const zip = unzipSync(exportZip(a.store, a.home).zip);
   files = Object.fromEntries(Object.entries(zip).map(([k, v]) => [k, strFromU8(v)]));
 });
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  closeRecords();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 const under = (prefix: string) => Object.keys(files).filter((k) => k.startsWith(top + prefix));
 
@@ -58,7 +61,8 @@ describe('skeinwise export', () => {
     const onDisk = readdirSync(notesDir(a.home), { recursive: true, withFileTypes: true }).filter((e) => e.isFile());
     expect(under('notes/').length).toBe(onDisk.length);
     for (const e of onDisk) {
-      const rel = join(e.parentPath, e.name).slice(notesDir(a.home).length + 1);
+      // The zip names files with /, on Windows too.
+      const rel = relative(notesDir(a.home), join(e.parentPath, e.name)).split(sep).join('/');
       expect(files[`${top}notes/${rel}`]).toBe(readFileSync(join(e.parentPath, e.name), 'utf8'));
     }
     expect(under('entries/notes/')).toEqual([]);
