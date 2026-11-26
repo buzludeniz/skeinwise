@@ -3,11 +3,18 @@
 // thinking on …" the first mention followed by every decision and change of course, all oldest first. Any other
 // question is a ranked search, your own words first. With a model, a short answer is added that cites the entries
 // it rests on; the No-AI engine shows the entries alone.
+//
+// Asked with `live` (src/server/ask-stream.ts), the entries are handed over as soon as they are found, the answer's
+// text as the model writes it, and the caller can stop the model. The text shown while it streams is the "answer"
+// field read out of the JSON as it arrives, cleaned as it goes (src/safe-stream.ts); the result at the end is the
+// checked answer, as without `live`.
 
 import { UsageError } from '../errors.ts';
+import { safeStream } from '../safe-stream.ts';
 import { safeBlock } from '../safe-text.ts';
 import type { Entry, SearchHit, Store } from '../store/store.ts';
 import { CHANGE_CUES, DECISION_CUES } from './cues.ts';
+import type { StreamingClient } from './model.ts';
 import { checkBudget } from './organise.ts';
 import { AnswerError, cited, day, invalid, isRecord, type ModelClient, type ModelRequest } from './plan.ts';
 import { type RecordView, unlink } from './record.ts';
@@ -54,9 +61,26 @@ export interface AskOptions {
   project?: string;
 }
 
-/** A model sees at most this many entries, and this much of each. */
+/** What an ask reports while it runs, and how its caller stops the model. */
+export interface AskLive {
+  /** The entries found, before any model is asked: the result as the No-AI engine gives it. */
+  onHits?: (result: AskResult) => void;
+  /** What the model is doing, in a few words. */
+  onStatus?: (line: string) => void;
+  /** The answer's text as the model writes it, cleaned for display: join the pieces. Only the local engine streams. */
+  onText?: (piece: string) => void;
+  /** The answer couldn't be used and is asked for once more: the text shown so far is void. */
+  onRestart?: (why: string) => void;
+  /** Stops the model: ask then throws a ModelCancelledError, and the run records what was used. */
+  signal?: AbortSignal;
+}
+
+/**
+ * A model sees at most this many entries, and of each the sentence that answers with the ones beside it while they
+ * fit: the prompt is most of an answer's wait (a 4B model on a laptop reads a few hundred tokens a second).
+ */
 const MODEL_HITS = 12;
-const HIT_CHARS = 500;
+const EXCERPT_CHARS = 300;
 const QUOTE_CHARS = 300;
 
 const PATTERNS: { kind: Exclude<AskKind, 'any'>; re: RegExp }[] = [
@@ -129,6 +153,35 @@ function prose(e: Entry): string[] {
   return list.length ? list : sentences(unlink(e.body));
 }
 
+/**
+ * What a model sees of an entry: the sentence quoted for it, then the sentences after and before it while they fit in
+ * EXCERPT_CHARS, with "…" where the entry goes on. An entry whose quote isn't one of its sentences shows the quote.
+ */
+function excerpt(e: Entry, quoted: string): string {
+  const list = prose(e).map((s) => s.replace(/\s+/g, ' ').trim());
+  const at = list.findIndex((s) => clip(s).replace(/\s+/g, ' ').trim() === quoted.replace(/\s+/g, ' ').trim());
+  if (at < 0) return quoted.replace(/\s+/g, ' ').trim();
+  let text = clip(list[at]!);
+  let lo = at;
+  let hi = at;
+  for (let grew = true; grew; ) {
+    grew = false;
+    const next = list[hi + 1];
+    if (next !== undefined && text.length + 1 + next.length <= EXCERPT_CHARS) {
+      text = `${text} ${next}`;
+      hi += 1;
+      grew = true;
+    }
+    const prev = lo > 0 ? list[lo - 1] : undefined;
+    if (prev !== undefined && prev.length + 1 + text.length <= EXCERPT_CHARS) {
+      text = `${prev} ${text}`;
+      lo -= 1;
+      grew = true;
+    }
+  }
+  return `${lo > 0 ? '… ' : ''}${text}${hi < list.length - 1 ? ' …' : ''}`;
+}
+
 /** The first sentence that mentions the topic, or the entry's first sentence. */
 function quote(e: Entry, hasStem: (s: string) => boolean): string {
   const list = prose(e);
@@ -150,11 +203,12 @@ export function similarEntries(record: RecordView, entryId: number, limit: numbe
     .map(({ e, score }) => ({ ...hit(e, clip(prose(e)[0] ?? e.body.trim()), null), score: Math.round(score * 1000) / 1000 }));
 }
 
-export async function ask(store: Store, record: RecordView, question: string, options: AskOptions): Promise<AskResult> {
+export async function ask(store: Store, record: RecordView, question: string, options: AskOptions, live: AskLive = {}): Promise<AskResult> {
   const { kind, topic } = parseQuestion(question);
   const hits = findAnswers(store, record, kind, topic, options.limit, options.project);
   const base: AskResult = { question, kind, topic, hits, answer: null, cites: [], engine: options.engine, model: null, runId: null, message: null };
   if (!hits.length) return { ...base, message: `Nothing in your record matches "${topic}".` };
+  live.onHits?.({ ...base, engine: 'none' });
   if (options.engine === 'none') return base;
   const client = options.client;
   if (!client) throw new Error(`The ${options.engine} engine needs a model client.`);
@@ -164,12 +218,36 @@ export async function ask(store: Store, record: RecordView, question: string, op
     const sent = client.prepare(request);
     checkBudget(store, options.budget, Math.ceil((sent.system.length + sent.user.length) / 4) + request.maxTokens, 'ask');
   }
+  live.onStatus?.('Looking for the model');
   await client.probe();
   const runId = startRun(store.db, { task: 'ask', engine: client.engine, model: client.model, scope: 'all', mark: currentMark(store.db), now: store.now() });
   let tokensIn = 0;
   let tokensOut = 0;
   try {
-    const reply = await client.send(request).catch((err: unknown) => {
+    const n = Math.min(hits.length, MODEL_HITS);
+    live.onStatus?.(`${client.model || 'The model'} is reading ${n} ${n === 1 ? 'entry' : 'entries'}`);
+    const streaming = isStreaming(client) && (live.onText || live.onRestart || live.signal);
+    const shown = answerText((piece) => live.onText?.(piece));
+    let writing = false;
+    const sending = streaming
+      ? client.stream(request, {
+          onText: (piece) => {
+            if (!writing) {
+              writing = true;
+              live.onStatus?.('Writing the answer');
+            }
+            shown.push(piece);
+          },
+          onRestart: (why) => {
+            shown.restart();
+            writing = false;
+            live.onRestart?.(why);
+            live.onStatus?.("Asking again: that answer couldn't be used");
+          },
+          ...(live.signal ? { signal: live.signal } : {}),
+        })
+      : client.send(request);
+    const reply = await sending.catch((err: unknown) => {
       if (err instanceof AnswerError) {
         tokensIn = err.tokensIn;
         tokensOut = err.tokensOut;
@@ -201,25 +279,92 @@ export async function ask(store: Store, record: RecordView, question: string, op
   }
 }
 
+function isStreaming(client: ModelClient): client is StreamingClient {
+  return typeof (client as Partial<StreamingClient>).stream === 'function';
+}
+
+/**
+ * Shows the "answer" text of a JSON answer while it arrives: decodes what is certain, holds back half of a surrogate
+ * pair, and cleans it on the way out. Leading space is dropped, as the checked answer trims it.
+ */
+function answerText(onText: (piece: string) => void) {
+  let raw = '';
+  let shown = 0;
+  let ended = false;
+  let clean = safeStream('block');
+  return {
+    push(piece: string) {
+      if (ended) return;
+      raw += piece;
+      const so = answerSoFar(raw);
+      const text = so.text.replace(/^\s+/, '');
+      let upto = text.length;
+      if (!so.ended && upto > 0 && isHighSurrogate(text.charCodeAt(upto - 1))) upto--;
+      let out = upto > shown ? clean.push(text.slice(shown, upto)) : '';
+      shown = Math.max(shown, upto);
+      if (so.ended) {
+        ended = true;
+        out += clean.end();
+      }
+      if (out) onText(out);
+    },
+    restart() {
+      raw = '';
+      shown = 0;
+      ended = false;
+      clean = safeStream('block');
+    },
+  };
+}
+
+const isHighSurrogate = (c: number) => c >= 0xd800 && c <= 0xdbff;
+const ANSWER_STARTS = /"answer"\s*:\s*"/;
+const ESCAPES: Record<string, string> = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
+
+/**
+ * The text of the "answer" field in a JSON answer that is still arriving, decoded as far as it is certain, and
+ * whether its closing quote has come. A malformed escape ends it: the checked answer decides what that was.
+ */
+export function answerSoFar(raw: string): { text: string; ended: boolean } {
+  const start = ANSWER_STARTS.exec(raw);
+  if (!start) return { text: '', ended: false };
+  let text = '';
+  let i = start.index + start[0].length;
+  while (i < raw.length) {
+    const c = raw[i]!;
+    if (c === '"') return { text, ended: true };
+    if (c !== '\\') {
+      text += c;
+      i += 1;
+      continue;
+    }
+    const e = raw[i + 1];
+    if (e === undefined) break;
+    if (e === 'u') {
+      const hex = raw.slice(i + 2, i + 6);
+      if (hex.length < 4 && /^[0-9a-fA-F]*$/.test(hex)) break;
+      if (!/^[0-9a-fA-F]{4}$/.test(hex)) return { text, ended: true };
+      text += String.fromCharCode(parseInt(hex, 16));
+      i += 6;
+      continue;
+    }
+    const plain = ESCAPES[e];
+    if (plain === undefined) return { text, ended: true };
+    text += plain;
+    i += 2;
+  }
+  return { text, ended: false };
+}
+
 function answerRequest(store: Store, question: string, hits: AskHit[]): ModelRequest {
   const purpose = 'the answer';
   const known = new Map(hits.map((h, i) => [`E${i + 1}`, h.entryId]));
   const lines = hits.map((h, i) => {
-    const body = (store.getEntry(h.entryId)?.body ?? '').replace(/\s+/g, ' ');
-    const more = body.length > HIT_CHARS ? `${body.slice(0, HIT_CHARS)}…` : body;
-    return `E${i + 1} (${h.date}, ${h.speaker === 'you' ? 'me' : h.speaker}${h.where ? `, "${h.where}"` : ''}): ${more}`;
+    const entry = store.getEntry(h.entryId);
+    const text = entry ? excerpt(entry, h.quote) : h.quote;
+    return `E${i + 1} (${h.date}, ${h.speaker === 'you' ? 'me' : h.speaker}${h.where ? `, "${h.where}"` : ''}): ${text}`;
   });
-  const user = [
-    `My question: ${question}`,
-    '',
-    'Entries from my notes and chats that may answer it:',
-    ...lines,
-    '',
-    'Answer with JSON only: {"answer": "...", "cites": ["E1"]}',
-    '- answer: one to three plain sentences that answer the question from these entries, with dates where they matter;',
-    '- cites: the entries the answer rests on.',
-    'If the entries do not answer it: {"answer": "", "cites": []}.',
-  ].join('\n');
+  const user = [`My question: ${question}`, '', 'Entries from my notes and chats that may answer it:', ...lines].join('\n');
   const check = (answer: unknown) => {
     if (!isRecord(answer)) invalid(purpose, 'expected a JSON object');
     if (typeof answer.answer !== 'string') invalid(purpose, '"answer" must be text');
@@ -232,7 +377,14 @@ function answerRequest(store: Store, question: string, hits: AskHit[]): ModelReq
   };
   return {
     purpose,
-    system: "You answer one person's questions from their own notes and chats. You only use what the entries say. You answer with JSON only.",
+    // The same for every question, so a local server keeps it cached between asks.
+    system: [
+      "You answer one person's questions from their own notes and chats. You only use what the entries say.",
+      'Answer with JSON only: {"answer": "...", "cites": ["E1"]}',
+      '- answer: one to three plain sentences that answer the question from these entries, with dates where they matter;',
+      '- cites: the entries the answer rests on.',
+      'If the entries do not answer it: {"answer": "", "cites": []}.',
+    ].join('\n'),
     user,
     maxTokens: 300,
     check,

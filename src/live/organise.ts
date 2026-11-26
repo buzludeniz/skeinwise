@@ -6,10 +6,18 @@
 // Background passes never pick an engine of their own. The local model is used without asking; an outside model only
 // when `liveRemote` is on, and always within the monthly budget; with `none` the No-AI engine runs. If the model
 // server doesn't answer, the pass stops and says so, and the next capture tries again.
+//
+// A pass reads the whole record into memory (RecordView), however little is new. A watching live runs each pass in a
+// child process (`isolate`, src/live/pass-process.ts), so that memory goes when the pass ends, and live idles at what
+// capture alone needs (the 150 MB budget of plan 7.2). Run in live's own process, the heap a pass grew stayed resident
+// for a minute or more after it was over; run in a worker thread, V8 kept the worker's pages in a pool for the main
+// thread to reuse.
 
-import { execFileSync } from 'node:child_process';
+import { type ChildProcess, execFileSync, fork } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { cpus, loadavg } from 'node:os';
+import { extname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../config.ts';
 import { readNotes } from '../notes.ts';
 import { createModel } from '../organiser/model.ts';
@@ -38,7 +46,22 @@ export interface BackgroundOptions {
   /** An unreadable live.json, moved aside (see {@link loadStatus}). */
   onWarning?: (line: string) => void;
   onDone?: (organised: Organised) => void;
+  /**
+   * Runs each pass in a child process with its own connection to the record, so the memory the pass used is given
+   * back when it ends. The child uses the real clock, the global fetch and `env` as its environment, so a test that
+   * hands in its own clock or fetch leaves this off.
+   */
+  isolate?: boolean;
 }
+
+/** What a pass did, before the status file is written. */
+export type PassResult = Pick<Organised, 'entries' | 'runs' | 'notStarted' | 'waiting'>;
+
+/** What the pass process sends back. */
+export type PassReply = { type: 'progress'; line: string } | { type: 'done'; result: PassResult } | { type: 'error'; message: string };
+
+// Next to this file: pass-process.ts when run from source, pass-process.js once built.
+const PASS_PROCESS = fileURLToPath(new URL(`./pass-process${extname(fileURLToPath(import.meta.url))}`, import.meta.url));
 
 /** Runs organiser passes one at a time; a trigger during a pass queues exactly one more. */
 export class Background {
@@ -46,6 +69,7 @@ export class Background {
   private again = false;
   private stopped = false;
   private retry: ReturnType<typeof setTimeout> | undefined;
+  private child: ChildProcess | null = null;
   private readonly options: BackgroundOptions;
 
   constructor(options: BackgroundOptions) {
@@ -55,6 +79,11 @@ export class Background {
   /** Whether a pass is under way. */
   get active(): boolean {
     return this.running !== null;
+  }
+
+  /** Whether passes run in a child process (see {@link BackgroundOptions.isolate}). */
+  get isolated(): boolean {
+    return this.options.isolate === true;
   }
 
   trigger(): void {
@@ -78,6 +107,8 @@ export class Background {
   stop(): void {
     this.stopped = true;
     clearTimeout(this.retry);
+    // A pass in a child process finishes the step it is on and runs no more, as one in this process does.
+    if (this.child?.connected) this.child.send({ type: 'stop' });
     if (this.running) {
       const { store } = this.options;
       const now = store.now();
@@ -124,48 +155,94 @@ export class Background {
     }
 
     try {
-      const config = loadConfig(home);
-      if (config.engine === 'remote' && !config.liveRemote) {
-        organised.waiting = 'the outside model only organises in the background with: skeinwise config liveRemote on';
-        return finish();
-      }
-      const client = config.engine === 'none' ? undefined : createModel(config, config.engine, { fetch: this.options.fetch, env: this.options.env, home });
-      readNotes(store, home);
-      // The whole record in memory, built only once a step will use it: a record never organised needs none (L6).
-      let record: RecordView | undefined;
-      const notStarted = new Set<string>();
-      for (const step of steps(store, 'all').filter((s) => BACKGROUND_TASKS.includes(s.task))) {
-        const schemaId = step.schema?.id ?? null;
-        // A task that has never run over the whole record is left to `skeinwise run all`: its first pass covers
-        // everything, which is the user's call to make, not a background one.
-        if (lastMark(store.db, step.task, schemaId) === null) {
-          notStarted.add(step.task);
-          continue;
-        }
-        record ??= new RecordView(store);
-        const scoped = scopeEntries(store.db, record, { kind: 'new' }, step.task, schemaId);
-        if (!scoped.length) continue;
-        if (this.stopped) break;
-        const run = await runTask(store, record, {
-          task: step.task,
-          ...(step.schema ? { schema: step.schema } : {}),
-          scope: { kind: 'new' },
-          engine: config.engine,
-          ...(client ? { client } : {}),
-          // Small passes over new entries need no approval with the local model; an outside model keeps the limit.
-          yes: config.engine !== 'remote',
-          budget: config.budget,
-          progress: this.options.progress ?? (() => {}),
-        });
-        organised.runs.push(run.id);
-        organised.entries = Math.max(organised.entries, scoped.length);
-      }
-      if (notStarted.size) organised.notStarted = [...notStarted];
+      Object.assign(organised, this.options.isolate ? await this.inChild() : await organiseNew(store, home, { ...this.options, stopped: () => this.stopped }));
     } catch (err) {
       organised.error = (err as Error).message;
     }
     return finish();
   }
+
+  /** One pass in a child process; resolves with what it did, or rejects with the error that stopped it. */
+  private inChild(): Promise<PassResult> {
+    const { home, env } = this.options;
+    return new Promise((done, fail) => {
+      // Node's own flags carry over, less --input-type, which Node refuses for a script started from a file.
+      const execArgv = process.execArgv.filter((arg) => !arg.startsWith('--input-type'));
+      const child = fork(PASS_PROCESS, [], { env, execArgv, stdio: ['ignore', 'ignore', 'pipe', 'ipc'], serialization: 'advanced' });
+      this.child = child;
+      let stderr = '';
+      child.stderr?.on('data', (d: Buffer) => (stderr = (stderr + d.toString()).slice(-2000)));
+      let result: PassResult | null = null;
+      let error: string | null = null;
+      child.on('message', (reply: PassReply) => {
+        if (reply.type === 'progress') this.options.progress?.(reply.line);
+        else if (reply.type === 'done') result = reply.result;
+        else error = reply.message;
+      });
+      child.on('error', (err) => {
+        this.child = null;
+        fail(err);
+      });
+      child.on('close', (code, signal) => {
+        this.child = null;
+        if (result) done(result);
+        else if (error !== null) fail(new Error(error));
+        else fail(new Error(`The background pass stopped (${signal ?? `exit ${code}`})${stderr.trim() ? `: ${stderr.trim().split('\n').at(-1)}` : '.'}`));
+      });
+      child.send({ type: 'start', home });
+      if (this.stopped) child.send({ type: 'stop' });
+    });
+  }
+}
+
+/**
+ * Organises what is new since each background task last ran, in this process: the body of a pass, shared by
+ * {@link Background} and the pass process. Throws what stops it; the caller reports it.
+ */
+export async function organiseNew(
+  store: Store,
+  home: string,
+  deps: Pick<BackgroundOptions, 'fetch' | 'env' | 'progress'> & { stopped: () => boolean },
+): Promise<PassResult> {
+  const result: PassResult = { entries: 0, runs: [] };
+  const config = loadConfig(home);
+  if (config.engine === 'remote' && !config.liveRemote) {
+    result.waiting = 'the outside model only organises in the background with: skeinwise config liveRemote on';
+    return result;
+  }
+  const client = config.engine === 'none' ? undefined : createModel(config, config.engine, { fetch: deps.fetch, env: deps.env, home });
+  readNotes(store, home);
+  // The whole record in memory, built only once a step will use it: a record never organised needs none (L6).
+  let record: RecordView | undefined;
+  const notStarted = new Set<string>();
+  for (const step of steps(store, 'all').filter((s) => BACKGROUND_TASKS.includes(s.task))) {
+    const schemaId = step.schema?.id ?? null;
+    // A task that has never run over the whole record is left to `skeinwise run all`: its first pass covers
+    // everything, which is the user's call to make, not a background one.
+    if (lastMark(store.db, step.task, schemaId) === null) {
+      notStarted.add(step.task);
+      continue;
+    }
+    record ??= new RecordView(store);
+    const scoped = scopeEntries(store.db, record, { kind: 'new' }, step.task, schemaId);
+    if (!scoped.length) continue;
+    if (deps.stopped()) break;
+    const run = await runTask(store, record, {
+      task: step.task,
+      ...(step.schema ? { schema: step.schema } : {}),
+      scope: { kind: 'new' },
+      engine: config.engine,
+      ...(client ? { client } : {}),
+      // Small passes over new entries need no approval with the local model; an outside model keeps the limit.
+      yes: config.engine !== 'remote',
+      budget: config.budget,
+      progress: deps.progress ?? (() => {}),
+    });
+    result.runs.push(run.id);
+    result.entries = Math.max(result.entries, scoped.length);
+  }
+  if (notStarted.size) result.notStarted = [...notStarted];
+  return result;
 }
 
 /** Why organising should wait right now: the computer is busy, or it runs on a low battery. Null when it needn't. */
