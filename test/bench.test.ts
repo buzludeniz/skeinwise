@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { BUDGETS, judge, percentile, report, type Result } from '../bench/budgets.ts';
 import { planCorpus, writeCorpus, writeIncrement } from '../bench/corpus.ts';
-import { MCP_CALLS, parseOptions, prepare, runWorker, Stopped, webInitialJs } from '../bench/run.ts';
+import { MCP_CALLS, mcpResults, parseOptions, prepare, runWorker, Stopped, webInitialJs } from '../bench/run.ts';
 import { work } from '../bench/worker.ts';
 
 let dir: string;
@@ -68,6 +68,7 @@ describe('bench worker', () => {
     expect(brain.sizes[0]).toBeGreaterThan(100);
     const mcp = await work({ kind: 'mcp', calls: MCP_CALLS, hubs: 3 }, env);
     expect(mcp.times).toHaveLength(MCP_CALLS.length + 1); // list_hubs; no hubs before a run, so no read_hub
+    expect(mcp.tools).toEqual(['list_hubs', ...MCP_CALLS.map((c) => c.name)]);
     expect(Math.min(...mcp.sizes)).toBeGreaterThan(0);
     await work({ kind: 'cli', runs: [['run', 'hub', '--engine', 'none']] }, env);
     const withHubs = await work({ kind: 'mcp', calls: [], hubs: 3 }, env);
@@ -79,9 +80,13 @@ describe('bench budgets', () => {
   it('holds every measured budget of the plan, at both sizes where the plan sets one', () => {
     expect(BUDGETS.map((b) => b.key)).toEqual([
       'import.time', 'import.memory', 'search.p95', 'ask.time', 'similar.time', 'runAll.time', 'runAll.memory',
-      'incremental.time', 'live.searchable', 'live.idle', 'brain.gzip', 'web.js', 'mcp.p95', 'mcp.size', 'demo.time',
+      'incremental.time', 'live.searchable', 'live.idle', 'brain.gzip', 'web.js', 'mcp.p95', 'mcp.ask', 'mcp.size',
+      'demo.time',
     ]);
     expect(BUDGETS.find((b) => b.key === 'runAll.time')!.limit).toEqual({ '50k': 180_000, '150k': 720_000 });
+    expect(BUDGETS.find((b) => b.key === 'mcp.p95')!.limit).toEqual({ '50k': 200, '150k': 400 });
+    // An MCP ask with engine none is the same work as `ask --engine none`, so it takes the CLI's budget.
+    expect(BUDGETS.find((b) => b.key === 'mcp.ask')!.limit).toEqual(BUDGETS.find((b) => b.key === 'ask.time')!.limit);
   });
 
   it('calls a measure over its budget over, a missing or broken one failed, and one without a budget none', () => {
@@ -99,8 +104,19 @@ describe('bench budgets', () => {
     const text = report('50k', rows);
     expect(text).toContain('search p95');
     expect(text).toContain('Brain frame rate');
-    expect(text.trim().split('\n').at(-1)).toBe('3 of 15 measures over budget or failed at 50k: search p95; Live idle memory; Web initial JS (gzip).');
+    expect(text.trim().split('\n').at(-1)).toBe('3 of 16 measures over budget or failed at 50k: search p95; Live idle memory; Web initial JS (gzip).');
     expect(text).not.toMatch(/[─-╿\u001b]/); // no box drawing, no escapes
+  });
+
+  it('takes the MCP p95 over the lookups only, and the slowest ask apart', () => {
+    const tools = ['list_hubs', 'search', 'ask', 'timeline', 'ask', 'read_hub'];
+    const r = { times: [10, 20, 900, 30, 1_500, 40], sizes: [100, 200, 2_048, 300, 400, 500], out: [], peakMB: 0, tools };
+    expect(mcpResults(r)).toEqual({
+      'mcp.p95': { value: 40, note: '4 calls' },
+      'mcp.ask': { value: 1_500, note: 'the slowest of 2' },
+      'mcp.size': { value: 2 },
+    });
+    expect(() => mcpResults({ ...r, tools: tools.map(() => 'search') })).toThrow(/No MCP ask/);
   });
 
   it('takes the nearest-rank percentile', () => {

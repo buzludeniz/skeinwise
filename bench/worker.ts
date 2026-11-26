@@ -29,6 +29,8 @@ export interface WorkerReport {
   out: string[];
   /** The process's peak resident memory, in MB. */
   peakMB: number;
+  /** The tool of each MCP call, in the order of `times`; empty for the other jobs. */
+  tools: string[];
 }
 
 const MCP_VERSION = '2025-06-18';
@@ -37,7 +39,7 @@ const MCP_VERSION = '2025-06-18';
 export async function work(job: Job, env: NodeJS.ProcessEnv): Promise<WorkerReport> {
   const home = env.SKEINWISE_HOME;
   if (!home) throw new Error('SKEINWISE_HOME is not set; the bench sets it to a folder of its own.');
-  const report: WorkerReport = { times: [], sizes: [], out: [], peakMB: 0 };
+  const report: WorkerReport = { times: [], sizes: [], out: [], peakMB: 0, tools: [] };
   if (job.kind === 'cli') {
     for (const argv of job.runs) {
       let out = '';
@@ -89,6 +91,7 @@ export async function work(job: Job, env: NodeJS.ProcessEnv): Promise<WorkerRepo
         const listed = await send('tools/call', { name: 'list_hubs', arguments: {} });
         report.times.push(listed.ms);
         report.sizes.push(listed.bytes);
+        report.tools.push('list_hubs');
         // A framed reply (src/mcp/frame.ts): `hubs` is the count, `entries` the hubs on this page.
         const { entries } = unframe(listed.body) as { entries: { id: number }[] };
         for (const h of entries.slice(0, job.hubs)) calls.push({ name: 'read_hub', args: { hub_id: h.id } });
@@ -97,6 +100,7 @@ export async function work(job: Job, env: NodeJS.ProcessEnv): Promise<WorkerRepo
         const r = await send('tools/call', { name: c.name, arguments: c.args });
         report.times.push(r.ms);
         report.sizes.push(r.bytes);
+        report.tools.push(c.name);
       }
     } finally {
       store.db.close();
