@@ -8,6 +8,7 @@ import { type DoctorDeps, diagnose, doctor, type Finding } from '../src/doctor.t
 import { denyAgent, setLocked } from '../src/mcp/access.ts';
 import { ensureServerKey } from '../src/model-commands.ts';
 import { demoRecord } from './mcp/helpers.ts';
+import { posixModes } from './modes.ts';
 
 // `skeinwise doctor` (LS-12) on a throwaway HOME and record. The model server is a fake fetch: nothing here opens a
 // connection, and the record's settings point at a port nobody serves, so even a real fetch would reach nothing.
@@ -27,7 +28,9 @@ const fakeFetch = (async (url: string | URL, init?: RequestInit) => {
 }) as typeof fetch;
 
 const env = () => ({ HOME: user, SKEINWISE_HOME: home, PATH: '/usr/bin:/bin' });
-const deps = (over: Partial<DoctorDeps> = {}): DoctorDeps => ({ nodeVersion: '24.11.0', platform: 'darwin', fetch: fakeFetch, ...over });
+// The platform is a POSIX one only where the file system has POSIX modes: on Windows every file reports 0666, so doctor
+// gives its Windows note there, and the tests about modes alone run on macOS and Linux.
+const deps = (over: Partial<DoctorDeps> = {}): DoctorDeps => ({ nodeVersion: '24.11.0', platform: posixModes ? 'darwin' : 'win32', fetch: fakeFetch, ...over });
 const problems = (findings: Finding[]) => findings.filter((f) => f.status === 'problem');
 const of = (findings: Finding[], check: Finding['check']) => findings.filter((f) => f.check === check);
 
@@ -77,7 +80,7 @@ describe('skeinwise doctor', () => {
     expect(output.out).toContain('Everything Skeinwise needs is in place.');
   });
 
-  it('names both problems on a broken setup: record.db at mode 0644 and no Node 24', async () => {
+  it.runIf(posixModes)('names both problems on a broken setup: record.db at mode 0644 and no Node 24', async () => {
     chmodSync(join(home, 'record.db'), 0o644);
     const { ctx, output } = ctxFor();
     expect(await doctor(ctx, deps({ nodeVersion: '22.12.0' }))).toBe(1);
@@ -90,7 +93,7 @@ describe('skeinwise doctor', () => {
 
   it('flags an open record folder, and leaves file modes alone on Windows', async () => {
     chmodSync(home, 0o755);
-    expect(problems(await diagnose(home, env(), deps())).map((f) => f.fix)).toEqual([`chmod 700 '${home}'`]);
+    if (posixModes) expect(problems(await diagnose(home, env(), deps())).map((f) => f.fix)).toEqual([`chmod 700 '${home}'`]);
     expect(of(await diagnose(home, env(), deps({ platform: 'win32' })), 'modes')).toEqual([
       { check: 'modes', status: 'note', text: "Who may read the record folder isn't checked on Windows yet." },
     ]);
@@ -184,7 +187,7 @@ describe('skeinwise doctor', () => {
     expect(of(await diagnose(home, env(), deps()), 'live')[0]).toMatchObject({ status: 'problem', fix: "See the whole error: skeinwise import '/x/broken.jsonl'" });
   });
 
-  it('answers --json', async () => {
+  it.runIf(posixModes)('answers --json', async () => {
     chmodSync(join(home, 'record.db'), 0o644);
     const { ctx, output } = ctxFor({ json: true });
     expect(await doctor(ctx, deps())).toBe(1);

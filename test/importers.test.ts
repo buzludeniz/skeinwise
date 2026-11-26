@@ -171,7 +171,7 @@ describe('notes', () => {
   });
 
   it('leaves text without front matter alone', () => {
-    expect(parseFrontMatter('no front matter')).toEqual({ meta: {}, body: 'no front matter' });
+    expect(parseFrontMatter('no front matter')).toEqual({ meta: {}, properties: {}, body: 'no front matter' });
   });
 });
 
@@ -227,7 +227,8 @@ describe('readImports', () => {
     }
   });
 
-  it('skips links, FIFOs and unreadable files in a folder by name, and imports the rest (PoC 12, 13)', () => {
+  // Windows has no FIFOs (mkfifo there makes nothing Node can see), so this runs on macOS and Linux.
+  it.skipIf(process.platform === 'win32')('skips links, FIFOs and unreadable files in a folder by name, and imports the rest (PoC 12, 13)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'skeinwise-unsafe-'));
     const outside = mkdtempSync(join(tmpdir(), 'skeinwise-outside-'));
     try {

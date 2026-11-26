@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import { Lock as LockIcon, Undo2, X } from 'lucide-preact';
 import { closePanel, dismissToast, go, message, openCommand, toast, undo, unlock } from './actions.ts';
 import { pickFiles } from './files.ts';
+import { AssistantView, ReminderBar } from './pa/index.ts';
 import { setState, getState, useApp } from './store.ts';
 import { mix, theme, themeVars } from './themes.ts';
 import { AppMenu } from './ui/AppMenu.tsx';
@@ -65,7 +66,7 @@ function useShortcuts() {
         void undo();
         return;
       }
-      if (!mod && !e.altKey && /^[1-8]$/.test(e.key) && !typing(e.target) && !s.editor) {
+      if (!mod && !e.altKey && /^[1-9]$/.test(e.key) && !typing(e.target) && !s.editor) {
         e.preventDefault();
         go(RAIL[Number(e.key) - 1]!.target);
       }
@@ -88,6 +89,8 @@ function MainView() {
       return <ProfileView />;
     case 'workbench':
       return <Workbench />;
+    case 'assistant':
+      return <AssistantView />;
     default:
       return <BrainView />;
   }
@@ -219,6 +222,7 @@ export function App() {
       <CommandBar />
       <Settings />
       {firstRun && <FirstRun />}
+      <ReminderBar />
       <Toasts />
     </div>
   );

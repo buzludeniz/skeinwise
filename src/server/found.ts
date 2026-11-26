@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { unzipSync } from 'fflate';
-import { readImports } from '../importers/detect.ts';
+import { readImportsInWorker } from '../importers/detect.ts';
+import { isNoteFile } from '../importers/note-ext.ts';
 import type { Source } from '../store/store.ts';
 
 export type FoundKind = 'claude-code' | 'codex' | 'chatgpt' | 'claude' | 'gemini' | 'notes';
@@ -135,7 +136,7 @@ export function findSources(root: string, inRecord: readonly Source[]): Found[] 
     }
   }
   for (const dir of candidates) {
-    const n = countFiles(dir, (f) => /\.(md|markdown|txt)$/i.test(f));
+    const n = countFiles(dir, isNoteFile);
     if (!n) continue;
     const vault = existsSync(join(dir, '.obsidian'));
     add('notes', vault ? `Obsidian vault: ${basename(dir)}` : `Notes: ${basename(dir)}`, dir, `${n} note${n === 1 ? '' : 's'}`);
@@ -150,17 +151,22 @@ export interface Preview {
   last: string | null;
 }
 
-/** Reads a found source the way an import would, without saving anything, to say how much it holds. */
-export function preview(path: string): Preview {
+/**
+ * Reads a found source the way an import would, without saving anything, to say how much it holds. The read runs in a
+ * worker through part A's reader, as an import does, so a large source never blocks the server.
+ */
+export async function preview(path: string): Promise<Preview> {
   let entries = 0;
   let threads = 0;
   let first: string | null = null;
   let last: string | null = null;
   const see = (at: string) => {
+    // An empty time means the export didn't say when: it counts as an entry, but not toward first or last.
+    if (!at) return;
     if (!first || at < first) first = at;
     if (!last || at > last) last = at;
   };
-  for (const batch of readImports(path)) {
+  for (const batch of await readImportsInWorker(path)) {
     threads += batch.threads.length;
     const all = [...batch.threads.flatMap((t) => t.entries), ...(batch.entries ?? [])];
     entries += all.length;

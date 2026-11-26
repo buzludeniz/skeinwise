@@ -57,6 +57,8 @@ export interface AskOptions {
   client?: ModelClient;
   budget: number;
   limit: number;
+  /** Only agent-session entries run in this project (`SearchOptions.project`). */
+  project?: string;
 }
 
 /** What an ask reports while it runs, and how its caller stops the model. */
@@ -100,8 +102,8 @@ export function parseQuestion(question: string): { kind: AskKind; topic: string 
   return { kind: 'any', topic: q };
 }
 
-/** The entries that answer a question, found with search and word cues. */
-export function findAnswers(store: Store, record: RecordView, kind: AskKind, topic: string, limit: number): AskHit[] {
+/** The entries that answer a question, found with search and word cues; with a project, only sessions run there. */
+export function findAnswers(store: Store, record: RecordView, kind: AskKind, topic: string, limit: number, project?: string): AskHit[] {
   const stems = [...new Set(tokenize(topic))];
   const hasStem = (s: string) => {
     const words = new Set(tokenize(s));
@@ -110,10 +112,10 @@ export function findAnswers(store: Store, record: RecordView, kind: AskKind, top
   const visible = (hits: SearchHit[]) => hits.map((h) => record.byId.get(h.id)).filter((e): e is Entry => !!e);
   const oldestFirst = (a: Entry, b: Entry) => a.createdAt.localeCompare(b.createdAt) || a.id - b.id;
   // Every entry holding all the words: the oldest ones matter here, not the best-ranked.
-  const all = (speaker?: string) => visible(store.search(topic, { strict: true, limit: 100_000, ...(speaker ? { speaker } : {}) })).sort(oldestFirst);
+  const all = (speaker?: string) => visible(store.search(topic, { strict: true, limit: 100_000, project, ...(speaker ? { speaker } : {}) })).sort(oldestFirst);
 
   if (kind === 'any') {
-    return visible(store.search(topic, { limit })).map((e) => hit(e, quote(e, hasStem), null));
+    return visible(store.search(topic, { limit, project })).map((e) => hit(e, quote(e, hasStem), null));
   }
   if (kind === 'first') {
     const yours = all('you');
@@ -171,7 +173,7 @@ export function similarEntries(record: RecordView, entryId: number, limit: numbe
 
 export async function ask(store: Store, record: RecordView, question: string, options: AskOptions, live: AskLive = {}): Promise<AskResult> {
   const { kind, topic } = parseQuestion(question);
-  const hits = findAnswers(store, record, kind, topic, options.limit);
+  const hits = findAnswers(store, record, kind, topic, options.limit, options.project);
   const base: AskResult = { question, kind, topic, hits, answer: null, cites: [], engine: options.engine, model: null, runId: null, message: null };
   if (!hits.length) return { ...base, message: `Nothing in your record matches "${topic}".` };
   live.onHits?.({ ...base, engine: 'none' });

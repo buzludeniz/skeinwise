@@ -14,11 +14,25 @@ import type { Store } from '../../src/store/store.ts';
 
 const NONE: Omit<RunOptions, 'task' | 'schema'> = { scope: { kind: 'all' }, engine: 'none', yes: false, budget: 0, progress: () => {} };
 
+const opened: Store[] = [];
+
+/** Opens a record folder on the demo clock, and remembers it so closeRecords can close it. */
+export function openRecord(home: string): Store {
+  const store = openHome(home, () => DEMO_NOW);
+  opened.push(store);
+  return store;
+}
+
+/** Closes every record openRecord opened. Run it before removing the folders: Windows can't remove an open file. */
+export function closeRecords(): void {
+  for (const store of opened.splice(0)) if (store.db.isOpen) store.db.close();
+}
+
 export async function demoRecord(dir: string, name: string): Promise<{ home: string; store: Store }> {
   const demo = join(dir, 'demo');
   if (!existsSync(demo)) writeDemo(demo);
   const home = join(dir, name);
-  const store = openHome(home, () => DEMO_NOW);
+  const store = openRecord(home);
   for (const p of ['chatgpt', 'claude', 'claude-code']) for (const b of readImports(join(demo, p))) store.ingest(b);
   cpSync(join(demo, 'notes'), notesDir(home), { recursive: true });
   readNotes(store, home);

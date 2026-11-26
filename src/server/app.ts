@@ -2,22 +2,24 @@
 // in the X-Skeinwise-Token header; requests must name this server's own host, so pages from other sites can't reach it.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { extname, join, normalize, resolve, sep } from 'node:path';
-import { pipeline } from 'node:stream/promises';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { extname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { UsageError } from '../errors.ts';
-import { readImports } from '../importers/detect.ts';
+import { readImportsInWorker } from '../importers/detect.ts';
 import { deleteHub, mergeFolders, REVIEW_ACTIONS, type ReviewAction, renameHub, resolveReview } from '../organiser/corrections.ts';
+import { isLocked, readAccess, setLocked } from '../mcp/access.ts';
+import { confirmRequest, pendingRequests, refuseRequest } from '../mcp/requests.ts';
 import { type ModelDeps, readServerKey } from '../organiser/model.ts';
 import { undoRun } from '../organiser/runs.ts';
 import type { Store } from '../store/store.ts';
 import { backup } from './backup.ts';
 import { cellEntries, parseFilter, tableCounts, type TableProp, tides, timelineBuckets } from './buckets.ts';
-import { ConfigError, readConfig, TABLE_PROPS, writeConfig } from './config.ts';
+import { CliOnly, ConfigError, readConfig, TABLE_PROPS, writeConfig } from './config.ts';
 import { findAgents, findSources, preview } from './found.ts';
 import type { AppLive } from './live.ts';
 import { appendDaily, createNote, NoteError, noteTitles, ownFile, saveEntry } from './notes.ts';
+import { paRoutes } from './pa.ts';
 import {
   askQuestion,
   entryLines,
@@ -41,6 +43,7 @@ import {
   organiserReady,
 } from './queries.ts';
 import { sameToken } from './token.ts';
+import { BATCH_ID, CutOff, saveUpload, TooLarge, UPLOAD_LIMIT } from './uploads.ts';
 
 export interface AppContext {
   home: string;
@@ -59,6 +62,8 @@ export interface AppContext {
   /** For the model engines: the environment that holds an outside key, and the network. Tests pass fakes. */
   env?: Record<string, string | undefined>;
   fetch?: typeof fetch;
+  /** The most one uploaded file may hold, in bytes: 1 GB unless a test sets less. */
+  uploadLimit?: number;
 }
 
 export class HttpError extends Error {
@@ -80,7 +85,6 @@ interface Req {
 type Handler = (req: Req) => unknown;
 
 const JSON_LIMIT = 2 * 1024 * 1024;
-const UPLOAD_LIMIT = 1024 * 1024 * 1024;
 
 async function readJson(raw: IncomingMessage): Promise<Record<string, unknown>> {
   const type = raw.headers['content-type'] ?? '';
@@ -145,31 +149,58 @@ const NOT_BUILT = `<!doctype html><meta charset="utf-8"><title>Skeinwise</title>
 
 export function createHandler(ctx: AppContext): (req: IncomingMessage, res: ServerResponse) => void {
   const { store, home } = ctx;
-  let locked = false;
+  // One lock for the page and the agents: the one `skeinwise mcp lock` sets, kept in agents.json, so it outlasts a
+  // restart (L7) and locking here stops the agent servers too. It hides the record; it is not encryption, and anything
+  // running as you can still read record.db. A file that can't be read keeps everything locked.
+  const locked = (): boolean => {
+    try {
+      return isLocked(home);
+    } catch {
+      return true;
+    }
+  };
+  const lock = (on: boolean) => {
+    setLocked(home, on);
+    return { locked: readAccess(home).locked };
+  };
   const uploads = resolve(home, 'imports');
+  /** An agent request's number when it is waiting, else a 404 decided from the list, never from an error's text. */
+  const waitingRequest = (n: number): number => {
+    if (!pendingRequests(home, new Date().toISOString()).some((r) => r.id === n)) throw new HttpError(404, `No agent request ${n} is waiting`);
+    return n;
+  };
   // The record folder goes in too, so asks and the model test send the key of the server `model serve --run` locked for
   // this record (<home>/models/.key), whatever SKEINWISE_HOME the process happens to hold.
   const deps = (): ModelDeps => ({ fetch: ctx.fetch ?? fetch, env: ctx.env ?? process.env, home });
+  /**
+   * A path the page sent, when its real path lies under the scan root (M2). Anything else, missing, unreadable or
+   * elsewhere (a symlink out included), gets the same 403, so the answer says nothing about the rest of the computer.
+   * Files from elsewhere come in through an upload. The path goes on as sent, since /api/found matches sources by it.
+   */
+  const scanned = (path: string): string => {
+    try {
+      const root = realpathSync(ctx.scanRoot);
+      const real = isAbsolute(path) ? realpathSync(path) : '';
+      if (real === root || real.startsWith(root + sep)) return resolve(path);
+    } catch {
+      // Missing or unreadable: the same answer as outside.
+    }
+    throw new HttpError(403, OUTSIDE_SCAN);
+  };
   /** The run the page started last; the page follows it until it finishes. */
   let job: OrganiseJob | null = null;
 
   const routes: [string, RegExp, Handler][] = [
     ['GET', /^\/api\/status$/, () => ({
       version: ctx.version,
-      locked,
+      locked: locked(),
       entries: store.stats().entries,
       lastSaved: lastSaved(store.db),
       organiser: organiserReady(store.db),
       live: ctx.live.state(),
     })],
-    ['POST', /^\/api\/lock$/, () => {
-      locked = true;
-      return { locked };
-    }],
-    ['POST', /^\/api\/unlock$/, () => {
-      locked = false;
-      return { locked };
-    }],
+    ['POST', /^\/api\/lock$/, () => lock(true)],
+    ['POST', /^\/api\/unlock$/, () => lock(false)],
     ['POST', /^\/api\/quit$/, () => {
       setTimeout(() => ctx.onQuit?.(), 50);
       return { stopping: true };
@@ -200,7 +231,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     }],
     ['PUT', /^\/api\/entries\/(\d+)$/, async (req) => {
       const { body } = await req.json();
-      return saveEntry(home, store, id(req.params[0]), text(body, 'body'));
+      return await saveEntry(home, store, id(req.params[0]), text(body, 'body'));
     }],
 
     ['GET', /^\/api\/threads\/(\d+)$/, (req) => {
@@ -236,6 +267,7 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       if (q.length > 2000) throw new HttpError(413, 'The question is too long');
       return askQuestion(store, home, q, req.url.searchParams.get('engine') ?? undefined, deps());
     }],
+    ...paRoutes({ store, home, deps }),
     ['GET', /^\/api\/claim$/, (req) => {
       const q = req.url.searchParams.get('q')?.trim() ?? '';
       if (!q) throw new HttpError(400, 'Give a sentence to check');
@@ -271,11 +303,11 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     ['GET', /^\/api\/notes$/, () => noteTitles(store)],
     ['POST', /^\/api\/notes$/, async (req) => {
       const { title, body } = await req.json();
-      return { id: createNote(home, store, text(title, 'title', 300), body === undefined ? '' : text(body, 'body')) };
+      return { id: await createNote(home, store, text(title, 'title', 300), body === undefined ? '' : text(body, 'body')) };
     }],
     ['POST', /^\/api\/daily$/, async (req) => {
       const { text: line } = await req.json();
-      return { id: appendDaily(home, store, text(line, 'text', 5000)) };
+      return { id: await appendDaily(home, store, text(line, 'text', 5000)) };
     }],
 
     ['GET', /^\/api\/found$/, () => {
@@ -284,41 +316,44 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
     }],
     ['POST', /^\/api\/found\/preview$/, async (req) => {
       const { path } = await req.json();
+      const where = scanned(text(path, 'path', 4096));
       try {
-        return preview(text(path, 'path', 4096));
+        return await preview(where);
       } catch (error) {
         throw new HttpError(422, error instanceof Error ? error.message : String(error));
       }
     }],
     ['POST', /^\/api\/import$/, async (req) => {
       const { path, owner } = await req.json();
-      const where = text(path, 'path', 4096);
-      if (!existsSync(where)) throw new HttpError(404, `Nothing at ${where}`);
-      return importPath(store, where, owner);
+      return await importPath(store, scanned(text(path, 'path', 4096)), owner);
     }],
     ['POST', /^\/api\/upload$/, async (req) => {
       const batch = req.url.searchParams.get('batch') ?? '';
       const rel = req.url.searchParams.get('path') ?? '';
-      if (!/^[a-z0-9]{8,40}$/.test(batch)) throw new HttpError(400, 'Bad batch id');
+      if (!BATCH_ID.test(batch)) throw new HttpError(400, 'Bad batch id');
       const dir = join(uploads, batch);
       const file = resolve(dir, normalize(rel).replace(/^(\.\.(\/|\\|$))+/, ''));
       if (!rel || !file.startsWith(dir + sep)) throw new HttpError(400, 'Bad file path');
-      const length = Number(req.raw.headers['content-length'] ?? 0);
-      if (length > UPLOAD_LIMIT) throw new HttpError(413, 'That file is larger than 1 GB');
       mkdirSync(resolve(file, '..'), { recursive: true, mode: 0o700 });
-      await pipeline(req.raw, createWriteStream(file, { mode: 0o600 }));
+      try {
+        await saveUpload(req.raw, file, ctx.uploadLimit ?? UPLOAD_LIMIT);
+      } catch (error) {
+        throw error instanceof TooLarge ? new HttpError(413, error.message) : error instanceof CutOff ? new HttpError(400, error.message) : error;
+      }
       return { saved: rel };
     }],
     ['POST', /^\/api\/upload\/finish$/, async (req) => {
       const { batch, owner } = await req.json();
-      if (typeof batch !== 'string' || !/^[a-z0-9]{8,40}$/.test(batch)) throw new HttpError(400, 'Bad batch id');
+      if (typeof batch !== 'string' || !BATCH_ID.test(batch)) throw new HttpError(400, 'Bad batch id');
       const dir = join(uploads, batch);
       if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new HttpError(404, 'Nothing was uploaded');
       // Each zip and each folder at the top is imported on its own, so a folder keeps its name as the source's.
-      // The page puts loose files in a folder of their own.
-      return readdirSync(dir, { withFileTypes: true })
-        .filter((e) => e.isDirectory() || (e.isFile() && e.name.toLowerCase().endsWith('.zip')))
-        .flatMap((e) => importPath(store, join(dir, e.name), owner));
+      // The page puts loose files in a folder of their own. One at a time, so one worker reads at once.
+      const results: Imported[] = [];
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory() || (e.isFile() && e.name.toLowerCase().endsWith('.zip'))) results.push(...(await importPath(store, join(dir, e.name), owner)));
+      }
+      return results;
     }],
     ['GET', /^\/api\/agents$/, () => findAgents(ctx.scanRoot)],
 
@@ -376,7 +411,23 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       if (!(REVIEW_ACTIONS as readonly unknown[]).includes(action)) throw new HttpError(400, `action is ${REVIEW_ACTIONS.join(', ')}`);
       return resolveReview(store, home, id(req.params[0]), action as ReviewAction, yes === true);
     }],
-    ['POST', /^\/api\/runs\/(\d+)\/undo$/, (req) => undoRun(store.db, id(req.params[0]))],
+    ['POST', /^\/api\/runs\/(\d+)\/undo$/, (req) => undoRun(store.db, id(req.params[0]), home)],
+
+    // The agents' requests that wait for the person's yes (src/mcp/requests.ts): the same list, confirm and refuse as
+    // `skeinwise mcp pending`, `confirm` and `refuse`, on the same file, so either side sees what the other did.
+    ['GET', /^\/api\/requests$/, () => pendingRequests(home, new Date().toISOString())],
+    ['POST', /^\/api\/requests\/(\d+)\/confirm$/, (req) => {
+      const n = waitingRequest(id(req.params[0]));
+      try {
+        return confirmRequest(home, store, n, new Date().toISOString());
+      } catch (error) {
+        // The request is dropped either way: a change that can no longer be made (the thread gone or left out, the
+        // run already undone) says why.
+        if (error instanceof UsageError) throw new HttpError(409, error.message);
+        throw error;
+      }
+    }],
+    ['POST', /^\/api\/requests\/(\d+)\/refuse$/, (req) => ({ refused: refuseRequest(home, waitingRequest(id(req.params[0])), new Date().toISOString()) })],
     ['POST', /^\/api\/folders\/merge$/, async (req) => {
       const { from, into } = await req.json();
       const ref = (v: unknown, what: string) => (typeof v === 'number' ? String(v) : text(v, what, 300));
@@ -454,69 +505,129 @@ export function createHandler(ctx: AppContext): (req: IncomingMessage, res: Serv
       .end(readFileSync(file));
   };
 
-  return (raw, res) => {
-    void (async () => {
-      const host = raw.headers.host ?? '';
-      if (!allowedHosts().has(host)) {
-        res.writeHead(421, { 'Content-Type': 'text/plain' }).end('Skeinwise only answers on 127.0.0.1');
+  const handle = async (raw: IncomingMessage, res: ServerResponse) => {
+    const host = raw.headers.host ?? '';
+    if (!allowedHosts().has(host)) {
+      res.writeHead(421, { 'Content-Type': 'text/plain' }).end('Skeinwise only answers on 127.0.0.1');
+      return;
+    }
+    // A request line Node accepts can still be no URL at all ("GET http://[", M3): that is the client's mistake.
+    let url: URL;
+    try {
+      url = new URL(raw.url ?? '/', `http://${host}`);
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'text/plain' }).end('Bad request');
+      return;
+    }
+    if (!url.pathname.startsWith('/api/')) {
+      if (raw.method !== 'GET' && raw.method !== 'HEAD') {
+        res.writeHead(405).end();
         return;
       }
-      const url = new URL(raw.url ?? '/', `http://${host}`);
-      if (!url.pathname.startsWith('/api/')) {
-        if (raw.method !== 'GET' && raw.method !== 'HEAD') {
-          res.writeHead(405).end();
-          return;
-        }
-        serveStatic(url, res);
+      serveStatic(url, res);
+      return;
+    }
+    try {
+      const origin = raw.headers.origin;
+      if (origin && !allowedHosts().has(origin.replace(/^https?:\/\//, ''))) throw new HttpError(403, 'Wrong origin');
+      const given = raw.headers['x-skeinwise-token'];
+      if (!sameToken(Array.isArray(given) ? given[0] : given, ctx.token)) throw new HttpError(401, 'Missing or wrong token');
+      const method = raw.method ?? 'GET';
+      let pathMatched = false;
+      for (const [m, re, handler] of routes) {
+        const match = re.exec(url.pathname);
+        if (!match) continue;
+        pathMatched = true;
+        if (m !== method) continue;
+        if (!/^\/api\/(status|unlock|quit)$/.test(url.pathname) && locked()) throw new HttpError(423, 'Skeinwise is locked');
+        let body: Promise<Record<string, unknown>> | undefined;
+        const req: Req = { method, url, params: match.slice(1), raw, json: () => (body ??= readJson(raw)) };
+        send(raw, res, 200, await handler(req));
         return;
       }
-      try {
-        const origin = raw.headers.origin;
-        if (origin && !allowedHosts().has(origin.replace(/^https?:\/\//, ''))) throw new HttpError(403, 'Wrong origin');
-        const given = raw.headers['x-skeinwise-token'];
-        if (!sameToken(Array.isArray(given) ? given[0] : given, ctx.token)) throw new HttpError(401, 'Missing or wrong token');
-        const method = raw.method ?? 'GET';
-        let pathMatched = false;
-        for (const [m, re, handler] of routes) {
-          const match = re.exec(url.pathname);
-          if (!match) continue;
-          pathMatched = true;
-          if (m !== method) continue;
-          if (locked && !/^\/api\/(status|unlock|quit)$/.test(url.pathname)) throw new HttpError(423, 'Skeinwise is locked');
-          let body: Promise<Record<string, unknown>> | undefined;
-          const req: Req = { method, url, params: match.slice(1), raw, json: () => (body ??= readJson(raw)) };
-          send(raw, res, 200, await handler(req));
-          return;
-        }
-        throw new HttpError(pathMatched ? 405 : 404, pathMatched ? 'Method not allowed' : 'No such API');
-      } catch (error) {
-        const status =
-          error instanceof HttpError
-            ? error.status
+      throw new HttpError(pathMatched ? 405 : 404, pathMatched ? 'Method not allowed' : 'No such API');
+    } catch (error) {
+      const status =
+        error instanceof HttpError
+          ? error.status
+          : error instanceof CliOnly
+            ? 403
             : error instanceof ConfigError || error instanceof NoteError || error instanceof UsageError
-              ? 400
-              : /^No (entry|source|thread) \d+/.test(error instanceof Error ? error.message : '')
-                ? 404
-                : 500;
-        const message = error instanceof Error ? error.message : String(error);
-        if (status === 500) process.stderr.write(`skeinwise serve: ${error instanceof Error ? (error.stack ?? message) : message}\n`);
-        if (!res.headersSent) send(raw, res, status, { error: message });
-        else res.end();
-      }
-    })();
+            ? 400
+            : /^No (entry|source|thread) \d+/.test(error instanceof Error ? error.message : '')
+              ? 404
+              : 500;
+      const message = error instanceof Error ? error.message : String(error);
+      if (status === 500) process.stderr.write(`skeinwise serve: ${error instanceof Error ? (error.stack ?? message) : message}\n`);
+      // The page gets no paths outside the record folder (M2, L10); the terminal keeps the whole message.
+      // A terminal-only setting also names the command, so the page can offer to copy it (SETTINGS-1).
+      const extra = error instanceof CliOnly ? { command: error.command } : {};
+      if (!res.headersSent) send(raw, res, status, { error: publicMessage(message, home), ...extra });
+      else res.end();
+    }
+  };
+
+  return (raw, res) => {
+    handle(raw, res).catch((error: unknown) => {
+      // Nothing a request does may stop the server: the last word is a bare 500.
+      process.stderr.write(`skeinwise serve: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' }).end('Internal error');
+      else res.destroy();
+    });
   };
 }
 
-function importPath(store: Store, path: string, owner: unknown): { source: string; kind: string; added: number; versioned: number; unchanged: number; threads: number }[] {
+const OUTSIDE_SCAN = 'Skeinwise brings in only what it found for you. To add something else, upload it.';
+
+/** Absolute paths in a message: POSIX ones and Windows drive paths, each starting a word or a quoted part. */
+const ABSOLUTE_PATH = /(?<=^|[\s'"`(=])(?:\/|[A-Za-z]:\\)[^\s'"`),;]*/g;
+
+/**
+ * A message as the page may see it: any absolute path outside the record folder becomes its last part, so an error
+ * can't tell a token holder what exists elsewhere on this computer.
+ */
+export function publicMessage(message: string, home: string): string {
+  const root = resolve(home);
+  return message.replace(ABSOLUTE_PATH, (path) => {
+    const clean = path.replace(/[.:]+$/, '');
+    const rest = path.slice(clean.length);
+    if (clean === root || clean.startsWith(root + sep)) return path;
+    const name = clean.split(/[\\/]/).filter(Boolean).at(-1);
+    return `${name ? `…/${name}` : '…'}${rest}`;
+  });
+}
+
+/**
+ * What an import did, per source. `proposed` and `pendingId` come only when the batch went to pending (an export from
+ * another account than its source's): then nothing was imported, and the changes wait for a yes.
+ */
+interface Imported {
+  source: string;
+  kind: string;
+  added: number;
+  versioned: number;
+  unchanged: number;
+  threads: number;
+  proposed?: number;
+  pendingId?: number | null;
+}
+
+/**
+ * Reads a path through part A's reader in a worker thread (S4, H3's server half): a link, a FIFO or a zip bomb is
+ * refused before anything is inflated, and a large export never blocks the event loop, so the page keeps its answers.
+ */
+async function importPath(store: Store, path: string, owner: unknown): Promise<Imported[]> {
   const who = typeof owner === 'string' && owner.trim() && owner.trim().toLowerCase() !== 'you' ? owner.trim().slice(0, 100) : undefined;
   let batches;
   try {
-    batches = readImports(path, { owner: who });
+    batches = await readImportsInWorker(path, { owner: who });
   } catch (error) {
     throw new HttpError(422, error instanceof Error ? error.message : String(error));
   }
   return batches.map((batch) => {
     const r = store.ingest(batch);
-    return { source: batch.source.label, kind: batch.source.kind, added: r.added, versioned: r.versioned, unchanged: r.unchanged, threads: r.threads };
+    const done: Imported = { source: batch.source.label, kind: batch.source.kind, added: r.added, versioned: r.versioned, unchanged: r.unchanged, threads: r.threads };
+    if (r.proposed !== undefined) Object.assign(done, { proposed: r.proposed, pendingId: r.pendingId ?? null });
+    return done;
   });
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contrast, mix, PALETTES, palette, pointColors, THEMES, theme } from '../../web/src/themes.ts';
+import { contrast, HEAT_FILL, mix, PALETTES, palette, pointColors, THEMES, theme, themeVars } from '../../web/src/themes.ts';
 
 describe('themes', () => {
   it('has the six themes and seven palettes the spec names, in order', () => {
@@ -29,6 +29,15 @@ describe('themes', () => {
       expect(contrast(t.danger, bg)).toBeGreaterThanOrEqual(4.5);
     }
     expect(contrast(t.onAccent, t.accent)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(THEMES.map((t) => [t.name, t] as const))('%s keeps AA on a selected row and on the fullest heatmap cell', (_, t) => {
+    // A selected row (the command bar's, a list's) sits on the accent wash; its secondary line is soft ink.
+    const wash = themeVars(t)['--accent-wash']!;
+    expect(contrast(t.inkSoft, wash)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(t.ink, wash)).toBeGreaterThanOrEqual(4.5);
+    // The Workbench heatmap's numbers are ink, on the accent over the page or a panel.
+    for (const bg of [t.ground, t.panel]) expect(contrast(t.ink, mix(bg, t.accent, HEAT_FILL[1]))).toBeGreaterThanOrEqual(4.5);
   });
 
   it('keeps every point colour visible on its ground', () => {

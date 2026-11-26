@@ -1,14 +1,16 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openHome } from '../../src/home.ts';
 import { ACCESS_FILE, AccessError, checkAccess, hashToken, readAccess } from '../../src/mcp/access.ts';
-import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP, serveMcp } from '../../src/mcp/commands.ts';
+import { UsageError } from '../../src/errors.ts';
+import { MCP_COMMANDS, MCP_FLAGS, MCP_HELP, serveMcp, windowServer } from '../../src/mcp/commands.ts';
 import { fileRequest, pendingRequests, REQUESTS_FILE } from '../../src/mcp/requests.ts';
 import type { Store } from '../../src/store/store.ts';
 import { context, demoRecord } from './helpers.ts';
+import { expectMode } from '../modes.ts';
 
 // `skeinwise mcp allow|deny|agents|lock|unlock`, called with a context built as the CLI builds it.
 
@@ -20,7 +22,7 @@ beforeEach(() => {
   store = openHome(home, () => NOW);
 });
 afterEach(() => {
-  store.db.close();
+  if (store.db.isOpen) store.db.close();
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -37,7 +39,7 @@ describe('skeinwise mcp', () => {
     expect(out).toMatch(/^Allowed claude-code to read your record\. Its token, shown only this once:\n\n {2}swa_[A-Za-z0-9_-]{43}\n\nGive it to the agent's MCP config as SKEINWISE_AGENT_TOKEN/);
     const token = /swa_[A-Za-z0-9_-]{43}/.exec(out)![0];
     const file = join(home, ACCESS_FILE);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expectMode(file, 0o600);
     const saved = readFileSync(file, 'utf8');
     expect(saved).not.toContain(token);
     expect(JSON.parse(saved)).toEqual({ locked: false, agents: { 'claude-code': { scope: 'read', since: NOW, tokenHash: hashToken(token) } } });
@@ -88,10 +90,19 @@ describe('skeinwise mcp', () => {
     expect((await mcp(['deny', 'codex'], { json: true })).json).toEqual([{ agent: 'codex', allowed: false }]);
   });
 
-  it('refuses a word it does not know, and a port that is not one', async () => {
+  it('refuses a word it does not know, and a window port that is not one', async () => {
     await expect(mcp(['serve'])).rejects.toThrow('Unknown mcp command: serve.');
-    const { ctx } = context(home, store, { values: { window: true, port: 'eighty' } });
-    await expect(serveMcp(ctx, new PassThrough())).rejects.toThrow('--port must be a port number, not "eighty".');
+    expect(() => windowServer(context(home, store, { values: { port: 'eighty' } }).ctx)).toThrow('--port must be a port number, not "eighty".');
+  });
+
+  it('refuses --window with a usage error and serves nothing: agents use the stdio server in 1.0', async () => {
+    const { ctx, output } = context(home, store, { values: { window: true } });
+    const input = new PassThrough();
+    const served = serveMcp(ctx, input);
+    await expect(served).rejects.toThrow(UsageError);
+    await expect(served).rejects.toThrow("skeinwise mcp --window isn't available in 1.0. Agents use skeinwise mcp over stdio; skeinwise connect sets one up.");
+    expect(output.out).toBe('');
+    expect(output.err).toBe('');
   });
 
   it('serves until its input closes, writing only protocol messages to stdout', async () => {
@@ -124,7 +135,11 @@ describe('agent requests: mcp pending, confirm and refuse', () => {
     home = join(demo, 'home');
     store = demoRecord(demo, home);
   });
-  afterEach(() => rmSync(demo, { recursive: true, force: true }));
+  afterEach(() => {
+    // Closed first: Windows can't remove a folder while the record in it is open.
+    store.db.close();
+    rmSync(demo, { recursive: true, force: true });
+  });
 
   it('lists what agents asked for, makes the change on confirm, and drops it on refuse', async () => {
     expect((await mcp(['pending'])).out).toBe('No agent request is waiting.\n');
@@ -136,7 +151,7 @@ describe('agent requests: mcp pending, confirm and refuse', () => {
     expect(listed).toContain(`  ${a.id}  2026-11-25 09:00  claude-code asks: Leave out thread ${first}, "red"`);
     expect(listed).toContain(`  ${b.id}  2026-11-25 09:00  cursor asks: Leave out thread ${second}`);
     expect(listed).not.toContain('\u001b');
-    expect(statSync(join(home, REQUESTS_FILE)).mode & 0o777).toBe(0o600);
+    expectMode(join(home, REQUESTS_FILE), 0o600);
 
     expect((await mcp(['confirm', String(a.id)])).out).toBe(`Done: thread ${first} is left out now. Bring it back with: skeinwise not-mine ${first} --undo\n`);
     expect(store.visibleThread(first!)).toBeUndefined();

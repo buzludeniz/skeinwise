@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type Io, main } from '../src/cli.ts';
 import { loadConfig, setConfigValue } from '../src/config.ts';
-import { gigabytes, LOCKED_FLAGS, SUGGESTED, serveCommand } from '../src/model-commands.ts';
+import { commandLine, findLlamaServer, gigabytes, LOCKED_FLAGS, SUGGESTED, serveCommand } from '../src/model-commands.ts';
+import { expectMode } from './modes.ts';
 
 // `skeinwise model check|trust|fetch|serve`, against a fake model server, a fake Hugging Face and a fake llama-server.
 // Every key and token here is made up, and built so that nothing in this file looks like a real one.
@@ -312,7 +313,7 @@ describe('skeinwise model serve', () => {
     );
     const key = readFileSync(keyFile(), 'utf8').trim();
     expect(key.length).toBeGreaterThanOrEqual(40);
-    expect(statSync(keyFile()).mode & 0o777).toBe(0o600);
+    expectMode(keyFile(), 0o600);
     expect(r.out).not.toContain(key);
     // The key is made once: a second serve keeps it, so a server already running still takes it.
     await sw(['model', 'serve']);
@@ -320,6 +321,42 @@ describe('skeinwise model serve', () => {
 
     expect(serveCommand('/m/my model.gguf', 'http://127.0.0.1:8731/v1', '/k').slice(0, 5)).toEqual(['llama-server', '-m', '/m/my model.gguf', '--alias', 'my model']);
     expect(() => serveCommand('/m.gguf', 'https://api.example.com/v1', '/k')).toThrow(/not on this computer/);
+  });
+
+  it('quotes the printed command for the platform: double quotes on Windows, single quotes elsewhere', () => {
+    const win = ['C:\\Program Files\\llama\\llama-server.exe', '-m', 'C:\\Users\\RUNNER~1\\my model.gguf', '--alias', 'it\'s "q"', '--api-key-file', 'C:\\key dir\\'];
+    expect(commandLine(win, 'win32')).toBe(
+      '"C:\\Program Files\\llama\\llama-server.exe" -m "C:\\Users\\RUNNER~1\\my model.gguf" --alias "it\'s \\"q\\"" --api-key-file "C:\\key dir\\\\"',
+    );
+    expect(commandLine(['C:\\llama\\llama-server.exe', '--port', '8731', '--cors-origins', 'http://127.0.0.1:8731'], 'win32')).toBe(
+      'C:\\llama\\llama-server.exe --port 8731 --cors-origins http://127.0.0.1:8731',
+    );
+    expect(commandLine(['/opt/llama-server', '-m', '/m/my model.gguf', '--alias', "it's", '--api-key-file', 'C:\\k'], 'darwin')).toBe(
+      "/opt/llama-server -m '/m/my model.gguf' --alias 'it'\\''s' --api-key-file 'C:\\k'",
+    );
+  });
+
+  it('looks for llama-server.exe on a Windows PATH, split by ";"', () => {
+    const [a, b] = [join(dir, 'a'), join(dir, 'b')];
+    for (const [where, name] of [[a, 'llama-server'], [b, 'llama-server.exe']] as const) {
+      mkdirSync(where);
+      writeFileSync(join(where, name), '');
+      chmodSync(join(where, name), 0o755);
+    }
+    expect(findLlamaServer(`${a};${b}`, 'win32')).toBe(join(b, 'llama-server.exe'));
+    expect(findLlamaServer(a, 'win32')).toBeNull();
+  });
+
+  // A Windows PATH entry's drive colon would split a ":" PATH apart.
+  it.skipIf(process.platform === 'win32')('looks for llama-server on a POSIX PATH, split by ":"', () => {
+    const [a, b] = [join(dir, 'a'), join(dir, 'b')];
+    for (const [where, name] of [[a, 'llama-server.exe'], [b, 'llama-server']] as const) {
+      mkdirSync(where);
+      writeFileSync(join(where, name), '');
+      chmodSync(join(where, name), 0o755);
+    }
+    expect(findLlamaServer(`${a}:${b}`, 'linux')).toBe(join(b, 'llama-server'));
+    expect(findLlamaServer(a, 'darwin')).toBeNull();
   });
 
   // Security audit M1 and L15 (web/05, poc_download case 4): llama-server ran open to web pages, was found on PATH on
@@ -349,7 +386,8 @@ describe('skeinwise model serve', () => {
       expect(missing.err).toContain('llama-server is not on your PATH. Install llama.cpp (on macOS: brew install llama.cpp)');
     });
 
-    it('runs it locked, with none of your keys, and keeps the program it found', async () => {
+    // The fake llama-server is a shell script, and Windows looks for llama-server.exe; the lookup is tested above.
+    it.skipIf(process.platform === 'win32')('runs it locked, with none of your keys, and keeps the program it found', async () => {
       const bin = fakeServer(join(dir, 'bin'));
       const token = ['made', 'up', 'token'].join('_');
       const r = await sw(['model', 'serve', own, '--run'], {
@@ -378,7 +416,7 @@ describe('skeinwise model serve', () => {
     });
 
     // E1 (Deniz, Nov 25): fetch checked the file once, but anything that could write to models/ afterwards could swap it.
-    it('re-checks the file under the pinned name against the pin, printed or run, and leaves a .gguf of yours alone', async () => {
+    it('re-checks the file under the pinned name against the pin, printed or run', async () => {
       fakeServer(join(dir, 'bin'));
       const env = { SKEINWISE_HOME: home, PATH: join(dir, 'bin') };
       mkdirSync(join(home, 'models'), { recursive: true });
@@ -397,7 +435,13 @@ describe('skeinwise model serve', () => {
         }
       }
       expect(existsSync(log())).toBe(false);
+    });
 
+    // Runs the shell-script fake; see above.
+    it.skipIf(process.platform === 'win32')('runs the file under the pinned name once it matches, and leaves a .gguf of yours alone', async () => {
+      fakeServer(join(dir, 'bin'));
+      const env = { SKEINWISE_HOME: home, PATH: join(dir, 'bin') };
+      mkdirSync(join(home, 'models'), { recursive: true });
       writeFileSync(target(), WEIGHTS);
       const pinned = await sw(['model', 'serve', '--run'], { env });
       expect(pinned.code).toBe(3);
@@ -408,16 +452,19 @@ describe('skeinwise model serve', () => {
       expect((await sw(['model', 'serve', own, '--run'], { env })).code).toBe(3);
     });
 
-    it('refuses a llama-server that lacks a flag that keeps it closed, or a saved one that is gone', async () => {
+    // Runs the shell-script fake for its --help; see above.
+    it.skipIf(process.platform === 'win32')('refuses a llama-server that lacks a flag that keeps it closed', async () => {
       fakeServer(join(dir, 'old'), LOCKED_FLAGS.filter((f) => f !== '--no-webui'));
       const old = await sw(['model', 'serve', own, '--run'], { env: { SKEINWISE_HOME: home, PATH: join(dir, 'old') } });
       expect(old.code).toBe(2);
       expect(old.err).toContain("doesn't list --no-webui in its --help, so Skeinwise can't start it closed to web pages");
       expect(existsSync(log())).toBe(false);
       expect(loadConfig(home).llamaServer).toBe('');
+    });
 
+    it('refuses a saved llama-server that is gone', async () => {
       setConfigValue(home, 'llamaServer', join(dir, 'gone', 'llama-server'));
-      const gone = await sw(['model', 'serve', own, '--run'], { env: { SKEINWISE_HOME: home, PATH: join(dir, 'old') } });
+      const gone = await sw(['model', 'serve', own, '--run']);
       expect(gone.code).toBe(2);
       expect(gone.err).toContain("isn't a program you can run");
     });
