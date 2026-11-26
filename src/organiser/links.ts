@@ -1,5 +1,6 @@
-// The link task. Cross links join an entry to the entries most like it in other threads; note links are the [[links]]
-// you wrote, joined to the note they name. Both come from word statistics with every engine: a model adds nothing here.
+// The link task. Cross links join an entry to the entries most like it in other threads, from word statistics with
+// every engine: a model adds nothing here. The [[links]] you wrote are not the run's: they are read from your text as
+// it stands (views.ts writtenLinks), so undo leaves them (LS-14). The run counts the ones that name no note.
 
 import type { DatabaseSync } from 'node:sqlite';
 import { direct, type Plan, type TaskContext } from './plan.ts';
@@ -18,7 +19,7 @@ const SAME = 0.999;
 interface NewLink {
   from: number;
   to: number;
-  kind: 'cross' | 'note';
+  kind: 'cross';
   score: number;
 }
 
@@ -26,27 +27,28 @@ export function planLinks(ctx: TaskContext): Plan {
   return direct(() => {
     // Links this run would hide don't count as already there.
     const live = liveKeys(ctx.db, replacedRuns(ctx.db, 'link', null, ctx.scope));
-    const made = new Set<string>();
     const links: NewLink[] = [];
-    const add = (l: NewLink) => {
+    for (const l of crossLinks(ctx)) {
       const key = linkKey(l);
-      if (live.has(key) || made.has(key)) return;
-      made.add(key);
+      if (live.has(key)) continue;
+      live.add(key);
       links.push(l);
-    };
-    for (const l of crossLinks(ctx)) add(l);
+    }
+    let yours = 0;
     let unresolved = 0;
     for (const e of ctx.entries) {
       for (const target of linkTargets(e.body)) {
         const note = ctx.record.resolveLink(target);
         if (!note) unresolved++;
-        else if (note.id !== e.id) add({ from: e.id, to: note.id, kind: 'note', score: 1 });
+        else if (note.id !== e.id) yours++;
       }
     }
-    const cross = links.filter((l) => l.kind === 'cross').length;
+    const written = yours
+      ? ` The ${yours} [[link${yours > 1 ? 's' : ''}]] you wrote ${yours > 1 ? 'are' : 'is'} read from your notes as they stand, not made by this run, so undo leaves ${yours > 1 ? 'them' : 'it'}.`
+      : '';
     return {
-      counts: { cross, note: links.length - cross, unresolved },
-      message: `Links come from word statistics with every engine.${unresolved ? ` ${unresolved} [[link(s)]] name no note.` : ''}`,
+      counts: { cross: links.length, unresolved },
+      message: `Links come from word statistics with every engine.${written}${unresolved ? ` ${unresolved} [[link${unresolved > 1 ? 's' : ''}]] name${unresolved > 1 ? '' : 's'} no note.` : ''}`,
       save: (db, runId) => {
         const insert = db.prepare('INSERT INTO links (from_entry, to_entry, kind, score, run_id) VALUES (?, ?, ?, ?, ?)');
         for (const l of links) insert.run(l.from, l.to, l.kind, l.score, runId);
@@ -79,17 +81,17 @@ function crossLinks(ctx: TaskContext): NewLink[] {
   return out;
 }
 
-/** Cross links have no direction, so one key serves both ways round; note links keep theirs. */
-function linkKey(l: { from: number; to: number; kind: string }): string {
-  return l.kind === 'cross' ? `cross:${Math.min(l.from, l.to)}:${Math.max(l.from, l.to)}` : `note:${l.from}:${l.to}`;
+/** Cross links have no direction, so one key serves both ways round. */
+function linkKey(l: { from: number; to: number }): string {
+  return `${Math.min(l.from, l.to)}:${Math.max(l.from, l.to)}`;
 }
 
 function liveKeys(db: DatabaseSync, hidden: number[]): Set<string> {
   const rows = db
     .prepare(
-      `SELECT from_entry AS "from", to_entry AS "to", kind FROM links
-       WHERE run_id IN (SELECT id FROM live_runs) AND run_id NOT IN (${hidden.join(',') || 0})`,
+      `SELECT from_entry AS "from", to_entry AS "to" FROM links
+       WHERE kind = 'cross' AND run_id IN (SELECT id FROM live_runs) AND run_id NOT IN (${hidden.join(',') || 0})`,
     )
-    .all() as { from: number; to: number; kind: string }[];
+    .all() as { from: number; to: number }[];
   return new Set(rows.map(linkKey));
 }

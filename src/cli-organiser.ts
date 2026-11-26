@@ -8,13 +8,14 @@ import { needId, UsageError } from './errors.ts';
 import { countsText, entryBrief, entryHeader, engineLabel, indent, minute, oneLine } from './format.ts';
 import { modelCommand } from './model-commands.ts';
 import { appendDailyNote, newNote, readNotes } from './notes.ts';
-import { type AskKind, ask, similarEntries } from './organiser/ask.ts';
+import { type AskKind, ask } from './organiser/ask.ts';
 import { defineTag, deleteHub, mergeFolders, REVIEW_ACTIONS, type ReviewAction, removeTag, renameHub, resolveReview } from './organiser/corrections.ts';
 import { createModel } from './organiser/model.ts';
 import { type Preview, previewRun, type RunOptions, runTask, steps } from './organiser/organise.ts';
 import type { ModelClient } from './organiser/plan.ts';
 import { RecordView } from './organiser/record.ts';
 import { listRuns, parseScope, type Run, type Task, TASKS, undoRun } from './organiser/runs.ts';
+import { similarEntries } from './organiser/similar.ts';
 import {
   definedTags,
   entryLayers,
@@ -48,6 +49,8 @@ export interface Values {
   unset?: boolean;
   remove?: boolean;
   run?: boolean;
+  /** `--project` (STORE_FLAGS): ask keeps to coding sessions run in that folder. */
+  project?: string;
 }
 
 export interface Ctx {
@@ -215,12 +218,13 @@ const MADE: Record<string, string> = {
 
 const undo: Command = (ctx) => {
   const id = needId(ctx.args[0], 'run');
-  const result = undoRun(ctx.store.db, id);
+  const result = undoRun(ctx.store.db, id, ctx.home);
   if (ctx.values.json) ctx.json(result);
   else if (result.run.task === 'correction') say(ctx, `Undid run ${id}, your correction: ${result.run.message ?? ''}`);
   else {
     const removed = Object.entries(result.removed).map(([table, n]) => `${n} ${MADE[table] ?? table}`);
-    say(ctx, `Undid run ${id} (${runWhat(result.run, schemaNames(ctx.store))}). Removed ${removed.length ? removed.join(', ') : 'nothing'}.`);
+    const back = result.restored.length ? ` Put back the text of ${result.restored.map((n) => `#${n}`).join(', ')}.` : '';
+    say(ctx, `Undid run ${id} (${runWhat(result.run, schemaNames(ctx.store))}). Removed ${removed.length ? removed.join(', ') : 'nothing'}.${back}`);
   }
   return 0;
 };
@@ -240,7 +244,13 @@ const askCommand: Command = async (ctx) => {
   const { engine, client, config } = pickEngine(ctx);
   readNotes(ctx.store, ctx.home);
   const record = new RecordView(ctx.store);
-  const result = await ask(ctx.store, record, question, { engine, ...(client ? { client } : {}), budget: config.budget, limit: limit(ctx, 10) });
+  const result = await ask(ctx.store, record, question, {
+    engine,
+    ...(client ? { client } : {}),
+    budget: config.budget,
+    limit: limit(ctx, 10),
+    project: ctx.values.project,
+  });
   if (ctx.values.json) {
     ctx.json(result);
     return 0;
@@ -259,12 +269,11 @@ const askCommand: Command = async (ctx) => {
 
 const similar: Command = (ctx) => {
   const id = needId(ctx.args[0], 'entry');
-  const record = new RecordView(ctx.store);
-  const list = similarEntries(record, id, limit(ctx, 10));
+  const list = similarEntries(ctx.store, id, limit(ctx, 10));
   if (ctx.values.json) ctx.json(list);
   else if (!list.length) say(ctx, `Nothing in other threads reads like #${id}.`);
   else {
-    say(ctx, `Entries in other threads that read like ${entryBrief(record.byId.get(id)!)}:`);
+    say(ctx, `Entries in other threads that read like ${entryBrief(ctx.store.visibleEntry(id)!)}:`);
     for (const h of list) say(ctx, `#${h.entryId}  ${h.date}  ${h.speaker}${h.where ? ` · ${oneLine(h.where, 60)}` : ''}  (${h.score})\n    ${oneLine(h.quote, 200)}`);
   }
   return 0;

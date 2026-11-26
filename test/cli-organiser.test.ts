@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.ts';
 import { DEMO_NOW } from '../src/demo/demo.ts';
@@ -130,7 +130,8 @@ describe('organising the demo record from the command line', () => {
   it('review flags the Plotline note after the April 2026 move to Postgres, and saves an update only with --yes', async () => {
     const items = parsed<{ id: number; noteEntry: number; reasons: { entryId: number }[] }[]>(await sw('review', '--json'));
     const item = items.find((i) => i.noteEntry === 587)!;
-    expect(item.reasons.map((r) => r.entryId)).toEqual([559, 475, 219, 531]);
+    // #219 decides about the waiting list without naming Plotline, so it confirms nothing about this note (LS-14).
+    expect(item.reasons.map((r) => r.entryId)).toEqual([559, 475, 531]);
     expect((await sw('review')).out).toContain(`Item ${item.id}: #587  2025-02-05  you · Plotline may be out of date. Later entries:`);
 
     const shown = await sw('review', '--resolve', String(item.id), 'update');
@@ -235,7 +236,7 @@ describe('notes from the command line', () => {
     const home = newHome();
     const sw = inHome(home, { now: '2026-11-25T10:30:00.000Z' });
     const first = await sw('note', 'Fed the starter at 18:00');
-    expect(first.out).toMatch(/^Started .*daily\/2026-11-25\.md \(entry #1\)\.\n$/);
+    expect(first.out).toMatch(/^Started .*daily[\\/]2026-11-25\.md \(entry #1\)\.\n$/);
     expect((await sw('note', 'Rye proof took four hours')).out).toMatch(/^Added to .*2026-11-25\.md \(entry #1\)\.\n$/);
     expect((await sw('note')).code).toBe(2);
 
@@ -260,7 +261,8 @@ describe('settings from the command line', () => {
     expect((await sw('config', 'budget', 'lots')).code).toBe(2);
     expect((await sw('config', 'engine', '--unset')).out).toBe('engine is back to its default: local\n');
     expect((await sw('config', 'liveFolders', '[{"path": "/notes/mara", "owner": "Mara"}, {"path": "/notes/mine"}]')).out).toBe(
-      'liveFolders = /notes/mara (Mara), /notes/mine\n',
+      // The folders are kept resolved: on Windows, on the current drive.
+      `liveFolders = ${resolve('/notes/mara')} (Mara), ${resolve('/notes/mine')}\n`,
     );
     const unknown = await sw('config', 'colour', 'blue');
     expect(unknown.code).toBe(2);

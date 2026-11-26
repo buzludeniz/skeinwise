@@ -108,6 +108,10 @@ interface Pinned {
  * A file found in a folder: read through fsafe, never through a link, and only inside the folder. fsafe resolves the
  * folder's real path again for each read, so a named folder is pinned: after the read it must still be the folder that
  * was checked, or it was swapped for a link meanwhile and the file may have come from anywhere.
+ *
+ * Not caught: a folder swapped for a link and swapped back between fsafe resolving it and the check below. The file
+ * read in that window may come from wherever the link pointed, and the check then sees the pinned folder again.
+ * Closing that needs reads relative to an open folder (openat, fdopendir), which Node doesn't offer.
  */
 function fileUnder(root: string, full: string, modifiedAt: Date, pinned?: Pinned): RawFile {
   return {

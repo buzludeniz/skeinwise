@@ -94,7 +94,7 @@ Organising (every run can be undone):
   ask <question>...         Ask the record: "when did I first ...", "what did I decide about ...",
                             "what changed in my thinking on ...", or anything else
       --engine <name>       As for run; a model's answer cites the entries it rests on
-  similar <entry>           Entries in other threads that read like this one
+${STORE_SEARCH_HELP}  similar <entry>           Entries in other threads that read like this one
   hubs                      List hubs
   hub <hub>                 Show a hub: In short, What you found, Open ends, its entries
   layers <entry>            An entry's layers: Original, Cleaned, Expanded, Digest, Ideas
