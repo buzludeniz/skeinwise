@@ -3,11 +3,11 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rea
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AGENT_CLIENTS, type ConnectDeps, connect, launchCommand, type SetupCtx, shellWord, withoutCodexEntry } from '../src/connect.ts';
+import { AGENT_CLIENTS, type ConnectDeps, commandWord, connect, launchCommand, type SetupCtx, shellWord, windowsWord, withoutCodexEntry } from '../src/connect.ts';
 import { writeDemo } from '../src/demo/demo.ts';
 import { UsageError } from '../src/errors.ts';
 import { openHome } from '../src/home.ts';
-import { agentOfToken, quoteArg, readAccess } from '../src/mcp/access.ts';
+import { agentOfToken, readAccess } from '../src/mcp/access.ts';
 import { FRAME_OPEN, unframe } from '../src/mcp/frame.ts';
 import { SETUP_COMMANDS, SETUP_HELP, setup } from '../src/setup.ts';
 import { demoRecord, LEGACY_VERSION } from './mcp/helpers.ts';
@@ -196,6 +196,36 @@ describe('skeinwise connect', () => {
     expect(existsSync(calls)).toBe(false);
   });
 
+  it('prints the Claude Code command in PowerShell form on Windows, with SystemRoot for the server', async () => {
+    const win = { ...DEPS, node: 'C:\\Program Files\\nodejs\\node.exe', platform: 'win32' as const };
+    const { ctx, output } = setupCtx(['claude-code']);
+    ctx.io.env.SystemRoot = 'C:\\Windows';
+    expect(await connect(ctx, win)).toBe(0);
+    const line = output.out.split('\n').find((l) => l.startsWith('  claude mcp add'))!;
+    const token = /SKEINWISE_AGENT_TOKEN=(\S+)/.exec(line)![1]!;
+    expect(agentOfToken(readAccess(home), token)).toBe('claude-code');
+    // `--` quoted, or PowerShell drops it before claude.ps1 sees it; paths with spaces in double quotes.
+    expect(line).toBe(
+      `  claude mcp add --scope user skeinwise -e SKEINWISE_AGENT_TOKEN=${token} -e ${windowsWord(`SKEINWISE_HOME=${home}`)} ` +
+        `-e SystemRoot=C:\\Windows "--" "C:\\Program Files\\nodejs\\node.exe" ${windowsWord(DEPS.script)} mcp`,
+    );
+
+    // Elsewhere SystemRoot means nothing, so it stays out.
+    const posix = setupCtx(['cursor'], { yes: true });
+    posix.ctx.io.env.SystemRoot = 'C:\\Windows';
+    mkdirSync(join(user, '.cursor'));
+    expect(await connect(posix.ctx, { ...DEPS, platform: 'linux' })).toBe(0);
+    const linux = JSON.parse(readFileSync(join(user, '.cursor', 'mcp.json'), 'utf8')).mcpServers.skeinwise.env;
+    expect(Object.keys(linux)).toEqual(['SKEINWISE_AGENT_TOKEN', 'SKEINWISE_HOME']);
+
+    // An agent that starts the server with only its config's variables still gives it SystemRoot.
+    const winCursor = setupCtx(['cursor'], { yes: true });
+    winCursor.ctx.io.env.SYSTEMROOT = 'C:\\Windows';
+    expect(await connect(winCursor.ctx, { ...DEPS, platform: 'win32' })).toBe(0);
+    const windows = JSON.parse(readFileSync(join(user, '.cursor', 'mcp.json'), 'utf8')).mcpServers.skeinwise.env;
+    expect(windows).toEqual({ SKEINWISE_AGENT_TOKEN: expect.stringMatching(/^swa_/), SKEINWISE_HOME: home, SystemRoot: 'C:\\Windows' });
+  });
+
   it('adds itself to Cursor next to the servers already there, owner-only', async () => {
     const file = join(user, '.cursor', 'mcp.json');
     mkdirSync(join(user, '.cursor'));
@@ -343,6 +373,16 @@ describe('the command an agent starts', () => {
   it('quotes a word only when the shell needs it', () => {
     expect(shellWord('SKEINWISE_HOME=/a/b')).toBe('SKEINWISE_HOME=/a/b');
     expect(shellWord("/Users/x/Application Support/it's")).toBe("'/Users/x/Application Support/it'\\''s'");
+    expect(commandWord('--', 'darwin')).toBe('--');
+    // PowerShell: double quotes where cmd.exe reads them the same, its own single quotes where it doesn't.
+    expect(windowsWord('SKEINWISE_HOME=C:\\Users\\x\\.skeinwise')).toBe('SKEINWISE_HOME=C:\\Users\\x\\.skeinwise');
+    expect(windowsWord('C:\\Program Files\\nodejs\\node.exe')).toBe('"C:\\Program Files\\nodejs\\node.exe"');
+    expect(windowsWord('skeinwise@1')).toBe('"skeinwise@1"');
+    expect(windowsWord("D:\\Jane's notes (old)")).toBe('"D:\\Jane\'s notes (old)"');
+    expect(windowsWord('C:\\Users\\x\\$Recycle')).toBe("'C:\\Users\\x\\$Recycle'");
+    expect(windowsWord("it's 100%")).toBe("'it''s 100%'");
+    expect(windowsWord('Jane\u2019s $notes')).toBe("'Jane\u2019\u2019s $notes'");
+    expect(commandWord('--', 'win32')).toBe('"--"');
     expect(shellSplit(`a 'b c' 'it'\\''s'`)).toEqual(['a', 'b c', "it's"]);
   });
 });
@@ -362,13 +402,26 @@ describe('skeinwise setup', () => {
     expect(await setup(ctx)).toBe(0);
     expect(output.out).toContain('Claude Code history: ');
     expect(output.out).toContain('Notes: Notes: 1 note');
-    expect(output.out).toContain(`skeinwise import ${quoteArg(join(user, 'Documents', 'Notes'))}`);
+    expect(output.out).toContain(`skeinwise import ${commandWord(join(user, 'Documents', 'Notes'), process.platform)}`);
     expect(output.out).toContain('or all at once: skeinwise setup --yes');
     expect(output.out).toContain('skeinwise connect claude-code');
     const store = openHome(home);
     expect(store.sources()).toHaveLength(0);
     store.db.close();
     expectMode(join(home, 'record.db'), 0o600);
+  });
+
+  it('names each import in the shell form of the platform it runs on', async () => {
+    const jane = join(dir, 'Jane Doe');
+    const notes = join(jane, 'Documents', 'Notes');
+    mkdirSync(notes, { recursive: true });
+    writeFileSync(join(notes, 'garden.md'), '# Garden\n\nPlant the garlic before the frost.\n');
+    for (const [platform, word] of [['win32', `"${notes}"`], ['darwin', `'${notes}'`]] as const) {
+      const { ctx, output } = setupCtx([]);
+      ctx.io.env.HOME = jane;
+      expect(await setup(ctx, { platform })).toBe(0);
+      expect(output.out).toContain(`  skeinwise import ${word}\n`);
+    }
   });
 
   it('brings everything in with --yes, sums it up, and finds it already in the next time', async () => {
