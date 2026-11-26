@@ -1,12 +1,14 @@
 // The clickable brain on the demo record: one click pins a card, the labels are buttons that Tab steps through
 // (hubs first), Esc puts things back in order, the selection holds still when the system asks for less motion, and
-// at the 20,000-point cap the brain keeps its frame budget.
+// at the 20,000-point cap the brain keeps its frame budget. axe finds nothing serious in the brain's own states.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import AxeBuilder from '@axe-core/playwright';
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import type { BrainData, BrainPoint } from '../src/server/queries.ts';
 import type { EntryLines } from '../src/server/organiser.ts';
+import { THEMES } from '../web/src/themes.ts';
 import { runFolder } from './run.ts';
 
 const token = () => readFileSync(join(runFolder(), 'home', 'token'), 'utf8').trim();
@@ -274,12 +276,73 @@ test("says the brain didn't load, not that WebGL is missing, when its drawing co
   await expect(page.getByText("The brain didn't load")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("This browser can't draw the brain")).toHaveCount(0);
   await expect(page.locator('.brain-host canvas')).toHaveCount(0);
+  expect(await axeFails(page, "the brain didn't load")).toEqual([]);
   await page.unroute(sceneFile);
   await page.getByRole('button', { name: 'Reload the page' }).click();
   await expect(page.locator('.brain-host canvas')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("The brain didn't load")).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+// axe, as e2e/axe.e2e.ts runs it (WCAG 2.0 and 2.1, A and AA; serious and critical fail), over the states that suite
+// doesn't reach: a focused label, a hub's card, an entry's card with its linked entries, and the lit chip. In every
+// theme, wide and compact. The canvas is left out: axe can't see into it.
+
+const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
+
+/** axe's serious and critical findings on the page as it stands, one line each. */
+async function axeFails(page: Page, state: string): Promise<string[]> {
+  await page.waitForLoadState('networkidle');
+  const { violations } = await new AxeBuilder({ page }).withTags(AXE_TAGS).exclude('.brain-host canvas').analyze();
+  return violations
+    .filter((v) => v.impact === 'serious' || v.impact === 'critical')
+    .map((v) => {
+      const at = v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(' | ');
+      const why = (v.nodes[0]?.failureSummary ?? '').replace(/\s*\n\s*/g, ' ');
+      return `${state}: ${v.id} (${v.impact}) ${v.help}, at ${at}. ${why}`;
+    });
+}
+
+/** Serves this page the record's settings in another theme, so the record's own theme never changes. */
+async function showTheme(page: Page, key: string): Promise<void> {
+  await page.route('**/api/settings', async (route) => {
+    const res = await route.fetch();
+    const body = (await res.json()) as { appearance?: { theme: string } };
+    if (body.appearance) body.appearance.theme = key;
+    await route.fulfill({ response: res, json: body });
+  });
+}
+
+for (const theme of THEMES) {
+  for (const compact of [false, true]) {
+    test.describe(`axe, ${theme.name}${compact ? ', compact' : ''}`, () => {
+      if (compact) test.use({ viewport: { width: 390, height: 844 } });
+
+      test('a focused label, a hub card, an entry card and the lit chip have no serious or critical finding', async ({ page }) => {
+        await showTheme(page, theme.key);
+        const errors = await openBrain(page);
+        const fails: string[] = [];
+        // The biggest hub's label. A compact window labels hubs only, so the entry card is reached through the hub's.
+        const label = labels(page).first();
+        await label.focus();
+        await expect(label).toHaveClass(/\bon\b/);
+        fails.push(...(await axeFails(page, 'a focused label')));
+        await label.press('Enter');
+        const rows = card(page).getByRole('list', { name: 'Its entries' }).getByRole('button');
+        await expect(rows.first()).toBeVisible();
+        fails.push(...(await axeFails(page, "a hub's card")));
+        await rows.first().click();
+        await expect(card(page).getByRole('list', { name: 'Linked entries' })).toBeVisible();
+        fails.push(...(await axeFails(page, "an entry's card")));
+        await card(page).getByRole('button', { name: 'Light neighbours' }).click();
+        await expect(page.locator('.lit-chip')).toBeVisible();
+        fails.push(...(await axeFails(page, 'the lit chip')));
+        expect(fails).toEqual([]);
+        expect(errors).toEqual([]);
+      });
+    });
+  }
+}
 
 // At the cap: a 25,000-entry record as the server sends it past its cap (a 20,000-point sample, the total and each
 // hub's size), served in place of the demo's.
