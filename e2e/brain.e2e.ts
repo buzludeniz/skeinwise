@@ -251,7 +251,8 @@ test('the map moves with the arrow keys, zooms with plus and minus, comes back w
   await expect(page.getByRole('radiogroup', { name: 'Layout' }).getByRole('radio', { name: 'Map' })).toHaveAttribute('aria-checked', 'true');
   const canvas = page.locator('.brain-host canvas');
   await expect(canvas).toHaveAttribute('aria-label', /^The map: .*arrow keys to move the map.*F to fit/);
-  const mask = [page.locator('.brain-top'), page.locator('.brain-layouts'), page.locator('.legend'), page.locator('.brain-labels')];
+  // The names shown, not their layer: the layer covers the whole canvas.
+  const mask = [page.locator('.brain-top'), page.locator('.brain-layouts'), page.locator('.legend'), page.locator('.brain-labels .on')];
   await page.mouse.move(1, 1);
   // Settled, it holds still with motion allowed: the map lies flat and never turns.
   await page.waitForTimeout(2500);
@@ -276,6 +277,89 @@ test('the map moves with the arrow keys, zooms with plus and minus, comes back w
   // Clusters is still there, one click away.
   await page.getByRole('radiogroup', { name: 'Layout' }).getByRole('radio', { name: 'Clusters' }).click();
   await expect(canvas).toHaveAttribute('aria-label', /^The brain: /);
+  expect(errors).toEqual([]);
+});
+
+/** Pairs of names shown on the brain (label buttons and the map's names) whose boxes overlap by more than a pixel. */
+function overlapping(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const shown = [...document.querySelectorAll<HTMLElement>('.brain-labels .on')].map((el) => ({ text: el.innerText.trim(), r: el.getBoundingClientRect() }));
+    const bad: string[] = [];
+    for (let i = 0; i < shown.length; i++) {
+      for (let j = i + 1; j < shown.length; j++) {
+        const a = shown[i]!.r;
+        const b = shown[j]!.r;
+        if (Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1) bad.push(`${shown[i]!.text} / ${shown[j]!.text}`);
+      }
+    }
+    return bad;
+  });
+}
+
+test('the map names its countries, then their provinces and entry titles as it zooms in, never two on one spot', async ({ page }) => {
+  const errors = await openBrain(page);
+  const names = (kind: string) => page.locator(`.brain-labels .map-name.${kind}.on`);
+  const shown = page.locator('.brain-labels .on');
+  await expect(shown.first()).toBeVisible();
+  // At the widest view only the countries are named.
+  await expect(names('province')).toHaveCount(0);
+  await expect(names('entry')).toHaveCount(0);
+  expect(await overlapping(page)).toEqual([]);
+  // Zoomed in about a hub, its provinces get their names, and nearer still its entries their titles.
+  const hub = await findPoint(page, 'hub');
+  await page.mouse.move(hub.x, hub.y);
+  let steps = 0;
+  const zoomUntil = async (kind: string) => {
+    while (!(await names(kind).count())) {
+      expect(steps, `no ${kind} names after ${steps} steps in`).toBeLessThan(40);
+      await page.mouse.wheel(0, -120);
+      steps++;
+      await page.waitForTimeout(100);
+    }
+  };
+  await zoomUntil('province');
+  expect(steps).toBeGreaterThanOrEqual(3);
+  expect(await overlapping(page)).toEqual([]);
+  await zoomUntil('entry');
+  await expect(names('entry').first()).toHaveText(/\S/);
+  expect(await overlapping(page)).toEqual([]);
+  // The names never take the reading order: the canvas and the label buttons say it all.
+  await expect(page.locator('.brain-labels .map-name:not([aria-hidden="true"])')).toHaveCount(0);
+  // F brings back the whole map, with only the countries named.
+  await page.locator('.brain-host canvas').focus();
+  await page.keyboard.press('f');
+  await expect(names('province')).toHaveCount(0);
+  await expect(names('entry')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('a lit search counts its hits on each country, and Fit to hits frames them', async ({ page }) => {
+  const errors = await openBrain(page);
+  const hub = await findPoint(page, 'hub');
+  await page.mouse.click(hub.x, hub.y);
+  await card(page).getByRole('button', { name: 'Light its entries' }).click();
+  const chip = page.locator('.lit-chip');
+  await expect(chip).toContainText(hub.title);
+  const lit = Number(/· ([\d,]+) entr/.exec((await chip.textContent())!)![1]!.replace(/,/g, ''));
+  // Some country carries hits, none more than are lit, and a country with none steps back.
+  const counts = await page.locator('.brain-labels [data-hits]').evaluateAll((els) => els.map((el) => Number((el as HTMLElement).dataset.hits!.replace(/,/g, ''))));
+  expect(counts.length).toBeGreaterThan(0);
+  expect(Math.max(...counts)).toBeLessThanOrEqual(lit);
+  await expect(page.locator('.brain-labels .quiet').first()).toBeAttached();
+  await page.keyboard.press('Escape');
+  await expect(card(page)).toBeHidden();
+  const canvas = page.locator('.brain-host canvas');
+  const mask = [page.locator('.brain-top'), page.locator('.brain-layouts'), page.locator('.legend'), page.locator('.brain-labels .on'), chip];
+  await page.mouse.move(1, 1);
+  const whole = await canvas.screenshot({ mask });
+  await chip.getByRole('button', { name: 'Fit to hits' }).click();
+  await page.mouse.move(1, 1);
+  await page.waitForTimeout(300);
+  expect((await canvas.screenshot({ mask })).equals(whole)).toBe(false);
+  // Clearing the light takes the counts away.
+  await chip.getByRole('button', { name: 'Clear the lit points' }).click();
+  await expect(page.locator('.brain-labels [data-hits]')).toHaveCount(0);
+  await expect(page.locator('.brain-labels .quiet')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 

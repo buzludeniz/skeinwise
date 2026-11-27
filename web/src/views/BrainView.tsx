@@ -157,6 +157,9 @@ export function BrainView() {
             <span>
               {lit.label} · {plural(lit.ids.size, 'entry', 'entries')}
             </span>
+            <Button icon={Focus} kind="quiet" small aria-label="Fit to hits" title="Frame the lit points" onClick={() => scene?.fitHits()}>
+              {compact ? undefined : 'Fit to hits'}
+            </Button>
             <Button icon={X} kind="quiet" small aria-label="Clear the lit points" title="Clear (Esc)" onClick={clearLight} />
           </div>
         )}
@@ -332,6 +335,10 @@ function ReadingBox({ layout, onClose }: { layout: Layout; onClose: () => void }
           <dd>The group from the legend.</dd>
           <dt>Lines</dt>
           <dd>Borders between hubs, fainter ones between sub-groups, and faint rings where entries crowd.</dd>
+          <dt>Names</dt>
+          <dd>Each hub's name sits under its point. Zoom in for the sub-groups' names, and closer for each entry's title.</dd>
+          <dt>Search</dt>
+          <dd>Lighting entries puts a count of them on each hub's name; Fit to hits frames them.</dd>
           <dt>Move</dt>
           <dd>Drag or use the arrow keys to move the map, and zoom in to read single entries.</dd>
         </dl>

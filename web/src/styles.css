@@ -975,6 +975,68 @@ code {
   font-variant-numeric: tabular-nums;
 }
 
+/* The map's names (scene.ts, placeMapLabels): countries, provinces nearer, entry titles up close. Each sits on a halo
+   of the ground, so it reads over the points and the borders. */
+.map-name {
+  position: absolute;
+  top: 0;
+  left: 0;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s;
+  will-change: transform;
+  text-shadow:
+    0 0 3px var(--ground),
+    0 0 3px var(--ground),
+    0 0 6px var(--ground);
+}
+
+.map-name.on {
+  opacity: 1;
+}
+
+.map-name.country {
+  color: var(--ink);
+  font-size: var(--text-small);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.map-name.province {
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+
+.map-name.entry {
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+/* A search's hits in each country, after its name; a country with none steps back. */
+.brain-label[data-hits]::after,
+.map-name[data-hits]::after {
+  content: attr(data-hits);
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 600;
+  font-style: normal;
+  text-shadow: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.brain-label.on.quiet,
+.map-name.on.quiet {
+  opacity: 0.6;
+}
+
 .brain-fallback {
   position: absolute;
   inset: 0;

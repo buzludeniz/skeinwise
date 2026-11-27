@@ -110,10 +110,31 @@ describe('the map’s lines', () => {
     for (const [x0, , x1] of segments(near.countries)) expect(Math.abs((x0 + x1) / 2)).toBeLessThan(0.3);
   });
 
+  it('knows how far apart neighbouring entries stand, about the same in every province', () => {
+    const { pts, atlas } = twoHubs();
+    const pos = atlasLayout(pts, atlas);
+    const { spacing } = atlasShape(pts, atlas);
+    expect(spacing).toBeGreaterThan(0);
+    // Each entry's nearest neighbour in its own hub stands about one spacing away.
+    const nearest: number[] = [];
+    for (let i = 0; i < 120; i++) {
+      let best = Infinity;
+      for (let j = 0; j < 120; j++) {
+        if (j === i || atlas.hubOf[j] !== atlas.hubOf[i]) continue;
+        best = Math.min(best, Math.hypot(at(pos, i).x - at(pos, j).x, at(pos, i).y - at(pos, j).y));
+      }
+      nearest.push(best);
+    }
+    nearest.sort((a, b) => a - b);
+    const median = nearest[60]!;
+    expect(median).toBeGreaterThan(spacing * 0.5);
+    expect(median).toBeLessThan(spacing * 1.5);
+  });
+
   it('draws faint terrain where entries crowd, and nothing for an empty map', () => {
     expect(lines.terrain.length).toBeGreaterThan(0);
     expect(lines.terrain.length % 6).toBe(0);
-    const none = atlasLines(new Float32Array(0), new Int32Array(0), new Int32Array(0), { hubs: [], loose: null, provinces: [] });
+    const none = atlasLines(new Float32Array(0), new Int32Array(0), new Int32Array(0), { hubs: [], loose: null, provinces: [], spacing: 0 });
     expect(none).toEqual({ countries: new Float32Array(0), provinces: new Float32Array(0), coast: new Float32Array(0), terrain: new Float32Array(0) });
   });
 });

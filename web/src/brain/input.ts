@@ -22,6 +22,8 @@ export interface SceneInput {
   spokes: Uint32Array;
   /** The labelled points, hubs first (biggest first), then notes. `name` is what a screen reader hears for the label's button. */
   labels: { index: number; text: string; name: string }[];
+  /** Each point's title (a hub's name for a hub's point), for the map's names up close. */
+  titles: string[];
   /** The map's places, when the organiser has placed every hub drawn; null otherwise, and the map draws Clusters. */
   atlas: AtlasInput | null;
 }
@@ -224,6 +226,7 @@ export function buildModel(record: BrainData, by: Grouping, pal: Palette, theme:
       cross: linkPairs(data, 1),
       spokes: Uint32Array.from(spokes),
       labels: [...hubLabels.slice(0, 16), ...noteLabels],
+      titles: [...entries.map((_, i) => data.points[i]![8]), ...hubs.map((h) => h.hub.name)],
       atlas: atlasInput(
         hubs.map((h) => h.hub),
         indexOf,

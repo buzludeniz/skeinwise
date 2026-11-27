@@ -51,6 +51,12 @@ export interface AtlasShape {
   loose: Disc | null;
   /** Per hub, a disc per sub-group, in the order of its parts. */
   provinces: Disc[][];
+  /**
+   * How far apart neighbouring entries stand, in map units: the side of the square each has to itself, the median over
+   * the provinces (and the hubs with no sub-groups, and the island). About the same everywhere, as every disc's area
+   * follows its count.
+   */
+  spacing: number;
 }
 
 /** How wide the map is drawn, in world units, from its middle to its farthest coast. */
@@ -432,7 +438,18 @@ export function atlasShape(points: readonly LayoutPoint[], atlas: AtlasInput): A
     const local = h.parts.map((part, j) => ({ x: part.x * disc.r, y: part.y * disc.r, r: disc.r * Math.sqrt(inPart[k]![j]! / total) * PROVINCE_FILL }));
     return settle(local, disc.r).map((d) => ({ x: disc.x + d.x, y: disc.y + d.y, r: d.r }));
   });
-  return { hubs, loose: loose ? { x: looseAt.x * scale, y: looseAt.y * scale, r: looseR * scale } : null, provinces };
+  const looseDisc = loose ? { x: looseAt.x * scale, y: looseAt.y * scale, r: looseR * scale } : null;
+  // A sunflower of n entries in a disc of radius r gives each an area of pi r^2 / n.
+  const gaps: number[] = [];
+  const gap = (r: number, n: number) => n > 0 && gaps.push(r * Math.sqrt(Math.PI / n));
+  atlas.hubs.forEach((h, k) => {
+    if (h.parts.length) provinces[k]!.forEach((d, j) => gap(d.r, inPart[k]![j]!));
+    else gap(hubs[k]!.r, shown[k]!);
+  });
+  if (looseDisc) gap(looseDisc.r, loose);
+  gaps.sort((a, b) => a - b);
+  const spacing = gaps.length ? gaps[Math.floor(gaps.length / 2)]! : 0;
+  return { hubs, loose: looseDisc, provinces, spacing };
 }
 
 /** A province's radius as a share of the radius its entries would fill alone, so provinces have room to sit apart. */

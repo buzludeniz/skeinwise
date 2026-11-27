@@ -18,8 +18,9 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { atlasShape, brainOutline, hash01, layoutFor, ringGuides, stripLayout, type Layout, type LayoutPoint } from '../layout.ts';
+import { type AtlasShape, atlasShape, brainOutline, hash01, layoutFor, ringGuides, stripLayout, type Layout, type LayoutPoint } from '../layout.ts';
 import { type AtlasLines, atlasLines } from './atlasMap.ts';
+import { EntryIndex, hitsPerCountry, nameTiers, Placer, PROVINCE_MIN_RADIUS, shortTitle } from './mapNames.ts';
 import { hexToRgb } from '../themes.ts';
 import type { SceneInput } from './input.ts';
 import { nearestPoint } from './pick.ts';
@@ -231,8 +232,13 @@ export class BrainScene {
   private readonly provinceMat: ShaderMaterial;
   private readonly terrainMat: ShaderMaterial;
   private mapLines: LineSegments[] = [];
-  /** The map's lines for the current points, worked out once per record. */
-  private mapCache: { input: SceneInput; lines: AtlasLines } | null = null;
+  /** The map's lines and names for the current points, worked out once per record. */
+  private mapCache: { input: SceneInput; lines: AtlasLines; names: MapNames } | null = null;
+  /** Whether the map's names were placed in the last frame drawn (so leaving the map hides them once). */
+  private namesOn = false;
+  /** For measuring entry titles without laying out the page; widths kept by text. */
+  private measure: CanvasRenderingContext2D | null = null;
+  private readonly widths = new Map<string, number>();
   private readonly markMat: ShaderMaterial;
   private readonly selectMat: ShaderMaterial;
   private mark: Points | null = null;
@@ -276,7 +282,7 @@ export class BrainScene {
   private last = 0;
   private dirty = true;
   private resizer: ResizeObserver | null = null;
-  private labelEls: { index: number; el: HTMLButtonElement; w: number }[] = [];
+  private labelEls: LabelEl[] = [];
   /** The label that has keyboard focus: always shown, wherever its point is. -1 when none. */
   private focusedLabel = -1;
 
@@ -954,6 +960,51 @@ export class BrainScene {
     this.mapLines = [];
   }
 
+  /**
+   * The map's names, made once per record and shown by placeMapLabels: a name per country (used where its hub has no
+   * label button), one per province, and a pool of entry titles filled as the view needs them. They are not in the
+   * reading order: the canvas and the label buttons carry everything they say.
+   */
+  private buildNames(input: SceneInput, shape: AtlasShape): MapNames {
+    const atlas = input.atlas!;
+    const { points } = input;
+    const name = (kind: string, text: string) => {
+      const el = document.createElement('div');
+      el.className = `map-name ${kind}`;
+      el.textContent = text;
+      el.setAttribute('aria-hidden', 'true');
+      this.labelLayer.append(el);
+      return el;
+    };
+    const capital = new Int32Array(atlas.hubs.length).fill(-1);
+    points.forEach((p, i) => {
+      if (p.id < 0 && atlas.hubOf[i]! >= 0) capital[atlas.hubOf[i]!] = i;
+    });
+    const countries = atlas.hubs
+      .map((h, k) => ({ hub: k, el: name('country', shortTitle(h.name, 34)), w: 0, h: 0 }))
+      .sort((a, b) => shape.hubs[b.hub]!.r - shape.hubs[a.hub]!.r || a.hub - b.hub);
+    const provinces = atlas.hubs
+      .flatMap((h, k) => h.parts.map((part, j) => ({ hub: k, part: j, text: shortTitle(part.name, 28), r: shape.provinces[k]![j]!.r })))
+      .filter((p) => p.text && p.r > 0)
+      .sort((a, b) => b.r - a.r || a.hub - b.hub || a.part - b.part)
+      .map(({ hub, part, text }) => ({ hub, part, el: name('province', text), w: 0, h: 0 }));
+    return {
+      shape,
+      country: Int32Array.from(points, (p, i) => (p.id < 0 ? -1 : atlas.hubOf[i]!)),
+      capital,
+      countries,
+      provinces,
+      pool: [],
+      index: new EntryIndex(this.layoutOf('atlas'), (i) => points[i]!.id >= 0),
+      placer: new Placer(),
+      hitsOf: null,
+    };
+  }
+
+  private dropNames(names: MapNames): void {
+    for (const n of [...names.countries, ...names.provinces, ...names.pool]) n.el.remove();
+  }
+
   /** The map's borders, coast and faint terrain, in ink, under the points; only while the map is drawn. */
   private buildMap(): void {
     this.dropMap();
@@ -965,7 +1016,9 @@ export class BrainScene {
       // Entries in no hub are land of their own; a hub's own point is no land at all.
       const country = Int32Array.from(points, (p, i) => (p.id < 0 ? -2 : atlas.hubOf[i]! < 0 ? loose : atlas.hubOf[i]!));
       const province = Int32Array.from(points, (p, i) => (atlas.hubOf[i]! < 0 ? 0 : atlas.partOf[i]!));
-      this.mapCache = { input, lines: atlasLines(this.layoutOf('atlas'), country, province, atlasShape(points, atlas)) };
+      const shape = atlasShape(points, atlas);
+      if (this.mapCache) this.dropNames(this.mapCache.names);
+      this.mapCache = { input, lines: atlasLines(this.layoutOf('atlas'), country, province, shape), names: this.buildNames(input, shape) };
     }
     const { countries, provinces, coast, terrain } = this.mapCache.lines;
     const ink = rgb(this.theme.ink);
@@ -1052,6 +1105,8 @@ export class BrainScene {
     for (const { el } of this.labelEls) el.remove();
     this.labelEls = [];
     this.focusedLabel = -1;
+    // New buttons carry no hit counts yet.
+    if (this.mapCache) this.mapCache.names.hitsOf = null;
     if (!this.input) return;
     const max = this.width < 700 ? 6 : 12;
     for (const { index, text, name } of this.input.labels.slice(0, max)) {
@@ -1071,7 +1126,7 @@ export class BrainScene {
         this.dirty = true;
       });
       this.labelLayer.append(el);
-      this.labelEls.push({ index, el, w: 0 });
+      this.labelEls.push({ index, el, w: 0, h: 0 });
       if (had !== null && name === had) el.focus({ preventScroll: true });
     }
     this.syncLabels();
@@ -1085,6 +1140,12 @@ export class BrainScene {
 
   private placeLabels(): void {
     if (this.labelLayer.classList.contains('hidden')) return;
+    // The map, once its lines are drawn, names by tiers; while points move into it or in any other layout, as below.
+    if (this.flat && this.mapLines.length && this.mapCache?.input === this.input) {
+      this.placeMapLabels(this.mapCache.names);
+      return;
+    }
+    this.hideMapNames();
     const centre = this.orbit.target.clone().project(this.camera).z;
     const placed: { x: number; y: number; w: number }[] = [];
     for (const label of this.labelEls) {
@@ -1124,11 +1185,227 @@ export class BrainScene {
     }
   }
 
+  /**
+   * The map's names (mapNames.ts has the tiers): the name with keyboard focus, then each country's, biggest first, under
+   * its capital (the hub's point, which stays clear for the pointer); nearer, the provinces'; up close, entry titles,
+   * the lit ones only while a search lights some. A name that would overlap one already placed waits.
+   */
+  private placeMapLabels(names: MapNames): void {
+    const input = this.input!;
+    const pos = this.layoutOf('atlas');
+    const wpp = this.worldPerPixel;
+    const t = this.orbit.target;
+    const W = this.width;
+    const H = this.height;
+    const sx = (i: number) => W / 2 + (pos[i * 3]! - t.x) / wpp;
+    const sy = (i: number) => H / 2 - (pos[i * 3 + 1]! - t.y) / wpp;
+    const fitWpp = (2 * this.atlasRef * Math.tan(((FOV / 2) * Math.PI) / 180)) / H;
+    const tier = nameTiers(fitWpp / wpp, names.shape.spacing / wpp);
+    this.namesOn = true;
+
+    // Hit counts change the names' widths, so they are written before anything is measured.
+    this.countHits(names);
+    const hubButtons = new Map<number, LabelEl>();
+    const noteButtons = new Map<number, LabelEl>();
+    for (const l of this.labelEls) {
+      if (input.points[l.index]!.id < 0) hubButtons.set(input.atlas!.hubOf[l.index]!, l);
+      else noteButtons.set(l.index, l);
+    }
+    // Measured together, before anything moves, so the page lays out once.
+    for (const l of this.labelEls) {
+      l.w ||= l.el.offsetWidth;
+      l.h ||= l.el.offsetHeight || LABEL_H;
+    }
+    for (const c of names.countries) {
+      if (!c.w && !hubButtons.has(c.hub)) [c.w, c.h] = [c.el.offsetWidth, c.el.offsetHeight];
+    }
+    if (tier.provinces) for (const p of names.provinces) if (!p.w) [p.w, p.h] = [p.el.offsetWidth, p.el.offsetHeight];
+
+    const placer = names.placer;
+    placer.reset(W, H);
+    const shown = new Set<HTMLElement>();
+    const put = (el: HTMLElement, x: number, y: number) => {
+      shown.add(el);
+      el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    };
+    // Under a capital, or to the right of an entry's point.
+    const spot = (l: LabelEl) => (input.points[l.index]!.id < 0 ? { x: sx(l.index) - l.w / 2, y: sy(l.index) + CAPITAL_GAP } : { x: sx(l.index) + 9, y: sy(l.index) - l.h / 2 });
+
+    const focused = this.labelEls.find((l) => l.index === this.focusedLabel);
+    if (focused) {
+      // Always shown, and kept on screen, so focus is never on something unseen.
+      const at = spot(focused);
+      const x = Math.max(8, Math.min(W - focused.w - 8, at.x));
+      const y = Math.max(4, Math.min(H - focused.h - 4, at.y));
+      placer.take(x, y, focused.w, focused.h, 3, true);
+      put(focused.el, x, y);
+    }
+    if (this.grow >= 1) {
+      for (const i of names.capital) if (i >= 0) placer.take(sx(i) - CAPITAL_GAP + 4, sy(i) - CAPITAL_GAP + 4, 2 * CAPITAL_GAP - 8, 2 * CAPITAL_GAP - 8, 0, true);
+      for (const c of names.countries) {
+        const i = names.capital[c.hub]!;
+        const button = hubButtons.get(c.hub);
+        if (i < 0 || (button && button === focused)) continue;
+        const [el, w, h] = button ? [button.el, button.w, button.h] : [c.el, c.w, c.h];
+        const x = sx(i) - w / 2;
+        const y = sy(i) + CAPITAL_GAP;
+        if (placer.take(x, y, w, h)) put(el, x, y);
+      }
+      if (tier.provinces) {
+        for (const p of names.provinces) {
+          const d = names.shape.provinces[p.hub]![p.part]!;
+          if (d.r / wpp < PROVINCE_MIN_RADIUS) continue;
+          const x = W / 2 + (d.x - t.x) / wpp - p.w / 2;
+          const y = H / 2 - (d.y - t.y) / wpp - p.h / 2;
+          if (placer.take(x, y, p.w, p.h)) put(p.el, x, y);
+        }
+      }
+      if (tier.entries) this.placeTitles(names, noteButtons, focused, sx, sy, placer, put);
+    }
+    for (const l of this.labelEls) l.el.classList.toggle('on', shown.has(l.el));
+    for (const n of [...names.countries, ...names.provinces, ...names.pool]) n.el.classList.toggle('on', shown.has(n.el));
+  }
+
+  /**
+   * Entry titles in view, in a fixed order so the same ones win as the map moves: notes with a label button first, then
+   * the biggest points, then the oldest. Beside its point, on the right or else the left.
+   */
+  private placeTitles(
+    names: MapNames,
+    noteButtons: Map<number, LabelEl>,
+    focused: LabelEl | undefined,
+    sx: (i: number) => number,
+    sy: (i: number) => number,
+    placer: Placer,
+    put: (el: HTMLElement, x: number, y: number) => void,
+  ): void {
+    const input = this.input!;
+    const wpp = this.worldPerPixel;
+    const t = this.orbit.target;
+    const halfW = (this.width / 2) * wpp;
+    const halfH = (this.height / 2) * wpp;
+    const lit = this.lit;
+    const anyLit = this.anyLit;
+    const { sizes } = input;
+    const inView = names.index.within(t.x - halfW, t.y - halfH, t.x + halfW, t.y + halfH).filter((i) => !anyLit || lit[i]! > 1.5);
+    inView.sort((a, b) => +noteButtons.has(b) - +noteButtons.has(a) || sizes[b]! - sizes[a]! || a - b);
+    let used = 0;
+    for (let n = 0; n < inView.length && n < TITLES_TRIED && used < TITLES_SHOWN; n++) {
+      const i = inView[n]!;
+      const button = noteButtons.get(i);
+      if (button === focused && button) continue;
+      const x = sx(i);
+      const y = sy(i);
+      if (button) {
+        const by = y - button.h / 2;
+        if (placer.take(x + 9, by, button.w, button.h)) put(button.el, x + 9, by);
+        else if (placer.take(x - 9 - button.w, by, button.w, button.h)) put(button.el, x - 9 - button.w, by);
+        continue;
+      }
+      const text = shortTitle(input.titles[i] ?? '');
+      if (!text) continue;
+      const w = this.textWidth(text);
+      const by = y - TITLE_HEIGHT / 2;
+      let bx = x + 6;
+      if (!placer.take(bx, by, w, TITLE_HEIGHT, 2)) {
+        bx = x - 6 - w;
+        if (!placer.take(bx, by, w, TITLE_HEIGHT, 2)) continue;
+      }
+      let slot = names.pool[used];
+      if (!slot) {
+        const el = document.createElement('div');
+        el.className = 'map-name entry';
+        el.setAttribute('aria-hidden', 'true');
+        this.labelLayer.append(el);
+        slot = { el, text: '' };
+        names.pool.push(slot);
+      }
+      if (slot.text !== text) {
+        slot.el.textContent = text;
+        slot.text = text;
+      }
+      put(slot.el, bx, by);
+      used++;
+    }
+  }
+
+  /**
+   * Writes each country's hit count (the lit entries in it) on its name and its label button, and quiets the countries
+   * with none; clears them when nothing is lit. Only when what is lit has changed.
+   */
+  private countHits(names: MapNames): void {
+    const lit = this.anyLit ? this.lit : null;
+    if (lit === names.hitsOf) return;
+    names.hitsOf = lit;
+    const input = this.input!;
+    const hits = lit ? hitsPerCountry(lit, names.country, (i) => input.points[i]!.id >= 0, names.capital.length) : null;
+    const buttons = new Map<number, LabelEl>();
+    for (const l of this.labelEls) if (input.points[l.index]!.id < 0) buttons.set(input.atlas!.hubOf[l.index]!, l);
+    for (const c of names.countries) {
+      const n = hits?.[c.hub] ?? 0;
+      const button = buttons.get(c.hub);
+      for (const el of button ? [c.el, button.el] : [c.el]) {
+        if (n) el.dataset.hits = n.toLocaleString('en');
+        else delete el.dataset.hits;
+        el.classList.toggle('quiet', !!hits && !n);
+      }
+      c.w = 0;
+      if (button) button.w = 0;
+    }
+  }
+
+  /** Off the map: its names go, and the label buttons lose their hit counts (the map counts them, and may again). */
+  private hideMapNames(): void {
+    const names = this.mapCache?.names;
+    if (!this.namesOn || !names) return;
+    this.namesOn = false;
+    for (const n of [...names.countries, ...names.provinces, ...names.pool]) n.el.classList.remove('on');
+    for (const l of this.labelEls) {
+      if (l.el.dataset.hits === undefined && !l.el.classList.contains('quiet')) continue;
+      delete l.el.dataset.hits;
+      l.el.classList.remove('quiet');
+      l.w = 0;
+    }
+    names.hitsOf = null;
+  }
+
+  /** An entry title's width in CSS pixels, measured on a canvas in the titles' font rather than by laying out the page. */
+  private textWidth(text: string): number {
+    let w = this.widths.get(text);
+    if (w !== undefined) return w;
+    if (!this.measure) {
+      this.measure = document.createElement('canvas').getContext('2d');
+      if (this.measure) this.measure.font = `${TITLE_FONT}px ${getComputedStyle(this.labelLayer).fontFamily}`;
+    }
+    w = Math.ceil(this.measure ? this.measure.measureText(text).width : text.length * TITLE_FONT * 0.6) + 2;
+    if (this.widths.size > 4000) this.widths.clear();
+    this.widths.set(text, w);
+    return w;
+  }
+
   // Camera.
 
-  private fitOrbit(layout: Layout): Orbit {
+  /** Frames the lit points (a search's hits), in whichever layout is shown. Nothing happens when nothing is lit. */
+  fitHits(): void {
+    if (!this.input || !this.anyLit) return;
+    const { points } = this.input;
+    const lit = this.lit;
+    const goal = this.fitOrbit(this.layout, (i) => lit[i]! > 1.5 && points[i]!.id >= 0);
+    // A single hit still shows its neighbours.
+    goal.dist = Math.max(goal.dist, this.fitOrbit(this.layout).dist * 0.06);
+    this.touch();
+    if (this.reducedMotion) {
+      this.orbit = goal;
+      this.goal = null;
+    } else this.goal = goal;
+    this.dirty = true;
+  }
+
+  /** The camera that frames the layout's points, or only those `only` keeps. */
+  private fitOrbit(layout: Layout, only?: (i: number) => boolean): Orbit {
     const pos = this.input ? this.layoutOf(layout) : new Float32Array(0);
-    const sets = layout === 'brain' && this.mode === 'full' ? [pos, this.shell!.geometry.getAttribute('position').array as Float32Array] : [pos];
+    const sets = layout === 'brain' && this.mode === 'full' && !only ? [pos, this.shell!.geometry.getAttribute('position').array as Float32Array] : [pos];
+    const skip = (s: Float32Array, i: number) => !!only && s === pos && !only(i / 3);
     let minY = Infinity;
     let maxY = -Infinity;
     let minX = Infinity;
@@ -1138,6 +1415,7 @@ export class BrainScene {
     let flat = 0;
     for (const s of sets) {
       for (let i = 0; i < s.length; i += 3) {
+        if (skip(s, i)) continue;
         minX = Math.min(minX, s[i]!);
         maxX = Math.max(maxX, s[i]!);
         minY = Math.min(minY, s[i + 1]!);
@@ -1149,7 +1427,7 @@ export class BrainScene {
     if (minY === Infinity) return { yaw: 0.55, pitch: 0.1, dist: 6, target: new Vector3() };
     const target = new Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
     for (const s of sets) {
-      for (let i = 0; i < s.length; i += 3) flat = Math.max(flat, Math.hypot(s[i]! - target.x, s[i + 2]! - target.z));
+      for (let i = 0; i < s.length; i += 3) if (!skip(s, i)) flat = Math.max(flat, Math.hypot(s[i]! - target.x, s[i + 2]! - target.z));
     }
     const aspect = this.width / this.height;
     const tv = Math.tan(((FOV / 2) * Math.PI) / 180);
@@ -1322,17 +1600,16 @@ export class BrainScene {
       this.hoverAt = null;
       this.setHover(-1);
     });
-    c.addEventListener(
-      'wheel',
-      (e) => {
-        if (this.mode !== 'full') return;
-        e.preventDefault();
-        this.touch();
-        const rect = c.getBoundingClientRect();
-        this.zoom(Math.exp(e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)), { x: e.clientX - rect.left, y: e.clientY - rect.top });
-      },
-      { passive: false },
-    );
+    const wheel = (e: WheelEvent) => {
+      if (this.mode !== 'full') return;
+      e.preventDefault();
+      this.touch();
+      const rect = c.getBoundingClientRect();
+      this.zoom(Math.exp(e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)), { x: e.clientX - rect.left, y: e.clientY - rect.top });
+    };
+    // The labels too: up close on the map they stand everywhere, and the wheel must still zoom over them.
+    c.addEventListener('wheel', wheel, { passive: false });
+    this.labelLayer.addEventListener('wheel', wheel, { passive: false });
     // One click selects (a drag that turned the brain doesn't); a click on empty space clears the selection.
     c.addEventListener('click', (e) => {
       if (this.mode !== 'full' || this.dragMoved > 3) return;
@@ -1456,16 +1733,56 @@ export class BrainScene {
     const matrix = this.camera.projectionMatrix.clone().multiply(this.camera.matrixWorldInverse).elements;
     const lit = this.lit;
     const floor = this.anyLit ? 1.5 : 0.5;
-    return nearestPoint(
-      { matrix, width: this.width, height: this.height },
-      { from: this.from, to: this.current, t: easeInOut(this.mix) },
-      this.input.points.length,
-      x,
-      y,
-      radius,
-      (i) => lit[i]! < floor,
-    );
+    const view = { matrix, width: this.width, height: this.height };
+    const at = { from: this.from, to: this.current, t: easeInOut(this.mix) };
+    const { points } = this.input;
+    // On the map a hub's point is its country's capital, packed in among its entries: within its own reach it wins,
+    // so the pointer can find it.
+    if (this.flat) {
+      const hub = nearestPoint(view, at, points.length, x, y, Math.min(radius, HUB_REACH), (i) => points[i]!.id >= 0 || lit[i]! < floor);
+      if (hub >= 0) return hub;
+    }
+    return nearestPoint(view, at, points.length, x, y, radius, (i) => lit[i]! < floor);
   }
+}
+
+/** How near, in CSS pixels, the pointer must come to a hub's point on the map for the hub to win over its entries. */
+const HUB_REACH = 10;
+/** On the map, how far below its capital a country's name sits, in CSS pixels; the capital keeps the spot above clear. */
+const CAPITAL_GAP = 11;
+/** A label button's height before it is measured, and an entry title's, in CSS pixels, and the titles' font size (styles.css, .map-name.entry). */
+const LABEL_H = 22;
+const TITLE_HEIGHT = 15;
+const TITLE_FONT = 11;
+/** At most this many entry titles at once, from at most this many tried. */
+const TITLES_SHOWN = 48;
+const TITLES_TRIED = 400;
+
+/** A label button and its measured size (0 until measured). */
+interface LabelEl {
+  index: number;
+  el: HTMLButtonElement;
+  w: number;
+  h: number;
+}
+
+/** The map's names for one record: the elements for each tier and what places them. */
+interface MapNames {
+  shape: AtlasShape;
+  /** Each point's country, for counting hits: its hub, or -1 (in no hub, or a hub's own point). */
+  country: Int32Array;
+  /** Each hub's own point, by hub; -1 when it isn't drawn. */
+  capital: Int32Array;
+  /** A name per country, biggest first, shown where its hub has no label button. */
+  countries: { hub: number; el: HTMLDivElement; w: number; h: number }[];
+  /** A name per province, biggest first. */
+  provinces: { hub: number; part: number; el: HTMLDivElement; w: number; h: number }[];
+  /** Elements for entry titles, reused from frame to frame. */
+  pool: { el: HTMLDivElement; text: string }[];
+  index: EntryIndex;
+  placer: Placer;
+  /** The lit values the hit counts were last written for; null when nothing was lit. */
+  hitsOf: Float32Array | null;
 }
 
 /** What the canvas says it is, by layout: the map pans, the others turn. */
