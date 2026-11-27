@@ -4,34 +4,20 @@ Every step here is yours: no session tags, publishes or logs in. No secret belon
 are in the order you meet them. "Verified" names the page a step was checked against on Nov 26; "not verified" means
 no page said so.
 
-**First, before any `v*` tag: the `npm` environment on GitHub.** release.yml's publish job runs in the environment
-`npm`, which doesn't exist yet (the repo listed no environments on Nov 26). A run that names a missing environment
-creates it with no protection rules, so a tag pushed before you set it up would publish without waiting for you.
-Verified, [Managing environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments):
-"Running a workflow that references an environment that does not exist will create an environment with the
-referenced name", and, outside Pages builds, "the newly created environment will not have any protection rules or
-secrets configured." In the repo's Settings, Environments, New environment, name it `npm`, then:
-- **Required reviewers:** you. Required reviewers work on a public repo on the Free plan (verified, same page).
-- **Prevent self-review:** leave it off. Your own tag push starts the run, and with it on, "users who initiate a
-  deployment cannot approve the deployment job, even if they are a required reviewer". Verified,
-  [Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
-  That you can approve your own run with it off: not verified (the page doesn't say).
-- **Deployment branches and tags:** "Selected branches and tags", then Add deployment branch or tag rule, Ref type
-  Tag, pattern `v*` (verified, both pages). That `v*` matches `v1.0.0`: not verified. The pages give `File.fnmatch`
-  syntax, where `*` matches anything but `/`.
-
-Set it up before step 3: npm's trusted-publisher form names this environment.
+**First, before any `v*` tag: the `npm` environment on GitHub. Done.** release.yml's publish job runs in the
+environment `npm`, which now exists with you as its required reviewer, Prevent self-review off, and one deployment
+rule, tag `v*`. It had to come before any tag: a run that names a missing environment creates it with no protection
+rules ([Managing environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)).
+That `v*` matches the tag is checked by the v1.0.0 tag's run: rc.1 goes out by hand and never passes through the
+environment.
 
 **0. If you have no npm account with 2FA.** Sign up at npmjs.com, verify the email, and turn on two-factor
 authentication for authorization and writes (a security key or an authenticator app). Store the recovery codes
 offline. Then `npm login` (it opens the browser), `npm whoami`, and `npm view skeinwise`: still a 404 means the name
 is free.
 
-**1. Before the rc goes out: Private vulnerability reporting.** SECURITY.md sends reporters to it, and it is off
-(the API said so on Nov 26). An installable package needs a working route for reports. In the repo's Settings,
-Advanced Security, click Enable beside "Private vulnerability reporting". Verified,
-[Configuring private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/working-with-repository-security-advisories/configuring-private-vulnerability-reporting-for-a-repository):
-"Under "Advanced Security", to the right of "Private vulnerability reporting", click **Enable**".
+**1. Before the rc goes out: Private vulnerability reporting. Done.** It is enabled, so the route SECURITY.md gives
+reporters works.
 
 **2. The rc, by hand (Fri ~15:00, on your yes).** The lead names the RC sha; package.json says `1.0.0-rc.1` there.
 ```sh
@@ -97,7 +83,7 @@ The Release workflow refuses unless the tag is signed and verified, names packag
 and CHANGELOG.md has a `## [1.0.0]` section. Approve the `npm` environment when it asks. Afterwards:
 `npm view skeinwise dist-tags` shows `latest: 1.0.0`, and the GitHub release carries the tarball and SHA256SUMS.
 
-**If you say no to the rc:** set up the `npm` environment (the first step) and push the tag as in step 4. The publish
+**If you say no to the rc:** push the tag as in step 4. The publish
 job fails, because the package doesn't exist yet. Then `gh run download <run id> -R buzludeniz/skeinwise -n package`,
 `shasum -a 256 -c SHA256SUMS`, and `npm publish skeinwise-1.0.0.tgz --access public`. Re-run the failed jobs:
 publish sees the same bytes on npm and passes, and the GitHub release follows. Add the trusted publisher (step 3) for
