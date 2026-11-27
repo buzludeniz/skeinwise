@@ -18,8 +18,8 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { type AtlasShape, atlasShape, brainOutline, hash01, layoutFor, ringGuides, stripLayout, type Layout, type LayoutPoint } from '../layout.ts';
-import { type AtlasLines, atlasLines } from './atlasMap.ts';
+import { type AtlasInput, type AtlasShape, atlasShape, brainOutline, hash01, layoutFor, ringGuides, stripLayout, type Layout, type LayoutPoint } from '../layout.ts';
+import { type AtlasLines, atlasLines, lineDistances } from './atlasMap.ts';
 import { EntryIndex, hitsPerCountry, nameTiers, Placer, PROVINCE_MIN_RADIUS, shortTitle } from './mapNames.ts';
 import { hexToRgb } from '../themes.ts';
 import type { SceneInput } from './input.ts';
@@ -63,6 +63,7 @@ uniform float uGrow;
 uniform float uAnyLit;
 uniform float uRatio;
 uniform float uRef;
+uniform float uCap;
 varying vec3 vColor;
 varying float vAlpha;
 void main() {
@@ -75,13 +76,16 @@ void main() {
   // points stay apart and their titles have room.
   float z = max(0.05, -mv.z);
   float d = uRef > 0.0 ? sqrt(z * uRef) : z;
-  gl_PointSize = clamp(size * uSize * uScale / d * boost * shown, 0.0, 96.0) * uRatio;
+  // On the map (uCap > 0) no dot is wider than a few entries' spacing, so a note's bigger dot never buries its neighbours.
+  float s = uCap > 0.0 ? min(size, uCap) : size;
+  gl_PointSize = clamp(s * uSize * uScale / d * boost * shown, 0.0, 96.0) * uRatio;
   vColor = color;
   vAlpha = (lit < 0.5 ? (uAnyLit > 0.5 ? 0.1 : 0.16) : 1.0) * shown;
 }`;
 
 const POINT_FRAG = /* glsl */ `
 uniform float uLight;
+uniform float uNight;
 varying vec3 vColor;
 varying float vAlpha;
 void main() {
@@ -92,6 +96,13 @@ void main() {
     // On a light ground a point is an ink dot about as wide as the glowing core on a dark one, with a faint rim.
     float a = smoothstep(0.6, 0.42, d) + smoothstep(1.0, 0.6, d) * 0.12;
     gl_FragColor = vec4(vColor, a * vAlpha * 0.9);
+  } else if (uNight > 0.5) {
+    // The night sky: a small sharp star with a faint glow, dim enough that a crowded province stays a field of stars
+    // instead of adding up to white.
+    float core = smoothstep(0.3, 0.0, d);
+    float halo = exp(-d * d * 9.0);
+    float a = clamp(core * 0.8 + halo * 0.2, 0.0, 1.0);
+    gl_FragColor = vec4(mix(vColor, vec3(1.0), core * 0.35), a * vAlpha);
   } else {
     float core = smoothstep(0.42, 0.0, d);
     float halo = exp(-d * d * 5.0);
@@ -104,23 +115,31 @@ const LINE_VERT = /* glsl */ `
 attribute vec3 target;
 attribute vec3 color;
 attribute float lit;
+attribute float along;
 uniform float uMix;
 uniform float uAnyLit;
 uniform float uLitGain;
 varying vec3 vColor;
 varying float vLit;
+varying float vAlong;
 void main() {
   vec3 p = mix(position, target, uMix);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
   vColor = color;
   vLit = uAnyLit > 0.5 ? (lit > 1.5 ? uLitGain : 0.18) : (lit < 0.5 ? 0.2 : 1.0);
+  vAlong = along;
 }`;
 
+// uDash, when above 0, draws the line dotted: one dot and one gap per uDash along it (the map's borders in the night
+// sky, where 'along' is the distance along the border).
 const LINE_FRAG = /* glsl */ `
 uniform float uAlpha;
+uniform float uDash;
 varying vec3 vColor;
 varying float vLit;
+varying float vAlong;
 void main() {
+  if (uDash > 0.0 && fract(vAlong / uDash) > 0.5) discard;
   gl_FragColor = vec4(vColor, clamp(uAlpha * vLit, 0.0, 1.0));
 }`;
 
@@ -232,8 +251,14 @@ export class BrainScene {
   private readonly provinceMat: ShaderMaterial;
   private readonly terrainMat: ShaderMaterial;
   private mapLines: LineSegments[] = [];
-  /** The map's lines and names for the current points, worked out once per record. */
-  private mapCache: { input: SceneInput; lines: AtlasLines; names: MapNames } | null = null;
+  /**
+   * The map's lines and names, worked out once per record, and the borders' dash distances once they are first drawn
+   * dotted. Kept by the record's atlas, which a new grouping or palette (setColors, a new input around the same atlas
+   * and the same places) leaves as it is.
+   */
+  private mapCache: { atlas: AtlasInput; lines: AtlasLines; names: MapNames; along: Map<Float32Array, Float32Array> } | null = null;
+  /** Whether the map's names were last placed in the night sky's style (their widths change with it). */
+  private namesNight = false;
   /** Whether the map's names were placed in the last frame drawn (so leaving the map hides them once). */
   private namesOn = false;
   /** For measuring entry titles without laying out the page; widths kept by text. */
@@ -335,6 +360,8 @@ export class BrainScene {
       uAnyLit: { value: 0 },
       uRatio: { value: 1 },
       uLight: { value: 0 },
+      uNight: { value: 0 },
+      uCap: { value: 0 },
       uRef: { value: 0 },
     };
     this.pointMat = new ShaderMaterial({
@@ -350,7 +377,7 @@ export class BrainScene {
       new ShaderMaterial({
         vertexShader: LINE_VERT,
         fragmentShader: LINE_FRAG,
-        uniforms: { uMix: { value: 1 }, uAnyLit: { value: 0 }, uAlpha: { value: alpha }, uLitGain: { value: litGain } },
+        uniforms: { uMix: { value: 1 }, uAnyLit: { value: 0 }, uAlpha: { value: alpha }, uLitGain: { value: litGain }, uDash: { value: 0 } },
         transparent: true,
         depthWrite: false,
         blending: AdditiveBlending,
@@ -677,6 +704,17 @@ export class BrainScene {
     return this.layout === 'atlas' && this.mode === 'full' && !!this.input?.atlas;
   }
 
+  /** On the map, the widest a dot may be in world units (a few entries' spacing); 0 elsewhere, where sizes stand. */
+  private get dotCap(): number {
+    const cache = this.mapCache;
+    return this.flat && cache && cache.atlas === this.input?.atlas ? cache.names.shape.spacing * MAP_DOT_SPAN : 0;
+  }
+
+  /** The map on a dark theme: the night sky, where the dots glow like stars and the borders run dotted. */
+  private get night(): boolean {
+    return this.flat && !this.theme.light;
+  }
+
   /** The camera distance that frames the whole map, which sets how points grow as the map zooms in. 0 until needed. */
   private atlasRef = 0;
 
@@ -849,11 +887,12 @@ export class BrainScene {
     if (this.threadLines) {
       const verts = this.threadOrder.length;
       this.threadLines.geometry.setDrawRange(0, Math.floor((verts / 2) * d * d) * 2);
-      this.threadLines.visible = d > 0;
     }
-    if (this.linkLines) this.linkLines.visible = d > 0;
-    if (this.crossLines) this.crossLines.visible = d > 0;
-    // On the map a hub's spokes would be a starburst over its own country, which the borders already show.
+    // The map draws only the selection's own lines (buildSelection): every thread and link at once would run across
+    // the borders and hide them, and a hub's spokes would be a starburst over its own country.
+    if (this.threadLines) this.threadLines.visible = d > 0 && !this.flat;
+    if (this.linkLines) this.linkLines.visible = d > 0 && !this.flat;
+    if (this.crossLines) this.crossLines.visible = d > 0 && !this.flat;
     if (this.spokeLines) this.spokeLines.visible = d > 0 && !this.flat;
     this.selectDirty = true;
     this.dirty = true;
@@ -902,7 +941,7 @@ export class BrainScene {
     const mg = new BufferGeometry();
     mg.setAttribute('position', new BufferAttribute(this.from.slice(i * 3, i * 3 + 3), 3));
     mg.setAttribute('target', new BufferAttribute(this.current.slice(i * 3, i * 3 + 3), 3));
-    this.markMat.uniforms.uBase!.value = this.input.sizes[i] ?? 0.1;
+    this.markMat.uniforms.uBase!.value = Math.min(this.input.sizes[i] ?? 0.1, this.dotCap || Infinity);
     this.mark = new Points(mg, this.markMat);
     this.mark.frustumCulled = false;
     this.mark.renderOrder = 4;
@@ -923,7 +962,8 @@ export class BrainScene {
     if (this.options.lineDensity > 0) {
       add(touching(this.input.links), true);
       add(touching(this.input.cross), true, 0.08);
-      add(touching(this.input.spokes), false);
+      // On the map a hub's country already shows what it holds.
+      if (!this.flat) add(touching(this.input.spokes), false);
       add(touching(this.threadOrder), false);
     }
     const length = parts.reduce((sum, p) => sum + p.length, 0);
@@ -1010,7 +1050,7 @@ export class BrainScene {
     this.dropMap();
     const input = this.input;
     if (!input?.atlas || !this.flat) return;
-    if (this.mapCache?.input !== input) {
+    if (this.mapCache?.atlas !== input.atlas) {
       const { atlas, points } = input;
       const loose = atlas.hubs.length;
       // Entries in no hub are land of their own; a hub's own point is no land at all.
@@ -1018,9 +1058,10 @@ export class BrainScene {
       const province = Int32Array.from(points, (p, i) => (atlas.hubOf[i]! < 0 ? 0 : atlas.partOf[i]!));
       const shape = atlasShape(points, atlas);
       if (this.mapCache) this.dropNames(this.mapCache.names);
-      this.mapCache = { input, lines: atlasLines(this.layoutOf('atlas'), country, province, shape), names: this.buildNames(input, shape) };
+      this.mapCache = { atlas, lines: atlasLines(this.layoutOf('atlas'), country, province, shape), names: this.buildNames(input, shape), along: new Map() };
     }
     const { countries, provinces, coast, terrain } = this.mapCache.lines;
+    const along = this.mapCache.along;
     const ink = rgb(this.theme.ink);
     for (const [pos, mat] of [
       [terrain, this.terrainMat],
@@ -1036,6 +1077,11 @@ export class BrainScene {
       g.setAttribute('target', new BufferAttribute(pos, 3));
       g.setAttribute('color', new BufferAttribute(colors, 3));
       g.setAttribute('lit', new BufferAttribute(new Float32Array(pos.length / 3).fill(1), 1));
+      // The borders run dotted in the night sky; terrain stays a faint solid line.
+      if (this.night && mat !== this.terrainMat) {
+        if (!along.has(pos)) along.set(pos, lineDistances(pos));
+        g.setAttribute('along', new BufferAttribute(along.get(pos)!, 1));
+      }
       const lines = new LineSegments(g, mat);
       lines.frustumCulled = false;
       lines.renderOrder = 0;
@@ -1141,8 +1187,9 @@ export class BrainScene {
   private placeLabels(): void {
     if (this.labelLayer.classList.contains('hidden')) return;
     // The map, once its lines are drawn, names by tiers; while points move into it or in any other layout, as below.
-    if (this.flat && this.mapLines.length && this.mapCache?.input === this.input) {
-      this.placeMapLabels(this.mapCache.names);
+    const cache = this.mapCache;
+    if (this.flat && this.mapLines.length && cache && cache.atlas === this.input?.atlas) {
+      this.placeMapLabels(cache.names);
       return;
     }
     this.hideMapNames();
@@ -1202,6 +1249,13 @@ export class BrainScene {
     const fitWpp = (2 * this.atlasRef * Math.tan(((FOV / 2) * Math.PI) / 180)) / H;
     const tier = nameTiers(fitWpp / wpp, names.shape.spacing / wpp);
     this.namesOn = true;
+    // The night sky names its countries as constellations; the change of style changes every name's width.
+    const night = this.night;
+    if (night !== this.namesNight) {
+      this.namesNight = night;
+      this.labelLayer.classList.toggle('night', night);
+      for (const n of [...names.countries, ...names.provinces]) n.w = 0;
+    }
 
     // Hit counts change the names' widths, so they are written before anything is measured.
     this.countHits(names);
@@ -1359,6 +1413,8 @@ export class BrainScene {
     const names = this.mapCache?.names;
     if (!this.namesOn || !names) return;
     this.namesOn = false;
+    this.namesNight = false;
+    this.labelLayer.classList.remove('night');
     for (const n of [...names.countries, ...names.provinces, ...names.pool]) n.el.classList.remove('on');
     for (const l of this.labelEls) {
       if (l.el.dataset.hits === undefined && !l.el.classList.contains('quiet')) continue;
@@ -1454,6 +1510,12 @@ export class BrainScene {
 
   private placeCamera(): void {
     if (this.flat && !this.atlasRef) this.atlasRef = this.fitOrbit('atlas').dist;
+    // A dot and a gap every few pixels at any zoom.
+    const dash = this.night ? this.worldPerPixel * NIGHT_DASH : 0;
+    this.borderMat.uniforms.uDash!.value = dash;
+    this.provinceMat.uniforms.uDash!.value = dash;
+    this.pointMat.uniforms.uNight!.value = this.night ? 1 : 0;
+    this.pointMat.uniforms.uCap!.value = this.dotCap;
     this.pointMat.uniforms.uRef!.value = this.flat ? this.atlasRef : 0;
     const o = this.orbit;
     if (this.mode === 'strip') {
@@ -1748,6 +1810,10 @@ export class BrainScene {
 
 /** How near, in CSS pixels, the pointer must come to a hub's point on the map for the hub to win over its entries. */
 const HUB_REACH = 10;
+/** On the map, how wide a dot may be at most, in spacings between neighbouring entries. */
+const MAP_DOT_SPAN = 3;
+/** In the night sky, how long a border's dot and gap are together, in CSS pixels. */
+const NIGHT_DASH = 5;
 /** On the map, how far below its capital a country's name sits, in CSS pixels; the capital keeps the spot above clear. */
 const CAPITAL_GAP = 11;
 /** A label button's height before it is measured, and an entry title's, in CSS pixels, and the titles' font size (styles.css, .map-name.entry). */

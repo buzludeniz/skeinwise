@@ -251,6 +251,8 @@ test('the map moves with the arrow keys, zooms with plus and minus, comes back w
   await expect(page.getByRole('radiogroup', { name: 'Layout' }).getByRole('radio', { name: 'Map' })).toHaveAttribute('aria-checked', 'true');
   const canvas = page.locator('.brain-host canvas');
   await expect(canvas).toHaveAttribute('aria-label', /^The map: .*arrow keys to move the map.*F to fit/);
+  // A dark theme (the record's own, Dusk) draws the map as a night sky.
+  await expect(page.locator('.brain-labels')).toHaveClass(/\bnight\b/);
   // The names shown, not their layer: the layer covers the whole canvas.
   const mask = [page.locator('.brain-top'), page.locator('.brain-layouts'), page.locator('.legend'), page.locator('.brain-labels .on')];
   await page.mouse.move(1, 1);
@@ -277,6 +279,7 @@ test('the map moves with the arrow keys, zooms with plus and minus, comes back w
   // Clusters is still there, one click away.
   await page.getByRole('radiogroup', { name: 'Layout' }).getByRole('radio', { name: 'Clusters' }).click();
   await expect(canvas).toHaveAttribute('aria-label', /^The brain: /);
+  await expect(page.locator('.brain-labels')).not.toHaveClass(/\bnight\b/);
   expect(errors).toEqual([]);
 });
 

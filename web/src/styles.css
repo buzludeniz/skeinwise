@@ -1016,6 +1016,19 @@ code {
   line-height: 15px;
 }
 
+/* The night sky (the map on a dark theme, scene.ts): the countries named like constellations, in spaced capitals. */
+.brain-labels.night .map-name.country {
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.brain-labels.night .map-name.province {
+  letter-spacing: 0.06em;
+}
+
 /* A search's hits in each country, after its name; a country with none steps back. */
 .brain-label[data-hits]::after,
 .map-name[data-hits]::after {
