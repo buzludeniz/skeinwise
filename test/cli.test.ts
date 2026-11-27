@@ -39,9 +39,12 @@ afterEach(() => {
 
 describe('the skeinwise command', () => {
   it('prints help and version', async () => {
+    // package.json's version as it stands, a prerelease such as 1.0.0-rc.1 included.
+    const { version } = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as { version: string };
+    expect(version).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
     expect((await cli('help')).out).toContain('Usage: skeinwise');
-    expect((await cli('version')).out).toMatch(/^\d+\.\d+\.\d+\n$/);
-    expect(JSON.parse((await cli('version', '--json')).out)).toEqual({ version: expect.stringMatching(/^\d+\.\d+\.\d+$/) });
+    expect((await cli('version')).out).toBe(`${version}\n`);
+    expect(JSON.parse((await cli('version', '--json')).out)).toEqual({ version });
   });
 
   it('starts every description in the help at column 28, or 31 in the sections with long commands', async () => {

@@ -12,6 +12,8 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
 - **The app.** `skeinwise serve` opens Skeinwise in your browser, on this computer only (127.0.0.1, with a token).
   It includes the 3D brain, Threads, Stats, the timeline, Profile, the Workbench, the reader, concept hubs, the runs
   and their undo, the command bar, settings, and light and dark themes.
+- **The 3D brain.** It opens on Clusters, one disc per source, with labels in every layout, and Tab steps through
+  the hubs. Brain (two lobes and a stem) and Activity are the other layouts.
 - **Agent memory over MCP.** `skeinwise mcp` serves your record to Claude Code, Codex, Cursor, Claude desktop and
   other MCP clients:
   - seven read tools, plus five write tools for an agent you give write scope;
@@ -34,6 +36,8 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
 - The work-tool connectors (Gmail, Google Calendar, Todoist and Slack) move to 1.1.
 - Encrypted sync is hidden in 1.0. Export stays.
 - `skeinwise stats` prints the busiest months as plain text.
+- At most 50 notes become Projects, the ones linked from the most entries, and a daily note never does. A record
+  that links freely used to get thousands.
 
 ### Security
 
@@ -50,6 +54,11 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
   token stored anywhere; no release has run through it yet. Every action is pinned by commit, and CI runs on macOS,
   Windows and Ubuntu with Node 24 and 26. [docs/security.md](docs/security.md) describes the threat model and the
   limits.
+
+## [1.0.0-rc.1] - 2026-11-27
+
+The first release candidate for 1.0.0, on npm under the `next` dist-tag: `npx skeinwise@next`. It has the changes
+listed above for 1.0.0.
 
 ## [0.3.0] - 2026-11-25
 
@@ -82,6 +91,7 @@ The record and the command line.
 - Full-text search, the `skeinwise` command and an invented demo record.
 
 [Unreleased]: https://github.com/buzludeniz/skeinwise/compare/v0.3.0...HEAD
+[1.0.0-rc.1]: https://www.npmjs.com/package/skeinwise/v/1.0.0-rc.1
 [0.3.0]: https://github.com/buzludeniz/skeinwise/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/buzludeniz/skeinwise/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/buzludeniz/skeinwise/releases/tag/v0.1.0
