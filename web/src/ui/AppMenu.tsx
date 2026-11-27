@@ -117,9 +117,11 @@ export function AppMenu({ onAddFiles }: { onAddFiles: () => void }) {
         </button>
         {sub === 'connect' && (
           <div class="submenu" role="menu" aria-label="Connect">
-            {!agents && (
-              <p class="menu-status" role="none">
-                Looking…
+            {/* A menu must hold a menu item. Until the list comes, or when it can't, its stand-in line is one, disabled:
+                a menu holding only a paragraph is what axe flags (aria-required-children). */}
+            {!agents?.length && (
+              <p class="menu-status" role="menuitem" aria-disabled="true" tabIndex={-1}>
+                {agents ? "Couldn't look for agents." : 'Looking…'}
               </p>
             )}
             {agents?.map((a) => (

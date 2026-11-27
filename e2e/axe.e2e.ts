@@ -147,12 +147,37 @@ const WIDE: Screen[] = [
   {
     name: 'app menu',
     run: async (page, scan) => {
-      await open(page, 'menu');
       const menu = page.getByRole('menu', { name: 'Skeinwise' });
+      const connect = page.getByRole('menu', { name: 'Connect' });
+      // Connect's list comes from /api/agents once the submenu opens, and the scan's wait for an idle network passes at
+      // once after the first load. So each of the submenu's three states is set up here rather than left to timing:
+      // the list refused, the list held back ("Looking…"), then the list itself.
+      await page.route('**/api/agents', (route) => route.fulfill({ status: 500, json: { error: 'refused by the test' } }));
+      await open(page, 'menu');
+      await menu.getByRole('menuitem', { name: 'Connect' }).click();
+      await expect(connect.getByRole('menuitem', { name: "Couldn't look for agents." })).toBeVisible();
+      await scan('app menu, connect, refused');
+      await page.unroute('**/api/agents');
+
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await page.route('**/api/agents', async (route) => {
+        await held;
+        await route.continue();
+      });
+      // The same address again would only change its #fragment, and the page wouldn't load afresh.
+      await page.goto('about:blank');
+      await open(page, 'menu');
       await expect(menu).toBeVisible();
       await scan('app menu');
       await menu.getByRole('menuitem', { name: 'Connect' }).click();
-      await expect(page.getByRole('menu', { name: 'Connect' })).toBeVisible();
+      await expect(connect.getByRole('menuitem', { name: 'Looking…' })).toBeVisible();
+      await scan('app menu, connect, looking');
+      release();
+      await expect(connect.getByRole('menuitem', { name: 'Looking…' })).toHaveCount(0);
+      await expect(connect.getByRole('menuitem').first()).toBeVisible();
       await scan('app menu, connect');
       await menu.getByRole('menuitem', { name: 'Get an export' }).click();
       await expect(page.getByRole('menu', { name: 'Get an export' })).toBeVisible();

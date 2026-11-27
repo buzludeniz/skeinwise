@@ -860,6 +860,10 @@ code {
   border-left: 1px solid var(--line);
 }
 
+.submenu > .menu-status {
+  padding: 4px 6px;
+}
+
 .submenu-row {
   display: flex;
   align-items: center;
