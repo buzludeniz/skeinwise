@@ -1,0 +1,69 @@
+# Plan 7.6's npx check for the release candidate: once SPEC's version is on npm, `npx -y skeinwise@next` runs the
+# demo on macOS, Windows and Ubuntu with Node 24 and 26, from the registry alone, in an empty folder with no clone.
+# It lives on the gate/npx-next branch only and starts on a push to it, or on a re-run of its last run. The first job
+# waits up to six hours for the version to show up on npm; the matrix runs after it. It reads from npm and publishes
+# nothing.
+name: npx gate
+on:
+  push:
+    branches: [gate/npx-next]
+
+permissions:
+  contents: read
+
+env:
+  EXPECTED: 1.0.0-rc.1
+  SPEC: skeinwise@next
+
+jobs:
+  wait:
+    name: wait for skeinwise@next on npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Poll npm until next is the expected version
+        run: |
+          end=$((SECONDS + 350 * 60))
+          while :; do
+            got=$(npm view "$SPEC" version 2>/dev/null || true)
+            if [ "$got" = "$EXPECTED" ]; then echo "$SPEC is $got"; break; fi
+            if [ "$SECONDS" -ge "$end" ]; then
+              echo "::error::$SPEC is still '${got:-not on npm}' after 350 minutes. Re-run this workflow once $EXPECTED is published."
+              exit 1
+            fi
+            echo "$(date -u +%H:%M:%SZ) $SPEC is '${got:-not on npm}', waiting for $EXPECTED"
+            sleep 60
+          done
+          # Give the registry's CDN a moment, so the first download isn't a 404 from a cache that hasn't caught up.
+          sleep 120
+
+  npx:
+    name: npx (${{ matrix.os }}, Node ${{ matrix.node }})
+    needs: wait
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [24, 26]
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - name: npx --version, demo and ask, from an empty folder
+        shell: bash
+        run: |
+          tmp="$RUNNER_TEMP"; if command -v cygpath >/dev/null; then tmp="$(cygpath -u "$RUNNER_TEMP")"; fi
+          mkdir -p "$tmp/empty" && cd "$tmp/empty"
+          export SKEINWISE_HOME="$tmp/record"
+          v=$(npx -y "$SPEC" --version)
+          echo "$v"
+          case "$v" in *"$EXPECTED"*) ;; *) echo "::error::expected $EXPECTED, got $v"; exit 1 ;; esac
+          npx -y "$SPEC" demo
+          npx -y "$SPEC" ask "what did we decide about sqlite" --engine none
