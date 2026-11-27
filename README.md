@@ -11,9 +11,6 @@ and a small AI model running on your machine tags, files, links and summarises t
 changing a word you wrote. You can explore the result as a 3D brain, ask it questions in plain words, or lend it to
 your AI tools as long-term memory.
 
-> **Status:** 1.0.0 is in its final checks and not on npm yet. Until it is, run it from a clone: see
-> [From a clone](#from-a-clone).
-
 ## Why
 
 You think out loud in chats with ChatGPT, Claude, Gemini, Claude Code and Codex, and in your notes. That thinking ends
@@ -43,7 +40,7 @@ skein:
 | v0.1.0 | The record: importers for ChatGPT, Claude, Gemini, Claude Code, Codex, Markdown folders and text; dedupe and versions; full-text search; the `skeinwise` command; a demo record |
 | v0.2.0 | The organiser: the local model (default), an outside model or No AI; runs with provenance and undo; corrections; notes; review; ask |
 | v0.3.0 | The update stream: live capture and background organising of what's new; `skeinwise model` to check or fetch the local model |
-| v1.0.0 | The app: first run, the 3D brain, the reader, hubs, the timeline, themes, the command bar and settings. Agent memory over MCP, with a token for each agent. `setup`, `connect` and `doctor`. Export. Word (.docx) imports. On npm at release, to run with `npx` |
+| v1.0.0 | The app: first run, the 3D brain, the reader, hubs, the timeline, themes, the command bar and settings. Agent memory over MCP, with a token for each agent. `setup`, `connect` and `doctor`. Export. Word (.docx) imports. On npm, to run with `npx` |
 | v1.1 | Work tools: read-only Gmail, Google Calendar, Todoist and Slack connectors, and the rest of [Coming in 1.1](#coming-in-11) |
 
 ## Coming in 1.1

@@ -5,7 +5,7 @@ and versions follow [Semantic Versioning](https://semver.org/). A release's note
 
 ## [Unreleased]
 
-What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped for the release.
+## [1.0.0] - 2026-11-27
 
 ### Added
 
@@ -28,8 +28,8 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
 - **The local model.** `skeinwise model fetch` downloads the suggested model, pinned to a commit and checked by size
   and SHA-256. `skeinwise model serve --run` starts llama-server locked to this record with its own key, and
   `skeinwise model check` checks it.
-- **On npm at release.** 1.0.0 goes to npm, so `npx skeinwise` and `npm install -g skeinwise` work once it is out.
-  On a Node older than 24, the command stops with a link to install a current one.
+- **On npm.** `npx skeinwise` runs it, and `npm install -g skeinwise` installs it. On a Node older than 24, the
+  command stops with a link to install a current one.
 
 ### Changed
 
@@ -50,10 +50,9 @@ What 1.0.0 brings. This section becomes `## [1.0.0]` when the version is bumped 
 - Agents get results framed as untrusted data, with secrets redacted, cut to 20 entries and 32 KB.
 - `record.db` and its WAL files are readable by you only, on macOS and Linux.
 - Hubs and review no longer build on text planted to pass as your latest word.
-- The release workflow is set up to build from a signed tag on main and publish to npm with provenance, with no npm
-  token stored anywhere; no release has run through it yet. Every action is pinned by commit, and CI runs on macOS,
-  Windows and Ubuntu with Node 24 and 26. [docs/security.md](docs/security.md) describes the threat model and the
-  limits.
+- Releases are built from a signed tag on main and published to npm with provenance, with no npm token stored
+  anywhere; 1.0.0 is the first. Every action is pinned by commit, and CI runs on macOS, Windows and Ubuntu with Node
+  24 and 26. [docs/security.md](docs/security.md) describes the threat model and the limits.
 
 ## [1.0.0-rc.1] - 2026-11-27
 
@@ -90,7 +89,8 @@ The record and the command line.
 - Dedupe and versions: importing again skips what is already in the record, and changed text becomes a new version.
 - Full-text search, the `skeinwise` command and an invented demo record.
 
-[Unreleased]: https://github.com/buzludeniz/skeinwise/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/buzludeniz/skeinwise/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/buzludeniz/skeinwise/compare/v0.3.0...v1.0.0
 [1.0.0-rc.1]: https://www.npmjs.com/package/skeinwise/v/1.0.0-rc.1
 [0.3.0]: https://github.com/buzludeniz/skeinwise/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/buzludeniz/skeinwise/compare/v0.1.0...v0.2.0
