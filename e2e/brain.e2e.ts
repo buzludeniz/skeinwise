@@ -14,7 +14,7 @@ import { runFolder } from './run.ts';
 const token = () => readFileSync(join(runFolder(), 'home', 'token'), 'utf8').trim();
 
 /** Opens the brain on its seed view: `brain` opens on the default layout, the Map; `brain-layout` on the Brain layout. */
-async function openBrain(page: Page, motion: 'reduce' | 'no-preference' = 'reduce', seed: 'brain' | 'brain-layout' | 'clusters' = 'brain'): Promise<string[]> {
+async function openBrain(page: Page, motion: 'reduce' | 'no-preference' = 'reduce', seed: 'brain' | 'brain-layout' | 'clusters' | 'atlas' = 'brain'): Promise<string[]> {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   // Every request the page makes until the brain shows, so a page that never opens says where it stopped.
@@ -299,8 +299,10 @@ function overlapping(page: Page): Promise<string[]> {
   });
 }
 
+// The map's own tests open on it by seed: a test that picks another layout saves it in the record, and the brain opens
+// on the saved layout.
 test('the map names its countries, then their provinces and entry titles as it zooms in, never two on one spot', async ({ page }) => {
-  const errors = await openBrain(page);
+  const errors = await openBrain(page, 'reduce', 'atlas');
   const names = (kind: string) => page.locator(`.brain-labels .map-name.${kind}.on`);
   const shown = page.locator('.brain-labels .on');
   await expect(shown.first()).toBeVisible();
@@ -337,7 +339,7 @@ test('the map names its countries, then their provinces and entry titles as it z
 });
 
 test('a lit search counts its hits on each country, and Fit to hits frames them', async ({ page }) => {
-  const errors = await openBrain(page);
+  const errors = await openBrain(page, 'reduce', 'atlas');
   const hub = await findPoint(page, 'hub');
   await page.mouse.click(hub.x, hub.y);
   await card(page).getByRole('button', { name: 'Light its entries' }).click();
