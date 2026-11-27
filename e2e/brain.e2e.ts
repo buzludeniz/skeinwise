@@ -371,20 +371,26 @@ test('a lit search counts its hits on each country, and Fit to hits frames them'
   expect(errors).toEqual([]);
 });
 
-test('the selection holds still when the system asks for less motion', async ({ page }) => {
-  const errors = await openBrain(page, 'reduce');
-  await labels(page).first().focus();
-  await labels(page).first().click();
-  await expect(card(page)).toBeVisible();
-  const canvas = page.locator('.brain-host canvas');
-  const mask = [page.locator('.brain-top'), page.locator('.brain-layouts'), page.locator('.legend'), card(page)];
-  await page.mouse.move(1, 1);
-  await page.waitForTimeout(500);
-  const before = await canvas.screenshot({ mask });
-  await page.waitForTimeout(1000);
-  expect((await canvas.screenshot({ mask })).equals(before)).toBe(true);
-  expect(errors).toEqual([]);
-});
+for (const [layout, seed] of [
+  ['Map', 'atlas'],
+  ['Clusters', 'clusters'],
+] as const) {
+  test(`the selection holds still when the system asks for less motion, in ${layout}`, async ({ page }) => {
+    const errors = await openBrain(page, 'reduce', seed);
+    await expect(page.getByRole('radiogroup', { name: 'Layout' }).getByRole('radio', { name: layout })).toHaveAttribute('aria-checked', 'true');
+    await labels(page).first().focus();
+    await labels(page).first().click();
+    await expect(card(page)).toBeVisible();
+    const canvas = page.locator('.brain-host canvas');
+    const mask = [page.locator('.brain-top'), page.locator('.brain-layouts'), page.locator('.legend'), card(page)];
+    await page.mouse.move(1, 1);
+    await page.waitForTimeout(500);
+    const before = await canvas.screenshot({ mask });
+    await page.waitForTimeout(1000);
+    expect((await canvas.screenshot({ mask })).equals(before)).toBe(true);
+    expect(errors).toEqual([]);
+  });
+}
 
 test('every control the brain adds has a name', async ({ page }) => {
   const errors = await openBrain(page);
