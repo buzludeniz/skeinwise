@@ -5,7 +5,7 @@ import { deflateSync, strToU8, zipSync } from 'fflate';
 import { openZipSafe, UnsafeFileError, ZIP_MAX_RATIO } from '../../src/fsafe.ts';
 import { isBidiControl, safeBlock, safeJson, safeLine } from '../../src/safe-text.ts';
 import { buildZip } from '../fsafe-zip.ts';
-import { concat, mutateZipField, type Target } from './engine.ts';
+import { concat, mutateZipField, type Target, ZIP_TIME } from './engine.ts';
 
 const MiB = 1024 ** 2;
 
@@ -23,8 +23,8 @@ function zipSeeds(): Uint8Array[] {
   const text = strToU8('Seed swap on Saturday. Bring beans, peas and labels.\n'.repeat(40));
   const zeros = new Uint8Array(2 * MiB);
   return [
-    zipSync({ 'notes/a.txt': text, 'b.json': strToU8('{"title":"x","n":[1,2,3]}'), 'empty.txt': new Uint8Array(0) }),
-    zipSync({ 'notes/a.txt': text, 'c.md': strToU8('# C\n') }, { level: 0 }),
+    zipSync({ 'notes/a.txt': text, 'b.json': strToU8('{"title":"x","n":[1,2,3]}'), 'empty.txt': new Uint8Array(0) }, { mtime: ZIP_TIME }),
+    zipSync({ 'notes/a.txt': text, 'c.md': strToU8('# C\n') }, { level: 0, mtime: ZIP_TIME }),
     buildZip([{ name: 'a.txt', data: deflateSync(text), size: text.length }], { zip64: true }),
     // Says it unpacks to 100 bytes, and unpacks to 2 MiB.
     buildZip([{ name: 'lying.txt', data: deflateSync(zeros), size: 100 }]),

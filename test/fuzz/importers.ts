@@ -11,7 +11,7 @@ import { parseFrontMatter, parseNote } from '../../src/importers/notes.ts';
 import { decodeText, type TextEncoding } from '../../src/importers/text.ts';
 import { scanXml, XmlError } from '../../src/importers/xml.ts';
 import { buildZip } from '../fsafe-zip.ts';
-import { concat, int, MAX_INPUT, mutateZipField, pick, type Rng, type Target } from './engine.ts';
+import { concat, int, MAX_INPUT, mutateZipField, pick, type Rng, type Target, ZIP_TIME } from './engine.ts';
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
@@ -267,7 +267,11 @@ export const IMPORTER_TARGETS: Target[] = [
     fileName: 'input.docx',
     // Its caps: 128 MiB of parts in all, read as text, with the XML and the Markdown made from it.
     memoryMiB: 1024,
-    seeds: () => [zipSync(docxParts()), zipSync(docxParts(), { level: 0 }), zipSync({ 'word/document.xml': strToU8(DOCUMENT) })],
+    seeds: () => [
+      zipSync(docxParts(), { mtime: ZIP_TIME }),
+      zipSync(docxParts(), { level: 0, mtime: ZIP_TIME }),
+      zipSync({ 'word/document.xml': strToU8(DOCUMENT) }, { mtime: ZIP_TIME }),
+    ],
     tokens: [...XML_TOKENS, 'PK\x03\x04', 'PK\x01\x02', 'PK\x05\x06', '../', 'word/../../'],
     mutate: (rng, seed, generic) => {
       const r = rng();
@@ -278,7 +282,7 @@ export const IMPORTER_TARGETS: Target[] = [
       const name = pick(rng, Object.keys(parts));
       parts[name] = strToU8(mutateXml(rng, utf8(parts[name]!), generic));
       if (rng() < 0.1) parts[pick(rng, ['../evil.xml', 'word/../../x.xml', '/abs.xml', 'word/extra.xml'])] = strToU8(DOCUMENT);
-      return zipSync(parts, { level: rng() < 0.5 ? 0 : 6 });
+      return zipSync(parts, { level: rng() < 0.5 ? 0 : 6, mtime: ZIP_TIME });
     },
     run: (_input, file) => {
       const doc = readDocx(file);
@@ -297,7 +301,11 @@ export const IMPORTER_TARGETS: Target[] = [
     fileName: 'input.zip',
     // The zip reader's own caps (a note's text is read whole, an export up to its cap) and what is parsed from them.
     memoryMiB: 1024,
-    seeds: () => [zipSync(importParts()), zipSync(importParts(), { level: 0 }), zipSync({ 'notes/Swap.md': strToU8(NOTE) })],
+    seeds: () => [
+      zipSync(importParts(), { mtime: ZIP_TIME }),
+      zipSync(importParts(), { level: 0, mtime: ZIP_TIME }),
+      zipSync({ 'notes/Swap.md': strToU8(NOTE) }, { mtime: ZIP_TIME }),
+    ],
     tokens: ['PK\x03\x04', 'PK\x01\x02', 'PK\x05\x06', '../', '\\', '{', '}', '[', ']', '"', ':', ',', '\n', '---\n', '"mapping"', '"sessionId"', '\\ud800', '\\u0000', '__proto__'],
     mutate: (rng, seed, generic) => {
       const r = rng();
@@ -320,7 +328,7 @@ export const IMPORTER_TARGETS: Target[] = [
       } else {
         parts[name] = generic(parts[name]!);
       }
-      return zipSync(parts, { level: rng() < 0.5 ? 0 : 6 });
+      return zipSync(parts, { level: rng() < 0.5 ? 0 : 6, mtime: ZIP_TIME });
     },
     run: (_input, file) => {
       const batches = readImports(file, { onWarning: (m) => void m.length });

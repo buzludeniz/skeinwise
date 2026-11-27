@@ -2,7 +2,7 @@
 // regression that replays (`pnpm fuzz --seed 20261125 --target <name> --from <input> --count 1`). Longer runs from a
 // random seed: `pnpm fuzz`. The harness's own tests plant each kind of failure and check it is caught.
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -64,6 +64,20 @@ describe('fuzzing', () => {
     for (const target of TARGETS) expect(inputFor(target, SEED, 7)).toEqual(inputFor(target, SEED, 7));
     const docx = targetNamed('docx');
     expect(inputFor(docx, SEED, 7)).not.toEqual(inputFor(docx, SEED, 8));
+  });
+
+  it('replays the same bytes when the clock moves between two builds', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      for (const target of TARGETS) {
+        vi.setSystemTime(new Date('2026-11-27T05:00:00'));
+        const first = inputFor(target, SEED, 7);
+        vi.setSystemTime(new Date('2026-11-27T05:00:05'));
+        expect(inputFor(target, SEED, 7), target.name).toEqual(first);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

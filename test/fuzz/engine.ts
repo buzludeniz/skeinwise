@@ -56,6 +56,13 @@ export interface Finding {
 /** The largest input a mutation builds. */
 export const MAX_INPUT = 1024 * 1024;
 
+/**
+ * The time every zip a target builds is stamped with. Left out, fflate stamps the current time, so two builds of one
+ * input differ when the clock passes a 2-second step between them, and a replay builds other bytes. Written as local
+ * time, it gives the same date fields in every time zone.
+ */
+export const ZIP_TIME = '2026-11-25T12:00:00';
+
 export const pick = <T>(rng: Rng, list: readonly T[]): T => list[Math.floor(rng() * list.length)]!;
 export const int = (rng: Rng, below: number): number => Math.floor(rng() * below);
 
