@@ -454,4 +454,13 @@ export const MIGRATIONS: readonly string[] = [
   CREATE UNIQUE INDEX pending_origin ON pending (origin_sha256, source_kind) WHERE origin_sha256 IS NOT NULL;
   CREATE INDEX pending_status ON pending (status);
   `,
+
+  // 9. The atlas: a hub's place on the record's map and its sub-groups (names and places inside the hub, as JSON), and
+  // each hub entry's sub-group. All null on hubs made before it; the page draws Clusters until a run has placed them.
+  `
+  ALTER TABLE hubs ADD COLUMN place_x REAL;
+  ALTER TABLE hubs ADD COLUMN place_y REAL;
+  ALTER TABLE hubs ADD COLUMN parts TEXT;
+  ALTER TABLE hub_entries ADD COLUMN part INTEGER;
+  `,
 ];

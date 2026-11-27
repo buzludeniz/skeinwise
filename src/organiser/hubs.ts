@@ -4,12 +4,13 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 import type { Entry } from '../store/store.ts';
+import { type Part, partNames, type Place, placeHubs, placeParts, subGroups, type SubGroups } from './atlas.ts';
 import { FINDING_CUES, isQuestion } from './cues.ts';
 import { type Existing, type Group, groupName, groupUnits } from './groups.ts';
 import { cited, day, invalid, isRecord, list, type ModelRequest, type Plan, round, type TaskContext, text } from './plan.ts';
-import { isDailyNote, type RecordView, unlink, vouched } from './record.ts';
-import { cosine, pickDiverse, sentences, tokenize, type Vec } from './text.ts';
-import { hubEntryIds, type HubItem, type HubSections, liveHubs } from './views.ts';
+import { isDailyNote, type RecordView, type Unit, unlink, vouched } from './record.ts';
+import { centroid, cosine, pickDiverse, sentences, tokenize, type Vec } from './text.ts';
+import { hubEntryIds, type HubItem, hubPlaces, type HubSections, liveHubs } from './views.ts';
 
 export interface Sentence {
   text: string;
@@ -87,6 +88,10 @@ interface HubDraft {
   entryIds: number[];
   sentences: Sentence[];
   name: string;
+  /** Every unit with an entry in the hub, in record order, and their sub-groups with keyword names. */
+  units: Unit[];
+  sub: SubGroups;
+  partNames: string[];
 }
 
 const MODEL_SENTENCES = 24;
@@ -99,16 +104,19 @@ function hubRequest(draft: HubDraft, n: number, of: number): { request: ModelReq
     .sort((a, b) => a.date.localeCompare(b.date) || a.entryId - b.entryId);
   const known = new Map(shown.map((s, i) => [`S${i + 1}`, i]));
   const lines = shown.map((s, i) => `S${i + 1} (${s.date}): ${s.text}`);
+  const parts = draft.sub.parts.length > 1 ? draft.partNames : [];
   const user = [
     'Sentences from my notes and chats about one subject, oldest first:',
     ...lines,
+    ...(parts.length ? ['', 'The subject falls into these parts, each with its key words:', ...parts.map((p, i) => `P${i + 1}: ${p}`)] : []),
     '',
     'Answer with JSON only, in this shape:',
-    '{"name": "...", "in_short": [{"text": "...", "cites": ["S1"]}], "found": ["S2"], "open_ends": [{"text": "...", "cites": ["S3"]}]}',
+    `{"name": "...", "in_short": [{"text": "...", "cites": ["S1"]}], "found": ["S2"], "open_ends": [{"text": "...", "cites": ["S3"]}]${parts.length ? ', "parts": [{"part": "P1", "name": "..."}]' : ''}}`,
     '- name: the subject, in 1 to 4 words.',
     '- in_short: 2 or 3 plain sentences on what the subject is and where it stands now, each citing the sentences it rests on.',
     '- found: up to 5 sentence ids that record something learned, decided or settled.',
     '- open_ends: up to 5 questions still open, each citing the sentences that raise it; [] if none.',
+    ...(parts.length ? ['- parts: a name for each part, in 1 to 3 words, no two alike.'] : []),
     'Use only what the sentences say.',
   ].join('\n');
   const check = (answer: unknown) => {
@@ -128,15 +136,47 @@ function hubRequest(draft: HubDraft, n: number, of: number): { request: ModelReq
     const openEnds = points('open_ends', 0, 8);
     const found = cited(purpose, answer.found, 'found', 'S', known);
     if (found.length > 8) invalid(purpose, '"found" lists more than 8 sentences');
-    return { name, inShort, openEnds, found };
+    return { name, inShort, openEnds, found, parts: partAnswer(purpose, answer.parts, parts.length) };
   };
-  return { request: { purpose, system: SYSTEM, user, maxTokens: 900, check }, shown };
+  return { request: { purpose, system: SYSTEM, user, maxTokens: 900 + 16 * parts.length, check }, shown };
+}
+
+/**
+ * A model's names for a hub's parts, by part. A part it leaves out, names twice or names badly keeps its keyword name,
+ * so a weak answer here never costs the hub its sections.
+ */
+function partAnswer(purpose: string, value: unknown, n: number): (string | undefined)[] {
+  const names = new Array<string | undefined>(n);
+  if (!n || !Array.isArray(value)) return names;
+  const taken = new Set<string>();
+  for (const it of value) {
+    if (!isRecord(it)) continue;
+    const m = /^P?(\d+)$/i.exec(String(it.part ?? '').trim());
+    const i = m ? Number(m[1]) - 1 : -1;
+    if (i < 0 || i >= n || names[i] !== undefined) continue;
+    let name: string;
+    try {
+      name = text(purpose, it.name, 'parts.name', 60);
+    } catch {
+      continue;
+    }
+    if (!name || taken.has(name.toLowerCase())) continue;
+    taken.add(name.toLowerCase());
+    names[i] = name;
+  }
+  return names;
 }
 
 const SYSTEM =
   "You organise one person's own notes and chats into a second brain. You only use what their sentences say, and you answer with JSON only.";
 
-type HubAnswer = { name: string; inShort: { text: string; cites: number[] }[]; openEnds: { text: string; cites: number[] }[]; found: number[] };
+type HubAnswer = {
+  name: string;
+  inShort: { text: string; cites: number[] }[];
+  openEnds: { text: string; cites: number[] }[];
+  found: number[];
+  parts?: (string | undefined)[];
+};
 
 /** The share of a model's sentence that the sentences it cites must hold, for it to stand under their entries. */
 const MIN_SUPPORT = 0.5;
@@ -207,8 +247,13 @@ export function planHubs(ctx: TaskContext): Plan {
       continue;
     }
     const name = group.existing?.name ?? groupName(record, group, 3);
-    drafts.push({ group, entryIds: entries.map((e) => e.id), sentences: list, name });
+    const units = [...new Set(entries.map((e) => record.unitOf(e.id)).filter((u): u is Unit => !!u))].sort((a, b) => a.pos - b.pos);
+    const sub = subGroups(record, units);
+    const partNamesOf = partNames(record, units, sub.parts.map((p) => p.units));
+    drafts.push({ group, entryIds: entries.map((e) => e.id), sentences: list, name, units, sub, partNames: partNamesOf });
   }
+  const places = draftPlaces(ctx, drafts);
+  const partPlaces = drafts.map((d) => placeParts(d.sub.parts.map((p) => ({ centroid: p.centroid, size: p.units.length }))));
 
   const asks = ctx.model ? drafts.map((d, i) => hubRequest(d, i + 1, drafts.length)) : [];
   return {
@@ -220,10 +265,11 @@ export function planHubs(ctx: TaskContext): Plan {
       const hubs = drafts.map((d, i) => {
         const extracted = () => extractSections(d.sentences, d.group.centroid);
         const answer = ctx.model ? (answers[i] as HubAnswer | null) : null;
-        if (!answer) return { draft: d, name: d.name, sections: extracted() };
+        const atlas = { place: places[i]!, parts: atlasParts(d, partPlaces[i]!, answer?.parts) };
+        if (!answer) return { draft: d, name: d.name, sections: extracted(), atlas };
         const made = modelSections(answer, asks[i]!.shown, () => extracted().in_short);
         unsupported += made.dropped;
-        return { draft: d, name: d.group.existing ? d.name : answer.name, sections: made.sections };
+        return { draft: d, name: d.group.existing ? d.name : answer.name, sections: made.sections, atlas };
       });
       const updated = hubs.filter((h) => h.draft.group.existing).length;
       const notes = [
@@ -243,21 +289,106 @@ export function planHubs(ctx: TaskContext): Plan {
         },
         ...(notes.length ? { message: notes.join(' ') } : {}),
         save: (db, runId) => {
-          for (const h of hubs) saveHub(db, runId, record, h.name, h.sections, h.draft);
+          for (const h of hubs) saveHub(db, runId, record, h.name, h.sections, h.draft, h.atlas);
         },
       };
     },
   };
 }
 
-function saveHub(db: DatabaseSync, runId: number, record: RecordView, name: string, sections: HubSections, draft: HubDraft): void {
+/** A model's part names where it gave good ones, keyword names for the rest; and where each part sits in the hub. */
+function atlasParts(draft: HubDraft, places: Place[], named: (string | undefined)[] | undefined): Part[] {
+  const taken = new Set((named ?? []).filter((n): n is string => !!n).map((n) => n.toLowerCase()));
+  return draft.sub.parts.map((_, p) => {
+    let name = named?.[p];
+    if (!name) {
+      name = draft.partNames[p]!;
+      // A keyword name the model gave to another part gets its number, so names stay apart.
+      if (taken.has(name.toLowerCase())) name = `${name} ${p + 1}`;
+    }
+    return { name, x: places[p]!.x, y: places[p]!.y };
+  });
+}
+
+/** Share of entries two hubs must have in common (of all in either) for a new hub to take an old one's place. */
+const SAME_PLACE = 0.4;
+
+/**
+ * Where each drafted hub goes on the map. A hub a run over new entries updates keeps its place. A run over everything
+ * makes every hub afresh, so each new hub takes the place of the live hub it shares most of its entries with (one
+ * each, while they share at least SAME_PLACE). The rest go to the coast, beside every other placed hub; with nothing
+ * placed yet, MDS places them all.
+ */
+function draftPlaces(ctx: TaskContext, drafts: HubDraft[]): Place[] {
+  const { record } = ctx;
+  const placed = hubPlaces(ctx.db);
+  const kept: (Place | null)[] = drafts.map(() => null);
+  const others: { centre: Vec; size: number; kept: Place }[] = [];
+  if (ctx.scope.kind === 'new') {
+    const drafted = new Set<number>();
+    drafts.forEach((d, i) => {
+      if (!d.group.existing) return;
+      drafted.add(d.group.existing.id);
+      kept[i] = placed.get(d.group.existing.id) ?? null;
+    });
+    // The live hubs this run leaves alone stay on the map, so new hubs must find room beside them.
+    for (const [id, place] of placed) {
+      if (drafted.has(id)) continue;
+      const units = new Set(hubEntryIds(ctx.db, id).map((e) => record.unitOf(e)).filter((u): u is Unit => !!u));
+      if (units.size) others.push({ centre: centroid([...units].map((u) => record.unitVector(u))), size: units.size, kept: place });
+    }
+  } else if (placed.size) {
+    const owner = new Map<number, number>();
+    const sizes = new Map<number, number>();
+    for (const id of placed.keys()) {
+      const ids = hubEntryIds(ctx.db, id);
+      sizes.set(id, ids.length);
+      for (const e of ids) owner.set(e, id);
+    }
+    const pairs: { d: number; hub: number; share: number }[] = [];
+    drafts.forEach((d, i) => {
+      const shared = new Map<number, number>();
+      for (const e of d.entryIds) {
+        const hub = owner.get(e);
+        if (hub !== undefined) shared.set(hub, (shared.get(hub) ?? 0) + 1);
+      }
+      for (const [hub, n] of shared) pairs.push({ d: i, hub, share: n / (d.entryIds.length + sizes.get(hub)! - n) });
+    });
+    pairs.sort((a, b) => b.share - a.share || a.d - b.d || a.hub - b.hub);
+    const took = new Set<number>();
+    for (const p of pairs) {
+      if (p.share < SAME_PLACE) break;
+      if (kept[p.d] || took.has(p.hub)) continue;
+      kept[p.d] = placed.get(p.hub)!;
+      took.add(p.hub);
+    }
+  }
+  const all = [...drafts.map((d, i) => ({ centre: d.group.centroid, size: d.entryIds.length, kept: kept[i]! })), ...others];
+  return placeHubs(all).slice(0, drafts.length);
+}
+
+function saveHub(
+  db: DatabaseSync,
+  runId: number,
+  record: RecordView,
+  name: string,
+  sections: HubSections,
+  draft: HubDraft,
+  atlas: { place: Place; parts: Part[] },
+): void {
   const res = db
-    .prepare('INSERT INTO hubs (name, sections, run_id, replaces) VALUES (?, ?, ?, ?)')
-    .run(name, JSON.stringify(sections), runId, draft.group.existing?.id ?? null);
+    .prepare('INSERT INTO hubs (name, sections, run_id, replaces, place_x, place_y, parts) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(name, JSON.stringify(sections), runId, draft.group.existing?.id ?? null, atlas.place.x, atlas.place.y, JSON.stringify(atlas.parts));
   const hubId = Number(res.lastInsertRowid);
-  const insert = db.prepare('INSERT INTO hub_entries (hub_id, entry_id, run_id, score) VALUES (?, ?, ?, ?)');
+  const insert = db.prepare('INSERT INTO hub_entries (hub_id, entry_id, run_id, score, part) VALUES (?, ?, ?, ?, ?)');
   for (const id of draft.entryIds) {
     const unit = record.unitOf(id);
-    insert.run(hubId, id, runId, unit ? round(cosine(record.unitVector(unit), draft.group.centroid)) : 0);
+    insert.run(
+      hubId,
+      id,
+      runId,
+      unit ? round(cosine(record.unitVector(unit), draft.group.centroid)) : 0,
+      unit ? (draft.sub.partOf.get(unit.key) ?? 0) : 0,
+    );
   }
 }

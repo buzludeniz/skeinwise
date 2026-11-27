@@ -7,7 +7,7 @@ import { withoutNoteExt } from '../importers/note-ext.ts';
 import { editorName } from '../notes.ts';
 import type { Entry, SearchHit, Store, Version } from '../store/store.ts';
 import { parseQuestion } from '../organiser/ask.ts';
-import { findSchema, hubEntryIds, liveHubs, liveLinks, liveTags } from '../organiser/views.ts';
+import { findSchema, hubAtlas, hubEntryParts, liveHubs, liveLinks, liveTags } from '../organiser/views.ts';
 import type { EntryRow } from './buckets.ts';
 import { grouping, progress } from './organiser.ts';
 import { keyWords, names, words } from './words.ts';
@@ -158,8 +158,22 @@ export interface BrainData {
    */
   links: [number, number, number][];
   /** The organiser's concept hubs: `size` entries in all, `entries` those of them in `points` (its spokes). */
-  hubs: { id: number; name: string; size?: number; entries: number[] }[];
+  hubs: BrainHub[];
   organiser: boolean;
+}
+
+/** A hub as the brain gets it. A hub a run has placed on the atlas also has its place, its sub-groups and theirs. */
+export interface BrainHub {
+  id: number;
+  name: string;
+  size?: number;
+  entries: number[];
+  /** Where the hub sits on the atlas; its disc's radius is the square root of `size`. */
+  place?: [x: number, y: number];
+  /** Its sub-groups, by id: a name, and where the sub-group sits inside the hub, in hub radii from its place. */
+  parts?: [name: string, x: number, y: number][];
+  /** The sub-group of each of `entries`, in the same order. */
+  part?: number[];
 }
 
 /**
@@ -268,11 +282,20 @@ export function brainData(db: DatabaseSync, cap = BRAIN_POINTS): BrainData {
   if (ready) for (const l of liveLinks(db)) if (l.kind === 'cross' && shown.has(l.from) && shown.has(l.to)) links.push([l.from, l.to, 1]);
   const at = new Map(points.map((p, i) => [p[0], i]));
   links.sort((x, y) => x[2] - y[2] || at.get(x[0])! - at.get(y[0])! || at.get(x[1])! - at.get(y[1])!);
-  const hubs = ready
+  const hubs: BrainHub[] = ready
     ? liveHubs(db)
-        .map((h) => {
-          const ids = hubEntryIds(db, h.id).filter((id) => visible.has(id));
-          return { id: h.id, name: h.name, size: ids.length, entries: keep ? ids.filter((id) => shown.has(id)) : ids };
+        .map((h): BrainHub => {
+          const rows = hubEntryParts(db, h.id).filter((r) => visible.has(r.id));
+          const sent = keep ? rows.filter((r) => shown.has(r.id)) : rows;
+          const hub: BrainHub = { id: h.id, name: h.name, size: rows.length, entries: sent.map((r) => r.id) };
+          const atlas = hubAtlas(db, h.id);
+          if (!atlas.place) return hub;
+          return {
+            ...hub,
+            place: [atlas.place.x, atlas.place.y],
+            parts: atlas.parts.map((p) => [p.name, p.x, p.y]),
+            part: sent.map((r) => r.part ?? 0),
+          };
         })
         .filter((h) => h.size)
     : [];
@@ -322,7 +345,7 @@ export interface BrainWire extends Omit<BrainData, 'points' | 'links' | 'hubs'> 
    */
   links: [from: number[], to: number[], kind: number[]];
   /** The hubs, each entry as the step from the entry before (they come in id order, so the steps are small). */
-  hubs: { id: number; name: string; size?: number; entries: number[] }[];
+  hubs: BrainHub[];
 }
 
 export function packBrain(data: BrainData): BrainWire {

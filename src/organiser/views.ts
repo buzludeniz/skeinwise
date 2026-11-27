@@ -3,6 +3,7 @@
 
 import type { DatabaseSync } from 'node:sqlite';
 
+import type { Part, Place } from './atlas.ts';
 import { linkTargets, type NoteName, NoteNames } from './record.ts';
 
 const LIVE = '(SELECT id FROM live_runs)';
@@ -57,6 +58,34 @@ export function getLiveHub(db: DatabaseSync, id: number): Hub | undefined {
     )
     .get(id);
   return row ? toHub(row) : undefined;
+}
+
+/** The live hubs a run has placed on the atlas, and where. */
+export function hubPlaces(db: DatabaseSync): Map<number, Place> {
+  const rows = db
+    .prepare(`SELECT h.id, h.place_x AS x, h.place_y AS y FROM hubs h WHERE h.place_x IS NOT NULL AND h.place_y IS NOT NULL AND ${HUB_LIVE}`)
+    .all() as { id: number; x: number; y: number }[];
+  return new Map(rows.map((r) => [r.id, { x: r.x, y: r.y }]));
+}
+
+/** A hub's place and sub-groups on the atlas: null and [] for a hub made before the atlas. */
+export function hubAtlas(db: DatabaseSync, hubId: number): { place: Place | null; parts: Part[] } {
+  const row = db.prepare('SELECT place_x AS x, place_y AS y, parts FROM hubs WHERE id = ?').get(hubId) as
+    | { x: number | null; y: number | null; parts: string | null }
+    | undefined;
+  if (!row) return { place: null, parts: [] };
+  return {
+    place: row.x === null || row.y === null ? null : { x: row.x, y: row.y },
+    parts: row.parts ? (JSON.parse(row.parts) as Part[]) : [],
+  };
+}
+
+/** A hub's entries in id order, each with its sub-group (null on a hub made before the atlas). */
+export function hubEntryParts(db: DatabaseSync, hubId: number): { id: number; part: number | null }[] {
+  return db.prepare('SELECT entry_id AS id, part FROM hub_entries WHERE hub_id = ? ORDER BY entry_id').all(hubId) as {
+    id: number;
+    part: number | null;
+  }[];
 }
 
 export function hubEntryIds(db: DatabaseSync, hubId: number): number[] {
