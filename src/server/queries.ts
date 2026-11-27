@@ -1,5 +1,5 @@
 // Read-only views over the record for the app: the brain's points and lines, an entry with its neighbours, questions
-// answered from search and dates, and the plain statistics behind Numbers and You.
+// answered from search and dates, and the plain statistics behind Stats and Profile.
 
 import type { DatabaseSync } from 'node:sqlite';
 import { posix } from 'node:path';

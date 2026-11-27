@@ -159,7 +159,7 @@ function ago(fromIso: string, now: Date): string {
 }
 
 /**
- * The two status lines under Record live, e.g. "saved 2 minutes ago" and "caught up 3 chats from Claude Code ·
+ * The two status lines under Live capture, e.g. "saved 2 minutes ago" and "caught up 3 chats from Claude Code ·
  * organised 41 new entries".
  */
 export function statusLines(status: LiveStatus, now = new Date()): [string, string] {

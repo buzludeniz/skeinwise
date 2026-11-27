@@ -178,7 +178,7 @@ export const WINDOW_TOOLS: Tool<WindowCtx>[] = [
   {
     name: 'set_layout',
     title: 'Set the brain layout',
-    description: 'Switch the brain view\'s layout (brain, rings for year rings, or clusters) and, if given, what colours the points.',
+    description: 'Switch the brain view\'s layout (brain, rings for the Activity layout, or clusters) and, if given, what colours the points.',
     inputSchema: {
       type: 'object',
       properties: { layout: { type: 'string', enum: [...LAYOUTS] }, grouping: { type: 'string', enum: [...GROUPINGS] } },

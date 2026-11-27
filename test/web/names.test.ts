@@ -1,12 +1,13 @@
 // The app's screens carry our own names. This fails the run when an old screen name comes back into the page's
-// source, its e2e test, the docs or the README: as a label, a heading, a class or a comment.
+// source, the CLI and server source (its help text and comments ship in the package), its e2e test, the docs or the
+// README: as a label, a heading, a class or a comment.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = join(import.meta.dirname, '..', '..');
-const SCANNED = ['web/src', 'web/index.html', 'e2e', 'docs', 'README.md'];
+const SCANNED = ['src', 'web/src', 'web/index.html', 'e2e', 'docs', 'README.md'];
 const SKIPPED = new Set(['node_modules', '.run']);
 
 /** The old names, each with the one that replaced it. */
@@ -30,6 +31,14 @@ const ALLOWED: { file: string; text: string; why: string }[] = [
   { file: 'web/src/format.ts', text: "return 'You';", why: 'the speaker label on your own words, not a screen' },
   { file: 'web/src/views/Reader.tsx', text: "v.editor === 'you' ? 'You'", why: "a version's editor when that was you" },
   { file: 'docs/brand/README.md', text: 'crosses a straight spine', why: "the logo's letter S, not the brain" },
+  { file: 'src/server/queries.ts', text: 'interface Numbers', why: "the Stats figures' type, which the web aliases" },
+  { file: 'src/server/queries.ts', text: '): Numbers {', why: 'that type, returned by numbers()' },
+  { file: 'src/server/queries.ts', text: "Numbers['bySource']", why: 'that type, in a cast' },
+  { file: 'src/server/queries.ts', text: "Numbers['bySpeaker']", why: 'that type, in a cast' },
+  { file: 'src/server/buckets.ts', text: 'export function tides(', why: 'the function behind /api/tides' },
+  { file: 'src/server/app.ts', text: 'type TableProp, tides,', why: 'its import' },
+  { file: 'src/server/app.ts', text: '/^\\/api\\/tides$/', why: "the route the Workbench's activity lines read" },
+  { file: 'src/server/app.ts', text: 'return tides(', why: 'the call in that route' },
 ];
 
 function files(path: string): string[] {
@@ -43,7 +52,9 @@ function files(path: string): string[] {
 const sources = SCANNED.flatMap(files).filter((f) => /\.(tsx?|css|html|md)$/.test(f));
 
 describe('screen names', () => {
-  it('scans the page source, the e2e test, the docs and the README', () => {
+  it('scans the page source, the CLI and server source, the e2e test, the docs and the README', () => {
+    expect(sources).toContain('src/cli.ts');
+    expect(sources).toContain('src/server/app.ts');
     expect(sources).toContain('docs/ui.md');
     expect(sources).toContain('docs/plan.md');
     expect(sources).toContain('README.md');

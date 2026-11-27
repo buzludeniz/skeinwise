@@ -53,7 +53,7 @@ export function pickEngine(home: string, wanted: unknown, deps: ModelDeps): Engi
   return { engine, client: createModel(config, engine, deps), budget: config.budget };
 }
 
-/** Everything the Navigator, the hub panel and the review list read, in one call. */
+/** Everything Threads, the hub panel and the review list read, in one call. */
 export function organiserState(db: DatabaseSync) {
   return {
     ready: organiserReady(db),

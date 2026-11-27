@@ -1,4 +1,4 @@
-// Pure counting for the timeline and the Lab: entries per week, and the table builder's cells.
+// Pure counting for the timeline and the Workbench: entries per week, and the table builder's cells.
 
 import { TABLE_PROPS } from './config.ts';
 
@@ -203,7 +203,7 @@ export function cellEntries(
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-/** Monthly lines per key, for Tides. */
+/** Monthly lines per key, for the Workbench's activity lines. */
 export function tides(rows: readonly EntryRow[], by: 'source' | 'speaker' | 'folder'): { months: string[]; lines: Series[] } {
   if (!rows.length) return { months: [], lines: [] };
   const table = tableCounts(rows, 'time', by);

@@ -1,4 +1,4 @@
-// Record live in the app: the same update stream as `skeinwise live` (src/live/run.ts), run inside `skeinwise serve`
+// Live capture in the app: the same update stream as `skeinwise live` (src/live/run.ts), run inside `skeinwise serve`
 // while the app menu's switch is on. The two status lines come from the stream's own status file.
 
 import { join } from 'node:path';
@@ -9,7 +9,7 @@ import type { Store } from '../store/store.ts';
 export interface LiveState {
   /** Whether the stream runs in this server now. */
   on: boolean;
-  /** The two lines under Record live, or null when the stream has never run and the switch is off. */
+  /** The two lines under Live capture, or null when the stream has never run and the switch is off. */
   lines: [string, string] | null;
   /** Why the stream couldn't start or its status couldn't be read. */
   error: string | null;

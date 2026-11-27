@@ -57,7 +57,7 @@ export interface AppContext {
   version: string;
   /** Where to look for sources and agents: the home directory unless SKEINWISE_SCAN_ROOT says otherwise. */
   scanRoot: string;
-  /** Record live: the update stream, run in this server while the app menu's switch is on. */
+  /** Live capture: the update stream, run in this server while the app menu's switch is on. */
   live: AppLive;
   /** The port the server listens on, for the Host check. */
   port: () => number;

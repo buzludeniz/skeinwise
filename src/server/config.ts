@@ -1,4 +1,4 @@
-// The app's settings. The engine, the model addresses, the token cap, redaction and Record live's settings belong to
+// The app's settings. The engine, the model addresses, the token cap, redaction and Live capture's settings belong to
 // the organiser and live in config.json (src/config.ts), so the CLI and the app agree on them; everything else lives
 // in app.json beside it.
 // Reading fills in defaults; writing applies a checked patch and keeps any keys this module doesn't know.
@@ -44,7 +44,7 @@ export interface Config {
     remote: { address: string; model: string; keyEnv: string; hosts: string[] };
   };
   usageCap: { monthlyTokens: number };
-  /** Record live's settings, kept in config.json: the folders it follows, and whether and how it organises. */
+  /** Live capture's settings, kept in config.json: the folders it follows, and whether and how it organises. */
   live: { folders: LiveFolder[]; organise: boolean; remote: boolean; downloads: boolean };
   proofOfDate: boolean;
   backup: { daily: boolean };

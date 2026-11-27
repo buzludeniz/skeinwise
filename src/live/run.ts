@@ -31,7 +31,7 @@ export interface LiveOptions {
   pollSeconds?: number;
   /**
    * Pulls from the connected services. Without it live pulls nothing and never reads connections.json: connectors
-   * are off in v1.0, and both callers (`skeinwise live` and the web app's Record live) leave it out.
+   * are off in v1.0, and both callers (`skeinwise live` and the web app's Live capture) leave it out.
    */
   poll?: (store: Store, home: string) => Promise<PollReport[]>;
   /**

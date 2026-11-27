@@ -121,7 +121,7 @@ export async function startServer(options: StartOptions): Promise<Running> {
       }
     }
   }
-  // Record live picks up where the app left it. A settings file that can't be read keeps it off; GET /api/settings
+  // Live capture picks up where the app left it. A settings file that can't be read keeps it off; GET /api/settings
   // reports that file's error to the page.
   let recordLive = false;
   try {

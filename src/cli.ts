@@ -68,7 +68,7 @@ ${STORE_HELP}  stats                     Counts and the busiest months
   exclude <source>          Leave a source out of search and the map
   include <source>          Bring an excluded source back
   not-mine <thread>         Mark a thread as someone else's (--undo to reverse)
-  live                      Record live: import new chats and notes as they appear, and
+  live                      Live capture: import new chats and notes as they appear, and
                             organise what is new in the background
       --once                Catch up and organise once, then stop
 ${LIVE_HELP}
