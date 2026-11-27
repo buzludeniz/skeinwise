@@ -17,10 +17,19 @@ import type { Hit } from '../types.ts';
 import { Button, Empty, Segmented, Select, Switch } from '../ui/common.tsx';
 
 const LAYOUTS: [Layout, string][] = [
+  ['atlas', 'Map'],
   ['brain', 'Brain'],
   ['rings', 'Activity'],
   ['clusters', 'Clusters'],
 ];
+
+/**
+ * The layout the brain draws: the one asked for, except that the map needs every hub placed by an organiser run, and
+ * until then the brain draws Clusters and offers no Map.
+ */
+export function shownLayout(layout: Layout, mapped: boolean): Layout {
+  return layout === 'atlas' && !mapped ? 'clusters' : layout;
+}
 
 /** What the screen reader hears when a point is selected. */
 function selectedText(part: Part): string {
@@ -33,7 +42,8 @@ export function BrainView() {
   const host = useRef<HTMLDivElement>(null);
   const { scene, model, ok, loadFailed, hover } = useBrainScene(host, 'full');
   const brain = useApp((s) => s.brain);
-  const layout = useApp((s) => s.layout);
+  const mapped = !!model?.input.atlas;
+  const layout = shownLayout(useApp((s) => s.layout), mapped);
   const lit = useApp((s) => s.lit);
   const compact = useApp((s) => s.compact);
   const clip = useApp((s) => s.clip);
@@ -168,7 +178,7 @@ export function BrainView() {
       {settings && <ViewSettings onClose={() => setSettings(false)} />}
 
       <div class="brain-layouts">
-        <Segmented label="Layout" options={LAYOUTS} value={layout} onChange={setLayout} />
+        <Segmented label="Layout" options={mapped ? LAYOUTS : LAYOUTS.filter(([l]) => l !== 'atlas')} value={layout} onChange={setLayout} />
         {layout !== 'brain' && (
           <Button
             icon={Info}
@@ -314,7 +324,18 @@ function ReadingBox({ layout, onClose }: { layout: Layout; onClose: () => void }
         <strong>How to read this</strong>
         <Button icon={X} kind="quiet" small aria-label="Close" onClick={onClose} />
       </header>
-      {layout === 'rings' ? (
+      {layout === 'atlas' ? (
+        <dl>
+          <dt>Place</dt>
+          <dd>What it is about. Each country is a concept hub the organiser found, next to hubs about like things; its provinces are the hub's sub-groups.</dd>
+          <dt>Colour</dt>
+          <dd>The group from the legend.</dd>
+          <dt>Lines</dt>
+          <dd>Borders between hubs, fainter ones between sub-groups, and faint rings where entries crowd.</dd>
+          <dt>Move</dt>
+          <dd>Drag or use the arrow keys to move the map, and zoom in to read single entries.</dd>
+        </dl>
+      ) : layout === 'rings' ? (
         <dl>
           <dt>Place</dt>
           <dd>When. The centre is the first year; each ring outward is a year, and each slice a month.</dd>

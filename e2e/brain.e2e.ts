@@ -13,8 +13,8 @@ import { runFolder } from './run.ts';
 
 const token = () => readFileSync(join(runFolder(), 'home', 'token'), 'utf8').trim();
 
-/** Opens the brain on its seed view: `brain` opens on the default layout, Clusters; `brain-layout` on the Brain layout. */
-async function openBrain(page: Page, motion: 'reduce' | 'no-preference' = 'reduce', seed: 'brain' | 'brain-layout' = 'brain'): Promise<string[]> {
+/** Opens the brain on its seed view: `brain` opens on the default layout, the Map; `brain-layout` on the Brain layout. */
+async function openBrain(page: Page, motion: 'reduce' | 'no-preference' = 'reduce', seed: 'brain' | 'brain-layout' | 'clusters' = 'brain'): Promise<string[]> {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   // Every request the page makes until the brain shows, so a page that never opens says where it stopped.
@@ -62,9 +62,10 @@ async function api<T>(page: Page, path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-// The brain opens on Clusters; the Brain layout has its own seed. The keyboard path is the same in both.
+// The brain opens on the Map (the e2e record is organised, so every hub has a place); the Brain layout has its own
+// seed. The keyboard path is the same in both.
 for (const [layout, seed] of [
-  ['Clusters', 'brain'],
+  ['Map', 'brain'],
   ['Brain', 'brain-layout'],
 ] as const) {
   test(`the labels are buttons, and Tab steps through the hubs, biggest first, in ${layout}`, async ({ page }) => {
@@ -245,6 +246,39 @@ test('a hub point pins a hub card that opens the hub and lights its entries', as
   expect(errors).toEqual([]);
 });
 
+test('the map moves with the arrow keys, zooms with plus and minus, comes back with F, and never turns', async ({ page }) => {
+  const errors = await openBrain(page, 'no-preference');
+  await expect(page.getByRole('radiogroup', { name: 'Layout' }).getByRole('radio', { name: 'Map' })).toHaveAttribute('aria-checked', 'true');
+  const canvas = page.locator('.brain-host canvas');
+  await expect(canvas).toHaveAttribute('aria-label', /^The map: .*arrow keys to move the map.*F to fit/);
+  const mask = [page.locator('.brain-top'), page.locator('.brain-layouts'), page.locator('.legend'), page.locator('.brain-labels')];
+  await page.mouse.move(1, 1);
+  // Settled, it holds still with motion allowed: the map lies flat and never turns.
+  await page.waitForTimeout(2500);
+  const fitted = await canvas.screenshot({ mask });
+  await page.waitForTimeout(1000);
+  expect((await canvas.screenshot({ mask })).equals(fitted)).toBe(true);
+
+  await canvas.focus();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(300);
+  expect((await canvas.screenshot({ mask })).equals(fitted)).toBe(false);
+  await page.keyboard.press('+');
+  await page.keyboard.press('+');
+  await page.waitForTimeout(300);
+  const zoomed = await canvas.screenshot({ mask });
+  expect(zoomed.equals(fitted)).toBe(false);
+  // F glides back to the whole map.
+  await page.keyboard.press('f');
+  await page.waitForTimeout(2500);
+  expect((await canvas.screenshot({ mask })).equals(fitted)).toBe(true);
+  // Clusters is still there, one click away.
+  await page.getByRole('radiogroup', { name: 'Layout' }).getByRole('radio', { name: 'Clusters' }).click();
+  await expect(canvas).toHaveAttribute('aria-label', /^The brain: /);
+  expect(errors).toEqual([]);
+});
+
 test('the selection holds still when the system asks for less motion', async ({ page }) => {
   const errors = await openBrain(page, 'reduce');
   await labels(page).first().focus();
@@ -405,9 +439,24 @@ function bigRecord(n: number, total: number): BrainData {
   const links: [number, number, number][] = [];
   for (let k = 0; k + 1 < notes.length && links.length < 3000; k += 2) links.push([notes[k]!, notes[k + 1]!, 0]);
   for (let k = 0; k < 6000; k++) links.push([1 + ((k * 7919) % n), 1 + ((k * 104_729) % n), 1]);
+  // Placed as the organiser places them, so the Map is offered: five across, four down, three sub-groups each.
   const hubs = Array.from({ length: 20 }, (_, h) => {
     const entries = points.filter((_, i) => i % 20 === h).map((p) => p[0]);
-    return { id: h + 1, name: `Hub ${h + 1}`, size: Math.round((entries.length * total) / n), entries };
+    const size = Math.round((entries.length * total) / n);
+    const gap = 2 * Math.sqrt(size) + 1;
+    return {
+      id: h + 1,
+      name: `Hub ${h + 1}`,
+      size,
+      entries,
+      place: [(h % 5) * gap, Math.floor(h / 5) * gap] as [number, number],
+      parts: [
+        ['first', -0.4, 0],
+        ['second', 0.4, 0.2],
+        ['third', 0, -0.5],
+      ] as [string, number, number][],
+      part: entries.map((_, j) => j % 3),
+    };
   });
   return {
     kinds: ['message', 'note', 'file'],
@@ -487,7 +536,7 @@ test.describe('at the cap', () => {
       (url) => url.pathname === '/api/brain',
       (route) => route.fulfill({ status: 200, contentType: 'application/json', body: record }),
     );
-    // The Brain layout, which turns: Clusters lies flat.
+    // The Brain layout, which turns: the Map and Clusters lie flat.
     const errors = await openBrain(page, 'no-preference', 'brain-layout');
     await expect(page.locator('.legend-sample')).toContainText('Showing a sample: 20,000 of 25,000');
     const renderer = await page.evaluate(() => {
@@ -516,8 +565,24 @@ test.describe('at the cap', () => {
     // Counted in the whole record, not the sample: 1,000 drawn of 1,250.
     await expect(card(page).getByText('Concept hub · 1,250 entries')).toBeVisible();
     const selectedMoving = await frames(page, 20, () => layouts.getByRole('radio', { name: 'Activity' }).click());
+    await settle();
+    await page.keyboard.press('Escape');
+    await expect(card(page)).toBeHidden();
 
-    const phases = { turning, hovering, moving, selectedMoving };
+    // The Map: built once when the points arrive in it, then panned by dragging and zoomed with the wheel.
+    await layouts.getByRole('radio', { name: 'Map' }).click();
+    await settle();
+    const panning = await frames(page, 30, async () => {
+      await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
+      await page.mouse.down();
+      for (let k = 0; k < 15; k++) await page.mouse.move(box.x + box.width * (0.5 - k / 60), box.y + box.height * (0.5 - k / 90));
+      await page.mouse.up();
+    });
+    const zooming = await frames(page, 30, async () => {
+      for (let k = 0; k < 10; k++) await page.mouse.wheel(0, -120);
+    });
+
+    const phases = { turning, hovering, moving, selectedMoving, panning, zooming };
     const report = {
       renderer,
       work: Object.fromEntries(Object.entries(phases).map(([k, f]) => [k, { median: round(quantile(f.work, 0.5)), p90: round(quantile(f.work, 0.9)) }])),

@@ -1,5 +1,6 @@
-// Where every point sits, in three layouts: the brain (notes in two lobes, originals wound up the stem below them),
-// activity (one ring per year, seen from above), and flat clusters. Pure and seeded: the same record always gives the same picture.
+// Where every point sits, in four layouts: the map (each hub a country at the place the organiser gave it, its
+// sub-groups provinces), the brain (notes in two lobes, originals wound up the stem below them), activity (one ring per
+// year, seen from above), and flat clusters. Pure and seeded: the same record always gives the same picture.
 // Units: the brain is about 2.4 wide; y is up, +z is the front.
 
 export interface LayoutPoint {
@@ -16,7 +17,44 @@ export interface LayoutPoint {
   group: number;
 }
 
-export type Layout = 'brain' | 'rings' | 'clusters';
+export type Layout = 'atlas' | 'brain' | 'rings' | 'clusters';
+
+/** What the map needs besides the points: each point's hub and sub-group, and where the organiser put them. */
+export interface AtlasInput {
+  /** Per point, the index of its hub in `hubs`, or -1 for an entry in no hub. A hub's own point has its hub. */
+  hubOf: Int32Array;
+  /** Per point, its sub-group in its hub, or -1 (a hub's own point, or an entry in no hub). */
+  partOf: Int32Array;
+  hubs: AtlasHub[];
+}
+
+export interface AtlasHub {
+  name: string;
+  /** Where the organiser put the hub, and its radius (the square root of its entries), in the organiser's units. */
+  x: number;
+  y: number;
+  r: number;
+  /** Its sub-groups: a name, and where each sits inside the hub, in hub radii. */
+  parts: { name: string; x: number; y: number }[];
+}
+
+export interface Disc {
+  x: number;
+  y: number;
+  r: number;
+}
+
+/** The map in world units: a disc per hub (then one for the entries in no hub, when there are any), and per sub-group. */
+export interface AtlasShape {
+  hubs: Disc[];
+  /** Entries in no hub: a small island off the south coast, or null. */
+  loose: Disc | null;
+  /** Per hub, a disc per sub-group, in the order of its parts. */
+  provinces: Disc[][];
+}
+
+/** How wide the map is drawn, in world units, from its middle to its farthest coast. */
+const ATLAS_REACH = 1.6;
 type V3 = [number, number, number];
 
 /** A small fast seeded generator (mulberry32), 0 ≤ n < 1. */
@@ -355,7 +393,130 @@ export function stripLayout(points: readonly LayoutPoint[], sources: readonly { 
   return pos;
 }
 
-export function layoutFor(kind: Layout, points: readonly LayoutPoint[]): Float32Array {
+/**
+ * The map's countries and provinces in world units. A hub's disc keeps the organiser's place and its share of the
+ * record's area; its sub-groups split the disc by how many of its points each holds.
+ */
+export function atlasShape(points: readonly LayoutPoint[], atlas: AtlasInput): AtlasShape {
+  const shown = atlas.hubs.map(() => 0);
+  const inPart = atlas.hubs.map((h) => h.parts.map(() => 0));
+  let loose = 0;
+  points.forEach((p, i) => {
+    const h = atlas.hubOf[i]!;
+    if (h < 0) {
+      if (p.id >= 0) loose++;
+      return;
+    }
+    if (p.id < 0) return;
+    shown[h]!++;
+    const part = atlas.partOf[i]!;
+    if (part >= 0 && part < inPart[h]!.length) inPart[h]![part]!++;
+  });
+  // A sample draws fewer points than the hubs hold; the island of loose entries grows by the same share.
+  const held = atlas.hubs.reduce((s, h) => s + h.r * h.r, 0);
+  const drawn = shown.reduce((s, n) => s + n, 0);
+  const looseR = loose ? Math.sqrt(loose * Math.max(1, held / Math.max(1, drawn))) : 0;
+  let reach = 0;
+  let south = 0;
+  for (const h of atlas.hubs) {
+    reach = Math.max(reach, Math.hypot(h.x, h.y) + h.r);
+    south = Math.min(south, h.y - h.r);
+  }
+  const looseAt = { x: 0, y: south - looseR - 1, r: looseR };
+  if (loose) reach = Math.max(reach, Math.hypot(looseAt.x, looseAt.y) + looseR);
+  const scale = ATLAS_REACH / Math.max(1e-9, reach);
+  const hubs = atlas.hubs.map((h) => ({ x: h.x * scale, y: h.y * scale, r: h.r * scale }));
+  const provinces = atlas.hubs.map((h, k) => {
+    const disc = hubs[k]!;
+    const total = Math.max(1, shown[k]!);
+    const local = h.parts.map((part, j) => ({ x: part.x * disc.r, y: part.y * disc.r, r: disc.r * Math.sqrt(inPart[k]![j]! / total) * PROVINCE_FILL }));
+    return settle(local, disc.r).map((d) => ({ x: disc.x + d.x, y: disc.y + d.y, r: d.r }));
+  });
+  return { hubs, loose: loose ? { x: looseAt.x * scale, y: looseAt.y * scale, r: looseR * scale } : null, provinces };
+}
+
+/** A province's radius as a share of the radius its entries would fill alone, so provinces have room to sit apart. */
+const PROVINCE_FILL = 0.72;
+
+/**
+ * Nudges discs that start where the organiser put them until they overlap as little as they can and each stays
+ * inside a disc of radius `bound` about the origin. Fixed steps from fixed starts, so the same every time.
+ */
+function settle(discs: Disc[], bound: number): Disc[] {
+  const out = discs.map((d) => ({ ...d }));
+  for (let step = 0; step < 80; step++) {
+    for (let i = 0; i < out.length; i++) {
+      for (let j = i + 1; j < out.length; j++) {
+        const a = out[i]!;
+        const b = out[j]!;
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let d = Math.hypot(dx, dy);
+        const gap = a.r + b.r - d;
+        if (gap <= 0) continue;
+        if (d < 1e-9) {
+          // Two discs on one spot part along a fixed direction of their own.
+          const t = (i * 7 + j * 13) * 2.399963229728653;
+          [dx, dy, d] = [Math.cos(t), Math.sin(t), 1];
+        }
+        // The smaller disc moves more.
+        const share = a.r + b.r > 0 ? b.r / (a.r + b.r) : 0.5;
+        a.x -= (dx / d) * gap * share;
+        a.y -= (dy / d) * gap * share;
+        b.x += (dx / d) * gap * (1 - share);
+        b.y += (dy / d) * gap * (1 - share);
+      }
+    }
+    for (const d of out) {
+      const room = Math.max(0, bound - d.r);
+      const at = Math.hypot(d.x, d.y);
+      if (at > room) {
+        d.x *= at > 0 ? room / at : 0;
+        d.y *= at > 0 ? room / at : 0;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The map: every entry in its hub's sub-group, wound outward by time from the sub-group's middle, a hub's own point at
+ * its centre, and entries in no hub on an island of their own. Flat (z = 0), so a camera looking straight down draws
+ * it exactly as an orthographic one would.
+ */
+export function atlasLayout(points: readonly LayoutPoint[], atlas: AtlasInput): Float32Array {
+  const out = new Float32Array(points.length * 3);
+  const shape = atlasShape(points, atlas);
+  const members = new Map<string, number[]>();
+  points.forEach((p, i) => {
+    const h = atlas.hubOf[i]!;
+    if (h >= 0 && p.id < 0) {
+      out[i * 3] = shape.hubs[h]!.x;
+      out[i * 3 + 1] = shape.hubs[h]!.y;
+      return;
+    }
+    const part = h >= 0 ? Math.max(0, Math.min(atlas.hubs[h]!.parts.length - 1, atlas.partOf[i]!)) : 0;
+    const key = h >= 0 && atlas.hubs[h]!.parts.length ? `${h}:${part}` : `${h}`;
+    const list = members.get(key);
+    if (list) list.push(i);
+    else members.set(key, [i]);
+  });
+  for (const [key, list] of members) {
+    const [h, part] = key.split(':').map(Number) as [number, number | undefined];
+    const disc = h < 0 ? shape.loose! : part === undefined ? shape.hubs[h]! : shape.provinces[h]![part]!;
+    byTime(points, list).forEach((i, j) => {
+      const r = disc.r * Math.sqrt((j + 0.5) / list.length);
+      const t = j * 2.399963229728653;
+      out[i * 3] = disc.x + Math.cos(t) * r;
+      out[i * 3 + 1] = disc.y + Math.sin(t) * r;
+    });
+  }
+  return out;
+}
+
+/** Where the points sit in a layout. The map needs the organiser's places; without them it draws Clusters. */
+export function layoutFor(kind: Layout, points: readonly LayoutPoint[], atlas: AtlasInput | null = null): Float32Array {
+  if (kind === 'atlas') return atlas ? atlasLayout(points, atlas) : clustersLayout(points);
   return kind === 'rings' ? ringsLayout(points) : kind === 'clusters' ? clustersLayout(points) : brainLayout(points);
 }
 

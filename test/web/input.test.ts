@@ -97,6 +97,40 @@ describe('brain input', () => {
   });
 });
 
+describe('the map input', () => {
+  it('is null until every hub drawn has a place, so the brain never draws half a map', () => {
+    expect(buildModel(sample, 'source', ember, dusk).input.atlas).toBeNull();
+    const half: BrainData = {
+      ...sample,
+      hubs: [
+        { id: 11, name: 'Sowing', entries: [1, 2], place: [0, 0], parts: [['depth', 0, 0]], part: [0, 0] },
+        { id: 12, name: 'Plans', entries: [4, 5] },
+      ],
+    };
+    expect(buildModel(half, 'source', ember, dusk).input.atlas).toBeNull();
+  });
+
+  it("gives each entry its hub and sub-group, the first hub sent winning, and each hub its place and size", () => {
+    const placed: BrainData = {
+      ...sample,
+      hubs: [
+        { id: 11, name: ' Sowing ', entries: [1, 2, 3, 99], place: [-3, 1], parts: [['depth', -0.4, 0], ['beans', 0.5, 0.1]], part: [1, 0, 7, 0] },
+        { id: 12, name: 'Plans', entries: [3, 4, 5], place: [4, -1], parts: [['plan', 0, 0]], part: [0, 0, 0] },
+      ],
+    };
+    const m = buildModel(placed, 'source', ember, dusk);
+    const a = m.input.atlas!;
+    // Points 0-5 are entries 1-6, then a point per hub.
+    expect([...a.hubOf]).toEqual([0, 0, 0, 1, 1, -1, 0, 1]);
+    // Entry 3 is in both hubs and goes with the first, where its sub-group (7) is past the last and is clamped.
+    expect([...a.partOf]).toEqual([1, 0, 1, 0, 0, -1, -1, -1]);
+    expect(a.hubs).toEqual([
+      { name: 'Sowing', x: -3, y: 1, r: Math.sqrt(3), parts: [{ name: 'depth', x: -0.4, y: 0 }, { name: 'beans', x: 0.5, y: 0.1 }] },
+      { name: 'Plans', x: 4, y: -1, r: Math.sqrt(3), parts: [{ name: 'plan', x: 0, y: 0 }] },
+    ]);
+  });
+});
+
 describe('the point cap', () => {
   const day = 86_400_000;
   /** n points: every fifth a note, every seventh a file, the rest messages, one a day; ids from 1. */

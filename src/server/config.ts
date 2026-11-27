@@ -10,7 +10,7 @@ import { type LiveFolder, loadConfig, parseConfigValue, saveConfig, type Config 
 export const THEMES = ['dusk', 'ink', 'slate', 'moss', 'linen', 'paper'] as const;
 export const PALETTES = ['ember', 'tide', 'lichen', 'heather', 'graphite', 'saffron', 'mono'] as const;
 export const GROUPINGS = ['project', 'folder', 'source', 'speaker'] as const;
-export const LAYOUTS = ['brain', 'rings', 'clusters'] as const;
+export const LAYOUTS = ['atlas', 'brain', 'rings', 'clusters'] as const;
 export const ENGINES = ['local', 'remote', 'none'] as const;
 export const DECISIONS = ['in', 'out', 'later'] as const;
 export const TABLE_PROPS = ['time', 'folder', 'project', 'hub', 'source', 'speaker', 'tag'] as const;
@@ -59,7 +59,7 @@ export const DEFAULT_CONFIG: Config = {
   firstRunDone: false,
   recordLive: false,
   appearance: { theme: 'dusk', palette: 'ember' },
-  brain: { pointSize: 1, lineDensity: 0.6, labels: true, turning: true, grouping: 'source', layout: 'clusters' },
+  brain: { pointSize: 1, lineDensity: 0.6, labels: true, turning: true, grouping: 'source', layout: 'atlas' },
   agents: { chosen: [] },
   ai: {
     engine: 'local',

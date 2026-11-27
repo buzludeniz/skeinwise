@@ -4,7 +4,7 @@
 import type { BrainData, BrainPoint } from '../../../src/server/queries.ts';
 import { type Grouped, type Grouping, groupPoints, layoutPoints, linkDegree, linkPairs, threadPairs } from '../groups.ts';
 import { plural } from '../format.ts';
-import type { LayoutPoint } from '../layout.ts';
+import type { AtlasInput, LayoutPoint } from '../layout.ts';
 import { hexToRgb, mix, type Palette, pointColors, type Theme } from '../themes.ts';
 
 export interface SceneInput {
@@ -22,6 +22,8 @@ export interface SceneInput {
   spokes: Uint32Array;
   /** The labelled points, hubs first (biggest first), then notes. `name` is what a screen reader hears for the label's button. */
   labels: { index: number; text: string; name: string }[];
+  /** The map's places, when the organiser has placed every hub drawn; null otherwise, and the map draws Clusters. */
+  atlas: AtlasInput | null;
 }
 
 /** A concept hub's point, after the entries' points. */
@@ -116,6 +118,40 @@ function hubPoints(data: BrainData, points: LayoutPoint[], indexOf: Map<number, 
   return out;
 }
 
+/**
+ * The map's input: each point's hub and sub-group, and the hubs' places. An entry in more than one hub goes with the
+ * first one the server sent. Null when a hub drawn has no place yet (a record organised before the map), so the page
+ * never draws half a map.
+ */
+export function atlasInput(hubs: BrainData['hubs'], indexOf: Map<number, number>, entries: number, counts: number[]): AtlasInput | null {
+  if (!hubs.length || hubs.some((h) => !h.place)) return null;
+  const n = entries + hubs.length;
+  const hubOf = new Int32Array(n).fill(-1);
+  const partOf = new Int32Array(n).fill(-1);
+  hubs.forEach((hub, k) => {
+    hubOf[entries + k] = k;
+    const parts = hub.parts?.length ?? 0;
+    hub.entries.forEach((id, j) => {
+      const i = indexOf.get(id);
+      if (i === undefined || hubOf[i] !== -1) return;
+      hubOf[i] = k;
+      const part = hub.part?.[j] ?? 0;
+      partOf[i] = parts ? Math.max(0, Math.min(parts - 1, part)) : -1;
+    });
+  });
+  return {
+    hubOf,
+    partOf,
+    hubs: hubs.map((hub, k) => ({
+      name: hub.name.trim(),
+      x: hub.place![0],
+      y: hub.place![1],
+      r: Math.sqrt(Math.max(1, counts[k]!)),
+      parts: (hub.parts ?? []).map(([name, x, y]) => ({ name, x, y })),
+    })),
+  };
+}
+
 /** The colour for each group: the palette in order, then a quiet shared colour for the long tail. */
 export function legendColors(count: number, pal: Palette, theme: Theme): string[] {
   const colors = pointColors(pal, theme);
@@ -188,6 +224,12 @@ export function buildModel(record: BrainData, by: Grouping, pal: Palette, theme:
       cross: linkPairs(data, 1),
       spokes: Uint32Array.from(spokes),
       labels: [...hubLabels.slice(0, 16), ...noteLabels],
+      atlas: atlasInput(
+        hubs.map((h) => h.hub),
+        indexOf,
+        entries.length,
+        hubCounts,
+      ),
     },
     indexOf,
     hubs: hubs.map((h, k) => ({ index: entries.length + k, id: h.hub.id, name: h.hub.name, count: hubCounts[k]! })),

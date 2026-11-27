@@ -50,9 +50,10 @@ async function applySeed(): Promise<void> {
   switch (seed) {
     case 'rings':
     case 'clusters':
+    case 'atlas':
       setState({ view: 'brain', layout: seed });
       break;
-    // The brain opens on Clusters, so the Brain layout has a seed of its own.
+    // The brain opens on the Map, so the Brain layout has a seed of its own.
     case 'brain-layout':
       setState({ view: 'brain', layout: 'brain' });
       break;

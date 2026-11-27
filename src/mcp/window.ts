@@ -13,7 +13,7 @@ import type { Tool } from './protocol.ts';
 /** The port `skeinwise serve` tries first. */
 export const WINDOW_PORT = 7319;
 /** The brain view's layouts and the legend's groupings, as the app names them. */
-export const LAYOUTS = ['brain', 'rings', 'clusters'] as const;
+export const LAYOUTS = ['atlas', 'brain', 'rings', 'clusters'] as const;
 export const GROUPINGS = ['project', 'folder', 'source', 'speaker'] as const;
 /** Most entries one message may name. */
 export const MAX_WINDOW_ENTRIES = 500;
@@ -178,7 +178,7 @@ export const WINDOW_TOOLS: Tool<WindowCtx>[] = [
   {
     name: 'set_layout',
     title: 'Set the brain layout',
-    description: 'Switch the brain view\'s layout (brain, rings for the Activity layout, or clusters) and, if given, what colours the points.',
+    description: 'Switch the brain view\'s layout (atlas for the Map, brain, rings for the Activity layout, or clusters) and, if given, what colours the points.',
     inputSchema: {
       type: 'object',
       properties: { layout: { type: 'string', enum: [...LAYOUTS] }, grouping: { type: 'string', enum: [...GROUPINGS] } },

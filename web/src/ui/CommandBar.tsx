@@ -58,6 +58,7 @@ const PLACES: [string[], string, () => void][] = [
   [['folders'], 'Folders', () => openNav({ kind: 'folders' })],
   [['inbox'], 'Inbox', () => openNav({ kind: 'inbox' })],
   [['activity layout', 'rings', 'years'], 'Activity layout', () => setLayout('rings')],
+  [['map', 'atlas'], 'Map', () => setLayout('atlas')],
   [['clusters'], 'Clusters', () => setLayout('clusters')],
   [['settings', 'preferences'], 'Settings', () => setState({ settingsOpen: true })],
 ];

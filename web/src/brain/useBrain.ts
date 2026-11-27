@@ -107,11 +107,13 @@ export function useBrainScene(host: RefObject<HTMLDivElement | null>, mode: Scen
     if (scene && opts) scene.setOptions({ pointSize: opts.pointSize, lineDensity: opts.lineDensity, labels: opts.labels, turning: opts.turning });
   }, [scene, opts]);
 
+  // The map needs every hub placed; until an organiser run places them, the brain draws Clusters. Only once the record
+  // is in, so the first picture is drawn in its layout rather than moved into it.
   useEffect(() => {
-    if (!scene) return;
-    if (mode === 'full') scene.setLayout(layout);
+    if (!scene || !model) return;
+    if (mode === 'full') scene.setLayout(layout === 'atlas' && !model.input.atlas ? 'clusters' : layout);
     else scene.setLayout('brain');
-  }, [scene, layout, mode]);
+  }, [scene, layout, mode, model]);
 
   useEffect(() => {
     if (!scene || !model) return;

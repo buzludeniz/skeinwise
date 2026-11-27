@@ -112,7 +112,7 @@ describe('the window tools', () => {
     expect((await call(s, 'open_hub', { hub_id: 999_999 })).text).toBe('There is no hub 999999. list_hubs names them.');
     expect((await call(s, 'show_in_brain', {})).text).toBe('Give at least one entry or hub id to show.');
     expect((await call(s, 'show_in_brain', { entry_ids: [0] })).text).toBe('Entry ids must be a list of ids.');
-    expect((await call(s, 'set_layout', { layout: 'spiral' })).text).toBe('layout must be one of: brain, rings, clusters.');
+    expect((await call(s, 'set_layout', { layout: 'spiral' })).text).toBe('layout must be one of: atlas, brain, rings, clusters.');
     expect((await call(s, 'set_layout', { layout: 'brain', grouping: 'mood' })).text).toBe('grouping must be one of: project, folder, source, speaker.');
     expect((await call(s, 'highlight', { query: 3 })).text).toBe('query must be text.');
     expect(seen).toEqual([]);

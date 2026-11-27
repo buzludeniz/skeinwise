@@ -93,7 +93,7 @@ export const initialState: AppState = {
   lit: null,
   isolate: null,
   grouping: 'source',
-  layout: 'clusters',
+  layout: 'atlas',
   clip: false,
   compact: false,
   revision: 0,

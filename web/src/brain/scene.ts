@@ -18,7 +18,8 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { brainOutline, hash01, layoutFor, ringGuides, stripLayout, type Layout, type LayoutPoint } from '../layout.ts';
+import { atlasShape, brainOutline, hash01, layoutFor, ringGuides, stripLayout, type Layout, type LayoutPoint } from '../layout.ts';
+import { type AtlasLines, atlasLines } from './atlasMap.ts';
 import { hexToRgb } from '../themes.ts';
 import type { SceneInput } from './input.ts';
 import { nearestPoint } from './pick.ts';
@@ -60,6 +61,7 @@ uniform float uSize;
 uniform float uGrow;
 uniform float uAnyLit;
 uniform float uRatio;
+uniform float uRef;
 varying vec3 vColor;
 varying float vAlpha;
 void main() {
@@ -68,7 +70,11 @@ void main() {
   gl_Position = projectionMatrix * mv;
   float shown = smoothstep(born - 0.02, born, uGrow);
   float boost = lit > 1.5 ? 1.7 : (lit < 0.5 ? 0.8 : 1.0);
-  gl_PointSize = clamp(size * uSize * uScale / max(0.05, -mv.z) * boost * shown, 0.0, 96.0) * uRatio;
+  // On the map (uRef > 0, the fitted distance), a point grows only as the square root of the zoom, so close up the
+  // points stay apart and their titles have room.
+  float z = max(0.05, -mv.z);
+  float d = uRef > 0.0 ? sqrt(z * uRef) : z;
+  gl_PointSize = clamp(size * uSize * uScale / d * boost * shown, 0.0, 96.0) * uRatio;
   vColor = color;
   vAlpha = (lit < 0.5 ? (uAnyLit > 0.5 ? 0.1 : 0.16) : 1.0) * shown;
 }`;
@@ -220,6 +226,13 @@ export class BrainScene {
   private spokeLines: LineSegments | null = null;
   private shell: Points | null = null;
   private rings: LineSegments | null = null;
+  /** The map's borders, coast and terrain, drawn only in the map layout of the full view. */
+  private readonly borderMat: ShaderMaterial;
+  private readonly provinceMat: ShaderMaterial;
+  private readonly terrainMat: ShaderMaterial;
+  private mapLines: LineSegments[] = [];
+  /** The map's lines for the current points, worked out once per record. */
+  private mapCache: { input: SceneInput; lines: AtlasLines } | null = null;
   private readonly markMat: ShaderMaterial;
   private readonly selectMat: ShaderMaterial;
   private mark: Points | null = null;
@@ -231,7 +244,7 @@ export class BrainScene {
   private input: SceneInput | null = null;
   private layouts = new Map<Layout | 'strip', Float32Array>();
   /** The default, as the store's and the config's: the scene starts where the view will ask it to be. */
-  private layout: Layout = 'clusters';
+  private layout: Layout = 'atlas';
   /** Where every point is drawn now, once the current move ends. */
   private current = new Float32Array(0);
   private from = new Float32Array(0);
@@ -286,10 +299,7 @@ export class BrainScene {
     this.canvas.className = 'brain-canvas';
     this.canvas.tabIndex = 0;
     this.canvas.setAttribute('role', 'img');
-    this.canvas.setAttribute(
-      'aria-label',
-      'The brain: every entry as a point. Click a point for its card. Drag or use the arrow keys to turn it, plus and minus to zoom, F to fit. Tab steps through the labelled hubs.',
-    );
+    this.canvas.setAttribute('aria-label', canvasLabel(this.layout));
     this.labelLayer = document.createElement('div');
     this.labelLayer.className = 'brain-labels';
     this.labelLayer.setAttribute('role', 'group');
@@ -319,6 +329,7 @@ export class BrainScene {
       uAnyLit: { value: 0 },
       uRatio: { value: 1 },
       uLight: { value: 0 },
+      uRef: { value: 0 },
     };
     this.pointMat = new ShaderMaterial({
       vertexShader: POINT_VERT,
@@ -343,6 +354,9 @@ export class BrainScene {
     this.crossMat = lineMat(0.08, 4);
     this.spokeMat = lineMat(0.05, 7);
     this.ringMat = lineMat(0.16);
+    this.borderMat = lineMat(0.42);
+    this.provinceMat = lineMat(0.16);
+    this.terrainMat = lineMat(0.07);
     this.shellMat = new ShaderMaterial({
       vertexShader: SHELL_VERT,
       fragmentShader: SHELL_FRAG,
@@ -442,7 +456,7 @@ export class BrainScene {
     this.backMat.uniforms.uGround!.value.set(...ground);
     this.backMat.uniforms.uLift!.value.set(...lift);
     const blend = theme.light ? NormalBlending : AdditiveBlending;
-    for (const m of [this.pointMat, this.threadMat, this.linkMat, this.crossMat, this.spokeMat, this.shellMat, this.ringMat]) {
+    for (const m of [this.pointMat, this.threadMat, this.linkMat, this.crossMat, this.spokeMat, this.shellMat, this.ringMat, this.borderMat, this.provinceMat, this.terrainMat]) {
       m.blending = blend;
       m.needsUpdate = true;
     }
@@ -454,6 +468,9 @@ export class BrainScene {
     this.crossMat.uniforms.uAlpha!.value = theme.light ? 0.12 : 0.08;
     this.spokeMat.uniforms.uAlpha!.value = theme.light ? 0.08 : 0.05;
     this.ringMat.uniforms.uAlpha!.value = theme.light ? 0.25 : 0.16;
+    this.borderMat.uniforms.uAlpha!.value = theme.light ? 0.5 : 0.38;
+    this.provinceMat.uniforms.uAlpha!.value = theme.light ? 0.2 : 0.15;
+    this.terrainMat.uniforms.uAlpha!.value = theme.light ? 0.09 : 0.07;
     this.markMat.uniforms.uColor!.value.set(...rgb(theme.ink));
     if (this.input) this.buildRings();
     this.selectDirty = true;
@@ -475,6 +492,8 @@ export class BrainScene {
   setData(input: SceneInput, grow = false): void {
     this.input = input;
     this.layouts.clear();
+    this.atlasRef = 0;
+    this.canvas.setAttribute('aria-label', canvasLabel(this.flat ? 'atlas' : this.layout === 'atlas' ? 'clusters' : this.layout));
     const n = input.points.length;
     const pos = this.layoutOf(this.layout);
     this.current = pos.slice();
@@ -525,7 +544,8 @@ export class BrainScene {
     this.input = { ...this.input, colors, points };
     this.points.geometry.setAttribute('color', new BufferAttribute(colors, 3));
     this.layouts.delete('clusters');
-    if (this.layout === 'clusters') this.moveTo('clusters', true);
+    if (!this.input.atlas) this.layouts.delete('atlas');
+    if (this.layout === 'clusters' || (this.layout === 'atlas' && !this.input.atlas)) this.moveTo(this.layout, true);
     this.buildLines();
     this.selectDirty = true;
     this.dirty = true;
@@ -640,11 +660,19 @@ export class BrainScene {
     if (!pos) {
       const points = this.input?.points ?? [];
       const sources = this.input?.sources ?? [];
-      pos = key === 'strip' ? stripLayout(points, sources) : layoutFor(layout, points);
+      pos = key === 'strip' ? stripLayout(points, sources) : layoutFor(layout, points, this.input?.atlas ?? null);
       this.layouts.set(key, pos);
     }
     return pos;
   }
+
+  /** The map is drawn: its layout, in the full view, with every hub placed. Then the camera looks straight down and pans. */
+  private get flat(): boolean {
+    return this.layout === 'atlas' && this.mode === 'full' && !!this.input?.atlas;
+  }
+
+  /** The camera distance that frames the whole map, which sets how points grow as the map zooms in. 0 until needed. */
+  private atlasRef = 0;
 
   /** The brain's outline belongs to the brain layout in the full view, not to the strip. */
   private get shellShown(): boolean {
@@ -665,6 +693,7 @@ export class BrainScene {
 
   private moveTo(layout: Layout, animate: boolean): void {
     this.layout = layout;
+    this.canvas.setAttribute('aria-label', canvasLabel(this.flat ? 'atlas' : layout === 'atlas' ? 'clusters' : layout));
     if (!this.points || !this.input) return;
     const n = this.input.points.length;
     const now = new Float32Array(n * 3);
@@ -686,6 +715,9 @@ export class BrainScene {
       this.moveStart = performance.now();
     } else this.mix = 1;
     this.applyMix();
+    // The map's lines show once the points are in place, and go at once when the points leave.
+    if (this.mix >= 1) this.buildRings();
+    else this.dropMap();
     this.buildLabels();
     this.selectDirty = true;
     this.dirty = true;
@@ -815,7 +847,8 @@ export class BrainScene {
     }
     if (this.linkLines) this.linkLines.visible = d > 0;
     if (this.crossLines) this.crossLines.visible = d > 0;
-    if (this.spokeLines) this.spokeLines.visible = d > 0;
+    // On the map a hub's spokes would be a starburst over its own country, which the borders already show.
+    if (this.spokeLines) this.spokeLines.visible = d > 0 && !this.flat;
     this.selectDirty = true;
     this.dirty = true;
   }
@@ -913,8 +946,54 @@ export class BrainScene {
     this.scene.add(this.selectLines);
   }
 
+  private dropMap(): void {
+    for (const lines of this.mapLines) {
+      this.scene.remove(lines);
+      lines.geometry.dispose();
+    }
+    this.mapLines = [];
+  }
+
+  /** The map's borders, coast and faint terrain, in ink, under the points; only while the map is drawn. */
+  private buildMap(): void {
+    this.dropMap();
+    const input = this.input;
+    if (!input?.atlas || !this.flat) return;
+    if (this.mapCache?.input !== input) {
+      const { atlas, points } = input;
+      const loose = atlas.hubs.length;
+      // Entries in no hub are land of their own; a hub's own point is no land at all.
+      const country = Int32Array.from(points, (p, i) => (p.id < 0 ? -2 : atlas.hubOf[i]! < 0 ? loose : atlas.hubOf[i]!));
+      const province = Int32Array.from(points, (p, i) => (atlas.hubOf[i]! < 0 ? 0 : atlas.partOf[i]!));
+      this.mapCache = { input, lines: atlasLines(this.layoutOf('atlas'), country, province, atlasShape(points, atlas)) };
+    }
+    const { countries, provinces, coast, terrain } = this.mapCache.lines;
+    const ink = rgb(this.theme.ink);
+    for (const [pos, mat] of [
+      [terrain, this.terrainMat],
+      [provinces, this.provinceMat],
+      [countries, this.borderMat],
+      [coast, this.borderMat],
+    ] as const) {
+      if (!pos.length) continue;
+      const colors = new Float32Array(pos.length);
+      for (let i = 0; i < colors.length; i += 3) colors.set(ink, i);
+      const g = new BufferGeometry();
+      g.setAttribute('position', new BufferAttribute(pos, 3));
+      g.setAttribute('target', new BufferAttribute(pos, 3));
+      g.setAttribute('color', new BufferAttribute(colors, 3));
+      g.setAttribute('lit', new BufferAttribute(new Float32Array(pos.length / 3).fill(1), 1));
+      const lines = new LineSegments(g, mat);
+      lines.frustumCulled = false;
+      lines.renderOrder = 0;
+      this.scene.add(lines);
+      this.mapLines.push(lines);
+    }
+  }
+
   /** The activity layout's guides: a faint circle per year, with month spokes, only in that layout and the full view. */
   private buildRings(): void {
+    this.buildMap();
     if (this.rings) {
       this.scene.remove(this.rings);
       this.rings.geometry.dispose();
@@ -1086,7 +1165,7 @@ export class BrainScene {
       const half = flat;
       return { yaw: 0, pitch, dist: Math.max(half / tv, half / th) * 1.05 + 0.2, target };
     }
-    if (layout === 'clusters') {
+    if (layout === 'clusters' || layout === 'atlas') {
       const halfW = (maxX - minX) / 2;
       const halfH = (maxY - minY) / 2;
       return { yaw: 0, pitch: 0, dist: Math.max(halfW / th, halfH / tv) * 1.12 + 0.1, target };
@@ -1096,6 +1175,8 @@ export class BrainScene {
   }
 
   private placeCamera(): void {
+    if (this.flat && !this.atlasRef) this.atlasRef = this.fitOrbit('atlas').dist;
+    this.pointMat.uniforms.uRef!.value = this.flat ? this.atlasRef : 0;
     const o = this.orbit;
     if (this.mode === 'strip') {
       this.camera.up.set(0, 0, 1);
@@ -1131,6 +1212,7 @@ export class BrainScene {
     this.markMat.uniforms.uScale!.value = scale;
     this.markMat.uniforms.uRatio!.value = this.ratio;
     this.backMat.uniforms.uAspect!.value = w / h;
+    this.atlasRef = 0;
     if (refit && !this.touched) this.fit(false);
     if (this.labelEls.length && (w < 700) !== (this.labelEls.length <= 6)) this.buildLabels();
     this.dirty = true;
@@ -1160,11 +1242,13 @@ export class BrainScene {
       o.dist += (g.dist - o.dist) * k;
       o.target.lerp(g.target, k);
       if (Math.abs(g.dist - o.dist) < 0.002 && Math.abs(g.pitch - o.pitch) < 0.001 && o.target.distanceTo(g.target) < 0.001) {
+        // Lands exactly, so a Fit after a pan draws the very picture the first fit drew.
+        this.orbit = { ...g, target: g.target.clone() };
         this.goal = null;
       }
       this.dirty = true;
     }
-    if (this.turning && this.mode === 'full' && this.layout !== 'clusters' && this.grow >= 0) {
+    if (this.turning && this.mode === 'full' && this.layout !== 'clusters' && this.layout !== 'atlas' && this.grow >= 0) {
       this.orbit.yaw += dt * 0.08;
       if (this.goal) this.goal.yaw = this.orbit.yaw;
       this.dirty = true;
@@ -1208,8 +1292,12 @@ export class BrainScene {
         this.dragMoved += Math.abs(dx) + Math.abs(dy);
         if (this.dragMoved > 3) this.touch();
         if (this.pointers.size === 1 && this.dragMoved > 3) {
-          this.orbit.yaw -= dx * 0.006;
-          this.orbit.pitch = Math.max(-1.45, Math.min(1.45, this.orbit.pitch + dy * 0.005));
+          // On the map a drag moves the map under the pointer; elsewhere it turns the brain.
+          if (this.flat) this.pan(-dx, dy);
+          else {
+            this.orbit.yaw -= dx * 0.006;
+            this.orbit.pitch = Math.max(-1.45, Math.min(1.45, this.orbit.pitch + dy * 0.005));
+          }
           this.setHover(-1);
         } else if (this.pointers.size === 2) {
           const span = this.pinchSpan();
@@ -1240,7 +1328,8 @@ export class BrainScene {
         if (this.mode !== 'full') return;
         e.preventDefault();
         this.touch();
-        this.zoom(Math.exp(e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)));
+        const rect = c.getBoundingClientRect();
+        this.zoom(Math.exp(e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)), { x: e.clientX - rect.left, y: e.clientY - rect.top });
       },
       { passive: false },
     );
@@ -1258,17 +1347,28 @@ export class BrainScene {
     c.addEventListener('keydown', (e) => {
       if (this.mode !== 'full') return;
       const step = e.shiftKey ? 0.3 : 0.1;
-      const keys: Record<string, () => void> = {
-        ArrowLeft: () => (this.orbit.yaw += step),
-        ArrowRight: () => (this.orbit.yaw -= step),
-        ArrowUp: () => (this.orbit.pitch = Math.min(1.45, this.orbit.pitch + step)),
-        ArrowDown: () => (this.orbit.pitch = Math.max(-1.45, this.orbit.pitch - step)),
+      // On the map the arrows move it a tenth of the view (Shift, three tenths); elsewhere they turn the brain.
+      const across = step * Math.min(this.width, this.height);
+      const keys: Record<string, () => void> = this.flat
+        ? {
+            ArrowLeft: () => this.pan(-across, 0),
+            ArrowRight: () => this.pan(across, 0),
+            ArrowUp: () => this.pan(0, across),
+            ArrowDown: () => this.pan(0, -across),
+          }
+        : {
+            ArrowLeft: () => (this.orbit.yaw += step),
+            ArrowRight: () => (this.orbit.yaw -= step),
+            ArrowUp: () => (this.orbit.pitch = Math.min(1.45, this.orbit.pitch + step)),
+            ArrowDown: () => (this.orbit.pitch = Math.max(-1.45, this.orbit.pitch - step)),
+          };
+      Object.assign(keys, {
         '+': () => this.zoom(0.85),
         '=': () => this.zoom(0.85),
         '-': () => this.zoom(1.18),
         f: () => this.fit(),
         F: () => this.fit(),
-      };
+      });
       const run = keys[e.key];
       if (!run || e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
@@ -1283,9 +1383,54 @@ export class BrainScene {
     return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
   }
 
-  private zoom(factor: number): void {
-    this.orbit.dist = Math.max(0.6, Math.min(30, this.orbit.dist * factor));
+  /** World units per CSS pixel on the map's plane, at the current distance. */
+  private get worldPerPixel(): number {
+    return (2 * this.orbit.dist * Math.tan(((FOV / 2) * Math.PI) / 180)) / this.height;
+  }
+
+  /**
+   * Zooms by a factor. On the map it zooms about a spot on screen (the pointer's), so what is under it stays there,
+   * and it goes much closer, near enough to read single entries.
+   */
+  private zoom(factor: number, at?: { x: number; y: number }): void {
+    const o = this.orbit;
+    const before = this.worldPerPixel;
+    o.dist = Math.max(this.flat ? 0.05 : 0.6, Math.min(30, o.dist * factor));
+    if (this.flat && at) {
+      const shift = before - this.worldPerPixel;
+      o.target.x += (at.x - this.width / 2) * shift;
+      o.target.y -= (at.y - this.height / 2) * shift;
+      this.keepOnMap();
+    }
     this.dirty = true;
+  }
+
+  /** Moves the map's view by CSS pixels: right and up are positive. */
+  private pan(dx: number, dy: number): void {
+    const k = this.worldPerPixel;
+    this.orbit.target.x += dx * k;
+    this.orbit.target.y += dy * k;
+    this.keepOnMap();
+    this.dirty = true;
+  }
+
+  /** Keeps the middle of the view over the map, so a pan can't lose it. */
+  private keepOnMap(): void {
+    const pos = this.layoutOf('atlas');
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i < pos.length; i += 3) {
+      minX = Math.min(minX, pos[i]!);
+      maxX = Math.max(maxX, pos[i]!);
+      minY = Math.min(minY, pos[i + 1]!);
+      maxY = Math.max(maxY, pos[i + 1]!);
+    }
+    if (minX === Infinity) return;
+    const t = this.orbit.target;
+    t.x = Math.max(minX, Math.min(maxX, t.x));
+    t.y = Math.max(minY, Math.min(maxY, t.y));
   }
 
   private setHover(i: number): void {
@@ -1321,6 +1466,13 @@ export class BrainScene {
       (i) => lit[i]! < floor,
     );
   }
+}
+
+/** What the canvas says it is, by layout: the map pans, the others turn. */
+function canvasLabel(layout: Layout): string {
+  return layout === 'atlas'
+    ? 'The map: every entry as a point, each concept hub a country and its sub-groups provinces. Click a point for its card. Drag or use the arrow keys to move the map, plus and minus or the wheel to zoom, F to fit. Tab steps through the labelled hubs.'
+    : 'The brain: every entry as a point. Click a point for its card. Drag or use the arrow keys to turn it, plus and minus to zoom, F to fit. Tab steps through the labelled hubs.';
 }
 
 let shared: BrainScene | null = null;
