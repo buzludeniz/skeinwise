@@ -346,8 +346,11 @@ test('a lit search counts its hits on each country, and Fit to hits frames them'
   const chip = page.locator('.lit-chip');
   await expect(chip).toContainText(hub.title);
   const lit = Number(/· ([\d,]+) entr/.exec((await chip.textContent())!)![1]!.replace(/,/g, ''));
-  // Some country carries hits, none more than are lit, and a country with none steps back.
-  const counts = await page.locator('.brain-labels [data-hits]').evaluateAll((els) => els.map((el) => Number((el as HTMLElement).dataset.hits!.replace(/,/g, ''))));
+  // Some country carries hits, none more than are lit, and a country with none steps back. The counts are written as
+  // the next frame places the names.
+  const hits = page.locator('.brain-labels [data-hits]');
+  await expect(hits.first()).toBeAttached();
+  const counts = await hits.evaluateAll((els) => els.map((el) => Number((el as HTMLElement).dataset.hits!.replace(/,/g, ''))));
   expect(counts.length).toBeGreaterThan(0);
   expect(Math.max(...counts)).toBeLessThanOrEqual(lit);
   await expect(page.locator('.brain-labels .quiet').first()).toBeAttached();
