@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { atlasLines } from '../../web/src/brain/atlasMap.ts';
-import { type AtlasInput, atlasLayout, atlasShape, clustersLayout, layoutFor, type LayoutPoint } from '../../web/src/layout.ts';
+import { atlasLines, lineDistances } from '../../web/src/brain/atlasMap.ts';
+import { type AtlasInput, atlasLayout, atlasShape, clustersLayout, layoutFor, type LayoutPoint, pack, PACK_TOUCH } from '../../web/src/layout.ts';
 
 /** n entries a day apart, then one point per hub (id the hub's negated). */
 function points(n: number, hubs: number): LayoutPoint[] {
@@ -55,7 +55,7 @@ describe('the map layout', () => {
     expect(at(pos, 130)).toEqual({ x: expect.closeTo(shape.hubs[0]!.x, 5), y: expect.closeTo(shape.hubs[0]!.y, 5), z: 0 });
   });
 
-  it('keeps the organiser’s places, scaled to fit, and puts entries in no hub on an island to the south', () => {
+  it('keeps the organiser’s order, scaled to fit, and puts entries in no hub on an island to the south', () => {
     const { pts, atlas } = twoHubs();
     const shape = atlasShape(pts, atlas);
     expect(shape.hubs[0]!.x).toBeLessThan(0);
@@ -71,6 +71,37 @@ describe('the map layout', () => {
       expect(Math.hypot(p.x - island.x, p.y - island.y)).toBeLessThanOrEqual(island.r + 1e-6);
       expect(p.y).toBeLessThan(Math.min(...shape.hubs.map((h) => h.y - h.r)));
     }
+  });
+
+  it('packs countries the organiser placed apart until each touches a neighbour, keeping who neighbours whom', () => {
+    // A row of four, the last two far out, as an MDS of hubs about different things can leave them, and one far above.
+    const discs = [
+      { x: -40, y: 0, r: 10 },
+      { x: 0, y: 0, r: 6 },
+      { x: 90, y: 0, r: 8 },
+      { x: 300, y: 0, r: 4 },
+      { x: 0, y: 500, r: 5 },
+    ];
+    const out = pack(discs);
+    expect(pack(discs)).toEqual(out);
+    const apart = (i: number, j: number) => Math.hypot(out[i]!.x - out[j]!.x, out[i]!.y - out[j]!.y) / (out[i]!.r + out[j]!.r);
+    for (let i = 0; i < out.length; i++) {
+      expect(out[i]!.r).toBe(discs[i]!.r);
+      let nearest = Infinity;
+      for (let j = 0; j < out.length; j++) {
+        if (j === i) continue;
+        // None closer than packed countries come; each touches at least one other.
+        expect(apart(i, j)).toBeGreaterThan(PACK_TOUCH - 1e-3);
+        nearest = Math.min(nearest, apart(i, j));
+      }
+      expect(nearest).toBeLessThan(1.02);
+    }
+    // The row keeps its order left to right, and the one above stays above.
+    expect(out[0]!.x).toBeLessThan(out[1]!.x);
+    expect(out[1]!.x).toBeLessThan(out[2]!.x);
+    expect(out[2]!.x).toBeLessThan(out[3]!.x);
+    expect(out[4]!.y).toBeGreaterThan(Math.max(out[0]!.y, out[1]!.y, out[2]!.y, out[3]!.y));
+    expect(pack([{ x: 7, y: 3, r: 2 }])).toEqual([{ x: 7, y: 3, r: 2 }]);
   });
 
   it('draws Clusters until the organiser has placed the hubs', () => {
@@ -101,13 +132,15 @@ describe('the map’s lines', () => {
     for (const [x0, , x1] of split) expect(Math.abs((x0 + x1) / 2 - shape.hubs[0]!.x)).toBeLessThan(shape.hubs[0]!.r);
   });
 
-  it('draws no border between countries that the sea keeps apart, and one where they touch', () => {
-    expect(lines.countries.length).toBe(0);
-    const touching: AtlasInput = { ...atlas, hubs: atlas.hubs.map((h, k) => ({ ...h, x: k ? Math.sqrt(60) : -Math.sqrt(60) })) };
-    const pos2 = atlasLayout(pts, touching);
-    const near = atlasLines(pos2, country, province, atlasShape(pts, touching));
-    expect(near.countries.length).toBeGreaterThan(0);
-    for (const [x0, , x1] of segments(near.countries)) expect(Math.abs((x0 + x1) / 2)).toBeLessThan(0.3);
+  it('draws a border where packed countries meet, however far apart the organiser placed them', () => {
+    for (const x of [9, 60]) {
+      const apart: AtlasInput = { ...atlas, hubs: atlas.hubs.map((h, k) => ({ ...h, x: k ? x : -x })) };
+      const near = atlasLines(atlasLayout(pts, apart), country, province, atlasShape(pts, apart));
+      expect(near.countries.length).toBeGreaterThan(0);
+      // The border runs down the middle, between the two.
+      for (const [x0, , x1] of segments(near.countries)) expect(Math.abs((x0 + x1) / 2)).toBeLessThan(0.3);
+    }
+    expect(lines.countries.length).toBeGreaterThan(0);
   });
 
   it('knows how far apart neighbouring entries stand, about the same in every province', () => {
@@ -129,6 +162,19 @@ describe('the map’s lines', () => {
     const median = nearest[60]!;
     expect(median).toBeGreaterThan(spacing * 0.5);
     expect(median).toBeLessThan(spacing * 1.5);
+  });
+
+  it('measures the distance along each border, running on where two segments meet and starting over where three do', () => {
+    // A path (0,0) to (1,0) to (1,2) to (4,2), its segments out of order and one reversed, and a lone segment.
+    const path = lineDistances(new Float32Array([1, 2, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 2, 0, 4, 2, 0, 9, 9, 0, 9, 10, 0]));
+    expect([...path]).toEqual([3, 1, 0, 1, 3, 6, 0, 1]);
+    // Three segments meeting at one point are three lines, each starting there or at its own end.
+    const star = lineDistances(new Float32Array([0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0, 0]));
+    expect([...star]).toEqual([0, 1, 0, 1, 0, 1]);
+    // A loop runs all the way round.
+    const loop = lineDistances(new Float32Array([0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0]));
+    expect(Math.max(...loop)).toBe(4);
+    expect(lineDistances(new Float32Array(0))).toEqual(new Float32Array(0));
   });
 
   it('draws faint terrain where entries crowd, and nothing for an empty map', () => {

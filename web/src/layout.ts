@@ -422,16 +422,19 @@ export function atlasShape(points: readonly LayoutPoint[], atlas: AtlasInput): A
   const held = atlas.hubs.reduce((s, h) => s + h.r * h.r, 0);
   const drawn = shown.reduce((s, n) => s + n, 0);
   const looseR = loose ? Math.sqrt(loose * Math.max(1, held / Math.max(1, drawn))) : 0;
+  const land = pack(atlas.hubs.map((h) => ({ x: h.x, y: h.y, r: h.r })));
   let reach = 0;
   let south = 0;
-  for (const h of atlas.hubs) {
+  let middle = 0;
+  for (const h of land) {
     reach = Math.max(reach, Math.hypot(h.x, h.y) + h.r);
     south = Math.min(south, h.y - h.r);
+    middle += (h.x * h.r * h.r) / Math.max(1e-9, held);
   }
-  const looseAt = { x: 0, y: south - looseR - 1, r: looseR };
+  const looseAt = { x: middle, y: south - looseR - 1, r: looseR };
   if (loose) reach = Math.max(reach, Math.hypot(looseAt.x, looseAt.y) + looseR);
   const scale = ATLAS_REACH / Math.max(1e-9, reach);
-  const hubs = atlas.hubs.map((h) => ({ x: h.x * scale, y: h.y * scale, r: h.r * scale }));
+  const hubs = land.map((h) => ({ x: h.x * scale, y: h.y * scale, r: h.r * scale }));
   const provinces = atlas.hubs.map((h, k) => {
     const disc = hubs[k]!;
     const total = Math.max(1, shown[k]!);
@@ -462,28 +465,7 @@ const PROVINCE_FILL = 0.72;
 function settle(discs: Disc[], bound: number): Disc[] {
   const out = discs.map((d) => ({ ...d }));
   for (let step = 0; step < 80; step++) {
-    for (let i = 0; i < out.length; i++) {
-      for (let j = i + 1; j < out.length; j++) {
-        const a = out[i]!;
-        const b = out[j]!;
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
-        let d = Math.hypot(dx, dy);
-        const gap = a.r + b.r - d;
-        if (gap <= 0) continue;
-        if (d < 1e-9) {
-          // Two discs on one spot part along a fixed direction of their own.
-          const t = (i * 7 + j * 13) * 2.399963229728653;
-          [dx, dy, d] = [Math.cos(t), Math.sin(t), 1];
-        }
-        // The smaller disc moves more.
-        const share = a.r + b.r > 0 ? b.r / (a.r + b.r) : 0.5;
-        a.x -= (dx / d) * gap * share;
-        a.y -= (dy / d) * gap * share;
-        b.x += (dx / d) * gap * (1 - share);
-        b.y += (dy / d) * gap * (1 - share);
-      }
-    }
+    part(out, 1);
     for (const d of out) {
       const room = Math.max(0, bound - d.r);
       const at = Math.hypot(d.x, d.y);
@@ -493,6 +475,74 @@ function settle(discs: Disc[], bound: number): Disc[] {
       }
     }
   }
+  return out;
+}
+
+/** Parts, in place, every two discs closer than `touch` times their radii added: the smaller disc moves more. */
+function part(out: Disc[], touch: number): void {
+  for (let i = 0; i < out.length; i++) {
+    for (let j = i + 1; j < out.length; j++) {
+      const a = out[i]!;
+      const b = out[j]!;
+      let dx = b.x - a.x;
+      let dy = b.y - a.y;
+      let d = Math.hypot(dx, dy);
+      const gap = (a.r + b.r) * touch - d;
+      if (gap <= 0) continue;
+      if (d < 1e-9) {
+        // Two discs on one spot part along a fixed direction of their own.
+        const t = (i * 7 + j * 13) * 2.399963229728653;
+        [dx, dy, d] = [Math.cos(t), Math.sin(t), 1];
+      }
+      const share = a.r + b.r > 0 ? b.r / (a.r + b.r) : 0.5;
+      a.x -= (dx / d) * gap * share;
+      a.y -= (dy / d) * gap * share;
+      b.x += (dx / d) * gap * (1 - share);
+      b.y += (dy / d) * gap * (1 - share);
+    }
+  }
+}
+
+/** How the map packs its countries: steps of pulling them together, how hard the first step pulls, and passes after. */
+const PACK_STEPS = 120;
+const PACK_PULL = 0.08;
+const PACK_PASSES = 40;
+/**
+ * How close two packed countries come, as a share of their radii added: a little under touching, so no sea is left
+ * in the gap where three of them meet.
+ */
+export const PACK_TOUCH = 0.95;
+
+/**
+ * Draws the countries together until neighbours share a border. The organiser spreads its places so a typical hub
+ * just touches its nearest neighbour, but the discs here are sized by the entries drawn, and a hub that shares many
+ * entries with an earlier one draws smaller than it was placed; left as placed, most countries float apart in open
+ * sea. Each step pulls every disc toward the land's middle, more gently each time, and parts any two that come too
+ * close, so neighbours stay neighbours. Fixed steps from fixed starts, so the same every time.
+ */
+export function pack(discs: Disc[]): Disc[] {
+  const out = discs.map((d) => ({ ...d }));
+  if (out.length < 2) return out;
+  let w = 0;
+  let cx = 0;
+  let cy = 0;
+  for (const d of out) {
+    const a = Math.max(1e-9, d.r * d.r);
+    w += a;
+    cx += d.x * a;
+    cy += d.y * a;
+  }
+  cx /= w;
+  cy /= w;
+  for (let step = 0; step < PACK_STEPS; step++) {
+    const keep = 1 - PACK_PULL * (1 - step / PACK_STEPS);
+    for (const d of out) {
+      d.x = cx + (d.x - cx) * keep;
+      d.y = cy + (d.y - cy) * keep;
+    }
+    part(out, PACK_TOUCH);
+  }
+  for (let pass = 0; pass < PACK_PASSES; pass++) part(out, PACK_TOUCH);
   return out;
 }
 

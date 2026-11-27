@@ -122,6 +122,47 @@ function circumcentre(c: Float64Array, i: number, j: number, k: number): [number
   return [ax + (cy * b2 - by * c2) / d, ay + (bx * c2 - cx * b2) / d];
 }
 
+/**
+ * The distance along the lines at each vertex of `seg` (line segments as xyz pairs, as atlasLines gives them), for
+ * drawing them dashed. Segments that meet end to end, two at a vertex, are one line, and the distance runs on along
+ * it, so a dash pattern runs on unbroken; a line starts at 0 where three or more segments meet, or at a loose end.
+ */
+export function lineDistances(seg: Float32Array): Float32Array {
+  const n = seg.length / 6;
+  const out = new Float32Array(n * 2);
+  const key = (v: number) => `${seg[v * 3]},${seg[v * 3 + 1]}`;
+  const at = new Map<string, number[]>();
+  for (let v = 0; v < n * 2; v++) {
+    const k = key(v);
+    const list = at.get(k);
+    if (list) list.push(v >> 1);
+    else at.set(k, [v >> 1]);
+  }
+  const done = new Uint8Array(n);
+  const walk = (first: number, from: number) => {
+    let s = first;
+    let v = from;
+    let d = 0;
+    for (;;) {
+      done[s] = 1;
+      const to = v ^ 1;
+      out[v] = d;
+      d += Math.hypot(seg[to * 3]! - seg[v * 3]!, seg[to * 3 + 1]! - seg[v * 3 + 1]!);
+      out[to] = d;
+      const there = at.get(key(to))!;
+      if (there.length !== 2) return;
+      const next = there[0] === s ? there[1]! : there[0]!;
+      if (done[next]) return;
+      s = next;
+      v = key(2 * s) === key(to) ? 2 * s : 2 * s + 1;
+    }
+  };
+  // From the lines' ends first, so each line runs whole from one end; then what is left, which is loops.
+  for (let v = 0; v < n * 2; v++) if (!done[v >> 1] && at.get(key(v))!.length !== 2) walk(v >> 1, v);
+  for (let s = 0; s < n; s++) if (!done[s]) walk(s, 2 * s);
+  return out;
+}
+
 /** How many terrain lines: each a step up in how closely entries crowd. */
 const TERRAIN_LEVELS = 7;
 
