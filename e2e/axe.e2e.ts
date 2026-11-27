@@ -126,6 +126,7 @@ const WIDE: Screen[] = [
   },
   simple('brain, brain layout', 'brain-layout', canvas),
   simple('brain, rings', 'rings', canvas),
+  simple('brain, clusters', 'clusters', canvas),
   simple('threads', 'threads', (page) => page.getByRole('navigation', { name: 'Sections' })),
   simple('review', 'review', section('Review')),
   simple('runs', 'runs', section('Runs')),
